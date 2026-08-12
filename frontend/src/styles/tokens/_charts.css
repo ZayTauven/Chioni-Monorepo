@@ -1,0 +1,51 @@
+/*
+ * Vireo — Aurora token model · CHART / DATA-VIZ PALETTE (Layer 1)
+ * Source of truth: brief 01-tokens.md §5.
+ * Constant Aurora multicolour palette (cyan/violet/pink/amber/emerald/red)
+ * — same across all 12 accent presets (the Aurora differentiator).
+ * Mapped onto spec --ax-chart-1..6 NAMES. --ax-chart-1 RE-BINDS to the
+ * active --ax-accent so series-1 follows the theme; chart-2..6 are constant.
+ * Light hues slightly deepened for contrast on the bright canvas; dark =
+ * Aurora preview verbatim. financial up/down + KPI delta semantics included.
+ */
+
+:root {
+  /* constant Aurora data-viz named colors (LIGHT — slightly deepened
+     for contrast on the bright canvas; same hues as dark) */
+  --ax-viz-cyan:    #0EA5E9;
+  --ax-viz-violet:  #7C5CFC;
+  --ax-viz-pink:    #EC4899;
+  --ax-viz-amber:   #E0930B;
+  --ax-viz-emerald: #10B981;
+  --ax-viz-red:     #EF4444;
+
+  /* ordered categorical palette (spec --ax-chart-1..6 NAMES).
+     chart-1 RE-BINDS to active accent. chart-2..6 = constant Aurora. */
+  --ax-chart-1: var(--ax-accent);     /* follows theme */
+  --ax-chart-2: var(--ax-viz-cyan);
+  --ax-chart-3: var(--ax-viz-violet);
+  --ax-chart-4: var(--ax-viz-pink);
+  --ax-chart-5: var(--ax-viz-amber);
+  --ax-chart-6: var(--ax-viz-emerald);
+
+  /* financial / diverging (spec 01 §11.2) */
+  --ax-chart-up:   var(--ax-success-500);  /* light #2E9E5B */
+  --ax-chart-down: var(--ax-danger-500);   /* light #D24535 */
+
+  /* delta chip semantics used in KPI cards (preview --emerald/--red) */
+  --ax-delta-up:   var(--ax-viz-emerald);
+  --ax-delta-down: var(--ax-viz-red);
+}
+
+[data-ax-theme="dark"] {
+  /* DARK — Aurora preview verbatim hexes */
+  --ax-viz-cyan:    #38BDF8;
+  --ax-viz-violet:  #A78BFA;
+  --ax-viz-pink:    #F472B6;
+  --ax-viz-amber:   #FBBF24;
+  --ax-viz-emerald: #34D399;
+  --ax-viz-red:     #FB7185;
+  /* chart-1 still = var(--ax-accent) (now the dark lightened accent) */
+  --ax-chart-up:   var(--ax-success-500);  /* dark #46B36F */
+  --ax-chart-down: var(--ax-danger-500);   /* dark #E26A5B */
+}

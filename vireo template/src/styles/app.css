@@ -1,0 +1,78 @@
+/*
+ * Vireo — HTML reference edition · single CSS entry
+ * Visual language: "Aurora" (glassy, high-radius, glow) on the spec's --ax-* token system.
+ * Load order (spec 12 §5.1): tailwind → primitives → roles → accents → charts → recipes
+ *                            → base → components → utilities → plugins.
+ */
+@import 'tailwindcss';
+
+/* ── Layer 1–3 token system (Aurora values, spec names) ── */
+@import './tokens/_primitives.css'; /* L1 scales + neutral/dark ramps + semantics */
+@import './tokens/_roles.css'; /* L2 role aliases — light :root + [data-ax-theme=dark] */
+@import './tokens/_accents.css'; /* 12 accent presets (light + dark compound) */
+@import './tokens/_charts.css'; /* constant data-viz palette, chart-1 = accent */
+@import './tokens/_recipes.css'; /* ambient glow + glass card + gradients + focus */
+
+/* ── App layers ── */
+@import './base.css'; /* reset, root typography, shell scaffolding, RTL logical props */
+@import './components.css'; /* ax-* component classes (one block per 05 contract) */
+@import './nav.css'; /* sidebar navigation tree (manifest-driven menu) */
+@import './shell.css'; /* shell-chrome: customizer drawer, header dropdowns, command palette, etc. */
+@import './utilities.css'; /* token-driven helpers */
+
+/* ── Surface schemes (sidebar/header chrome) ── */
+@import './schemes.css';
+
+/*
+ * Tailwind v4 @theme bridge — exposes --ax-* role/scale tokens as Tailwind
+ * utilities (bg-surface, text-strong, rounded-xl, font-display, shadow-card…)
+ * and wires --ax-bp-* to Tailwind breakpoints. Values are late-bound via var().
+ */
+@theme {
+  /* breakpoints (spec 01 §6.3) */
+  --breakpoint-sm: 576px;
+  --breakpoint-md: 768px;
+  --breakpoint-lg: 992px;
+  --breakpoint-xl: 1200px;
+  --breakpoint-2xl: 1400px;
+
+  /* role colors → utilities */
+  --color-canvas: var(--ax-canvas);
+  --color-surface: var(--ax-surface);
+  --color-surface-subtle: var(--ax-surface-subtle);
+  --color-surface-raised: var(--ax-surface-raised);
+  --color-surface-overlay: var(--ax-surface-overlay);
+  --color-border-default: var(--ax-border);
+  --color-border-strong: var(--ax-border-strong);
+  --color-text-strong: var(--ax-text-strong);
+  --color-text: var(--ax-text);
+  --color-text-muted: var(--ax-text-muted);
+  --color-text-subtle: var(--ax-text-subtle);
+  --color-accent: var(--ax-accent);
+  --color-accent-hover: var(--ax-accent-hover);
+  --color-accent-wash: var(--ax-accent-wash);
+  --color-on-accent: var(--ax-on-accent);
+  --color-success: var(--ax-success-500);
+  --color-warning: var(--ax-warning-500);
+  --color-danger: var(--ax-danger-500);
+  --color-info: var(--ax-info-500);
+
+  /* radii (Aurora high-radius) */
+  --radius-xs: var(--ax-radius-xs);
+  --radius-sm: var(--ax-radius-sm);
+  --radius-md: var(--ax-radius-md);
+  --radius-lg: var(--ax-radius-lg);
+  --radius-xl: var(--ax-radius-xl);
+  --radius-pill: var(--ax-radius-pill);
+
+  /* fonts */
+  --font-sans: var(--ax-font-sans);
+  --font-display: var(--ax-font-display);
+  --font-mono: var(--ax-font-mono);
+
+  /* shadows */
+  --shadow-sm: var(--ax-shadow-sm);
+  --shadow-md: var(--ax-shadow-md);
+  --shadow-lg: var(--ax-shadow-lg);
+  --shadow-card: var(--ax-shadow-card);
+}

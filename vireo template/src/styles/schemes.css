@@ -1,0 +1,312 @@
+/*
+ * Vireo — HTML reference edition · schemes.css
+ * ────────────────────────────────────────────────────────────────────────
+ * SURFACE SCHEMES for the shell chrome (sidebar + header), independent of
+ * content cards. Each scheme remaps the Layer-3 chrome tokens that .ax-sidebar
+ * / .ax-header paint from:
+ *
+ *   --ax-sidebar-bg / --ax-sidebar-fg / --ax-sidebar-fg-strong /
+ *   --ax-sidebar-border / --ax-sidebar-hover / --ax-sidebar-active-bg
+ *   (and the --ax-header-* mirror).
+ *
+ * Rules (shell brief 02 §11 / spec 04 §8):
+ *  - Chrome tokens DERIVE from Layer-2 role tokens (--ax-surface-raised,
+ *    --ax-text, --ax-accent, --ax-on-accent, dark-ramp surfaces…).
+ *  - brand/gradient FOLLOW the active --ax-accent automatically.
+ *  - A "dark" chrome scheme stays dark even while the app is in LIGHT mode
+ *    (it pins explicit dark-ramp surfaces, not theme-relative roles).
+ *  - Schemes compose with mode + accent with no per-component branching.
+ *  - Sidebar bg-image renders over the Light scheme ONLY.
+ *  - Author with logical properties so RTL needs no scheme changes.
+ *
+ * NOTE: base.css already wires .ax-sidebar/.ax-header to paint from
+ *   background: var(--ax-sidebar-bg, var(--ax-surface-raised));
+ *   color:      var(--ax-sidebar-fg, var(--ax-text));
+ *   border:     var(--ax-sidebar-border, var(--ax-border));
+ * so a scheme only needs to (re)declare those custom properties.
+ */
+
+/* ════════════════════════════════════════════════════════════════════════
+   0 · DEFAULT (LIGHT) chrome — explicit so all 5 schemes are uniform.
+   This is the resting glass topbar/rail; values track the theme roles, so
+   it inverts correctly in dark mode via the role tokens themselves.
+   ════════════════════════════════════════════════════════════════════════ */
+.ax-sidebar {
+  --ax-sidebar-bg: var(--ax-surface-raised);
+  --ax-sidebar-fg: var(--ax-text-muted);
+  --ax-sidebar-fg-strong: var(--ax-text-strong);
+  --ax-sidebar-border: var(--ax-border);
+  --ax-sidebar-hover: var(--ax-fill-hover);
+  --ax-sidebar-active-bg: var(--ax-accent-wash);
+}
+.ax-header {
+  --ax-header-bg: var(--ax-surface-raised);
+  --ax-header-fg: var(--ax-text-muted);
+  --ax-header-fg-strong: var(--ax-text-strong);
+  --ax-header-border: var(--ax-border);
+  --ax-header-hover: var(--ax-fill-hover);
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   1 · DARK chrome  [data-ax-sidebar="dark"] / [data-ax-header="dark"]
+   Pins explicit dark-ramp surfaces + alpha strokes so the chrome stays dark
+   regardless of app theme. fg uses the dark-ramp text stops directly here
+   (this is the ONE sanctioned place to reach the dark ramp, because the
+   chrome is forced dark independent of [data-ax-theme]).
+   ════════════════════════════════════════════════════════════════════════ */
+[data-ax-sidebar='dark'] .ax-sidebar {
+  --ax-sidebar-bg: var(--ax-dark-850);
+  --ax-sidebar-fg: var(--ax-dark-300);
+  --ax-sidebar-fg-strong: var(--ax-dark-50);
+  --ax-sidebar-border: var(--ax-dark-stroke);
+  --ax-sidebar-hover: var(--ax-dark-fill-1);
+  --ax-sidebar-active-bg: color-mix(in oklab, var(--ax-accent) 18%, transparent);
+  color: var(--ax-dark-300);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+[data-ax-header='dark'] .ax-header {
+  --ax-header-bg: var(--ax-dark-850);
+  --ax-header-fg: var(--ax-dark-300);
+  --ax-header-fg-strong: var(--ax-dark-50);
+  --ax-header-border: var(--ax-dark-stroke);
+  --ax-header-hover: var(--ax-dark-fill-1);
+  color: var(--ax-dark-300);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+/* strong text inside dark chrome (brand, active labels, KPI) reads bright */
+[data-ax-sidebar='dark'] .ax-sidebar__wordmark,
+[data-ax-sidebar='dark'] .ax-sidebar__logo {
+  color: var(--ax-dark-50);
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   2 · BRAND chrome  — solid --ax-accent fill, follows the active preset.
+   fg uses --ax-on-accent so it stays legible across all 12 accents
+   (incl. Amber's dark ink).
+   ════════════════════════════════════════════════════════════════════════ */
+[data-ax-sidebar='brand'] .ax-sidebar {
+  --ax-sidebar-bg: var(--ax-accent);
+  --ax-sidebar-fg: color-mix(in oklab, var(--ax-on-accent) 78%, transparent);
+  --ax-sidebar-fg-strong: var(--ax-on-accent);
+  --ax-sidebar-border: color-mix(in oklab, var(--ax-on-accent) 16%, transparent);
+  --ax-sidebar-hover: color-mix(in oklab, var(--ax-on-accent) 12%, transparent);
+  --ax-sidebar-active-bg: color-mix(in oklab, var(--ax-on-accent) 18%, transparent);
+  color: var(--ax-on-accent);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+[data-ax-header='brand'] .ax-header {
+  --ax-header-bg: var(--ax-accent);
+  --ax-header-fg: color-mix(in oklab, var(--ax-on-accent) 78%, transparent);
+  --ax-header-fg-strong: var(--ax-on-accent);
+  --ax-header-border: color-mix(in oklab, var(--ax-on-accent) 16%, transparent);
+  --ax-header-hover: color-mix(in oklab, var(--ax-on-accent) 12%, transparent);
+  color: var(--ax-on-accent);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+[data-ax-sidebar='brand'] .ax-sidebar__wordmark,
+[data-ax-sidebar='brand'] .ax-sidebar__logo {
+  color: var(--ax-on-accent);
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   3 · GRADIENT chrome — vertical accent gradient (accent-600 → accent-800),
+   also derives from the active preset's ramp.
+   ════════════════════════════════════════════════════════════════════════ */
+[data-ax-sidebar='gradient'] .ax-sidebar {
+  --ax-sidebar-bg: linear-gradient(180deg, var(--ax-accent-600), var(--ax-accent-800));
+  --ax-sidebar-fg: color-mix(in oklab, var(--ax-on-accent) 80%, transparent);
+  --ax-sidebar-fg-strong: var(--ax-on-accent);
+  --ax-sidebar-border: color-mix(in oklab, var(--ax-on-accent) 14%, transparent);
+  --ax-sidebar-hover: color-mix(in oklab, var(--ax-on-accent) 12%, transparent);
+  --ax-sidebar-active-bg: color-mix(in oklab, var(--ax-on-accent) 20%, transparent);
+  color: var(--ax-on-accent);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+[data-ax-header='gradient'] .ax-header {
+  --ax-header-bg: linear-gradient(90deg, var(--ax-accent-600), var(--ax-accent-800));
+  --ax-header-fg: color-mix(in oklab, var(--ax-on-accent) 80%, transparent);
+  --ax-header-fg-strong: var(--ax-on-accent);
+  --ax-header-border: color-mix(in oklab, var(--ax-on-accent) 14%, transparent);
+  --ax-header-hover: color-mix(in oklab, var(--ax-on-accent) 12%, transparent);
+  color: var(--ax-on-accent);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+[data-ax-sidebar='gradient'] .ax-sidebar__wordmark,
+[data-ax-sidebar='gradient'] .ax-sidebar__logo {
+  color: var(--ax-on-accent);
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   4 · TRANSPARENT chrome — no fill; chrome floats over the canvas/glow.
+   fg keeps theme text roles so it reads on either mode's canvas.
+   ════════════════════════════════════════════════════════════════════════ */
+[data-ax-sidebar='transparent'] .ax-sidebar {
+  --ax-sidebar-bg: transparent;
+  --ax-sidebar-fg: var(--ax-text-muted);
+  --ax-sidebar-fg-strong: var(--ax-text-strong);
+  --ax-sidebar-border: transparent;
+  --ax-sidebar-hover: var(--ax-fill-hover);
+  --ax-sidebar-active-bg: var(--ax-accent-wash);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+[data-ax-header='transparent'] .ax-header {
+  --ax-header-bg: transparent;
+  --ax-header-fg: var(--ax-text-muted);
+  --ax-header-fg-strong: var(--ax-text-strong);
+  --ax-header-border: transparent;
+  --ax-header-hover: var(--ax-fill-hover);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   5 · CHROME TEXT/HOVER WIRING — make the remapped fg/hover tokens actually
+   paint inside the rail/header so every scheme reads correctly without each
+   component re-deriving colors.
+   ════════════════════════════════════════════════════════════════════════ */
+.ax-sidebar .ax-sidebar__section {
+  color: color-mix(in oklab, var(--ax-sidebar-fg) 80%, transparent);
+}
+.ax-sidebar .ax-nav__item {
+  color: var(--ax-sidebar-fg);
+}
+.ax-sidebar .ax-nav__item:hover {
+  background: var(--ax-sidebar-hover);
+  color: var(--ax-sidebar-fg-strong);
+}
+/* active item on the accent-filled rails (brand/gradient): the _recipes.css
+   active recipe paints the pill/glow/text/icon all in --ax-accent, which is the
+   rail's own background — accent-on-accent makes the current page vanish. Consume
+   the already-computed contrasting --ax-sidebar-active-bg (on-accent based) here.
+   light/dark/transparent keep the default accent-glow (no override targets them). */
+[data-ax-sidebar='brand'] .ax-sidebar .ax-nav__item.is-active,
+[data-ax-sidebar='gradient'] .ax-sidebar .ax-nav__item.is-active {
+  background: var(--ax-sidebar-active-bg);
+  color: var(--ax-sidebar-fg-strong);
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--ax-on-accent) 22%, transparent);
+}
+[data-ax-sidebar='brand'] .ax-sidebar .ax-nav__item.is-active::before,
+[data-ax-sidebar='gradient'] .ax-sidebar .ax-nav__item.is-active::before {
+  background: var(--ax-on-accent);
+  box-shadow: none;
+}
+[data-ax-sidebar='brand'] .ax-sidebar .ax-nav__item.is-active svg,
+[data-ax-sidebar='gradient'] .ax-sidebar .ax-nav__item.is-active svg {
+  color: var(--ax-on-accent);
+}
+.ax-header .ax-icon-btn:hover {
+  background: var(--ax-header-hover);
+}
+/* header interactive chrome must follow the remapped --ax-header-* tokens too,
+   else dark/brand/gradient/transparent recolor only the bar and leave the icon
+   buttons + search field on hardcoded light-theme tokens (invisible/low-contrast).
+   The default (light) scheme maps these tokens to the same role values used
+   elsewhere, so the light header is visually unchanged — only non-default
+   schemes start tracking. */
+.ax-header .ax-icon-btn {
+  color: var(--ax-header-fg);
+}
+.ax-header .ax-icon-btn:hover,
+.ax-header .ax-icon-btn[aria-expanded='true'],
+.ax-header .ax-icon-btn[aria-pressed='true'] {
+  color: var(--ax-header-fg-strong);
+  background: var(--ax-header-hover);
+}
+.ax-header .ax-search {
+  color: var(--ax-header-fg);
+  background: color-mix(in oklab, var(--ax-header-fg) 10%, transparent);
+  border-color: var(--ax-header-border);
+}
+.ax-header .ax-search:hover {
+  background: color-mix(in oklab, var(--ax-header-fg) 16%, transparent);
+  border-color: var(--ax-header-fg-strong);
+}
+.ax-header .ax-search__icon,
+.ax-header .ax-search__keycap {
+  color: var(--ax-header-fg);
+}
+.ax-header .ax-search__keycap {
+  background: color-mix(in oklab, var(--ax-header-fg) 12%, transparent);
+  border-color: var(--ax-header-border);
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   6 · SIDEBAR BACKGROUND IMAGE  [data-ax-sidebar-image="texture-1..6"]
+   Renders over the LIGHT scheme ONLY (suppressed for dark/brand/gradient/
+   transparent, where a textured overlay would clash). The texture tile lives
+   in a ::before so it sits behind the rail's flex regions; foreground stays
+   readable via a canvas-tinted scrim.
+   ════════════════════════════════════════════════════════════════════════ */
+/* `data-ax-sidebar-image` lives on <html> (where the setter/anti-flash write it),
+   NOT on `.ax-sidebar`. Read it off the same element as the scheme attribute, then
+   reach the rail via a descendant combinator. `.ax-sidebar` is already positioned
+   (fixed/absolute) in base.css, so the absolute ::before has its containing block. */
+:where([data-ax-sidebar='light'], html:not([data-ax-sidebar]))[data-ax-sidebar-image]:not([data-ax-sidebar-image='none'])
+  .ax-sidebar::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background-image: var(--ax-sidebar-texture, none);
+  background-size: cover;
+  background-position: center;
+  opacity: 0.5;
+  /* canvas-tinted veil keeps nav text legible over the texture */
+  box-shadow: inset 0 0 0 100vmax color-mix(in oklab, var(--ax-surface-raised) 72%, transparent);
+}
+/* suppress texture entirely for non-light schemes */
+[data-ax-sidebar='dark'] .ax-sidebar::before,
+[data-ax-sidebar='brand'] .ax-sidebar::before,
+[data-ax-sidebar='gradient'] .ax-sidebar::before,
+[data-ax-sidebar='transparent'] .ax-sidebar::before {
+  display: none;
+}
+
+/* texture token slots (1–6). Real tile assets are wired by the build/assets
+   layer; these provide deterministic, theme-safe placeholders so the control
+   demonstrates live without shipping binary art in CSS. */
+[data-ax-sidebar-image='texture-1'] {
+  --ax-sidebar-texture: radial-gradient(
+    circle at 1px 1px,
+    var(--ax-border-strong) 1px,
+    transparent 0
+  );
+}
+[data-ax-sidebar-image='texture-2'] {
+  --ax-sidebar-texture: repeating-linear-gradient(
+    45deg,
+    var(--ax-fill-hover) 0 8px,
+    transparent 8px 16px
+  );
+}
+[data-ax-sidebar-image='texture-3'] {
+  --ax-sidebar-texture: linear-gradient(160deg, var(--ax-accent-wash), transparent 60%);
+}
+[data-ax-sidebar-image='texture-4'] {
+  --ax-sidebar-texture: repeating-linear-gradient(
+    90deg,
+    var(--ax-fill-hover) 0 1px,
+    transparent 1px 14px
+  );
+}
+[data-ax-sidebar-image='texture-5'] {
+  --ax-sidebar-texture: radial-gradient(
+    circle at 80% 0,
+    var(--ax-accent-wash),
+    transparent 55%
+  );
+}
+[data-ax-sidebar-image='texture-6'] {
+  --ax-sidebar-texture: conic-gradient(
+    from 180deg at 50% 0,
+    var(--ax-fill-hover),
+    transparent 40%
+  );
+}

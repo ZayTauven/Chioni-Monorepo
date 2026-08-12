@@ -1,0 +1,6 @@
+{
+  "revenue": { "value": "$748.2K", "delta": 12.4, "trend": "up", "spark": [42, 48, 45, 53, 57, 62, 70, 76] },
+  "orders": { "value": "1,248", "delta": 8.1, "trend": "up", "spark": [80, 92, 88, 101, 110, 118, 124, 131] },
+  "customers": { "value": "3,920", "delta": -3.1, "trend": "down", "spark": [60, 58, 57, 55, 54, 52, 50, 49] },
+  "aov": { "value": "$59.95", "delta": 2.6, "trend": "up", "spark": [54, 55, 56, 55, 57, 58, 59, 60] }
+}

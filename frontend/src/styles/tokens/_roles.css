@@ -1,0 +1,114 @@
+/*
+ * Vireo — Aurora token model · LAYER 2 ROLE TOKENS
+ * Source of truth: brief 01-tokens.md §3.
+ * Aliases components consume. Light values on :root; dark under
+ * [data-ax-theme="dark"]. Spec 01 §3.4 NAMES, Aurora values.
+ * Includes ambient glow blob colors --ax-glow-1/2/3 (both modes),
+ * --ax-accent-rgb, and the Verdigris default accent (no attribute).
+ */
+
+:root {
+  /* Sync the UA scheme to the active theme so native chrome (scrollbars, form
+     controls, caret) matches — without this the root scrollbar repaints in the
+     wrong scheme on theme toggle and visibly blinks. */
+  color-scheme: light;
+
+  /* ── scrollbars ──
+     THEME-STABLE on purpose: a single translucent neutral that reads on both
+     the light (#F6F8FC) and dark (#0A0C11) canvas. Driving the thumb off a
+     theme-varying token (e.g. --ax-border-strong) made the rail snap colour
+     instantly on theme toggle while the page faded smoothly → the visible
+     "blink". Keep these OUT of the dark block so the rail never switches. */
+  --ax-scrollbar-thumb:       rgba(128, 138, 158, 0.45);
+  --ax-scrollbar-thumb-hover: rgba(128, 138, 158, 0.70);
+
+  /* ── surfaces ── */
+  --ax-canvas:          var(--ax-neutral-25);     /* #F6F8FC bright glassy near-white */
+  --ax-surface:         var(--ax-light-panel);    /* glass card rgba(255,255,255,.72) */
+  --ax-surface-solid:   #FFFFFF;                  /* opaque fallback for non-glass contexts */
+  --ax-surface-subtle:  var(--ax-neutral-50);     /* #F0F3F9 secondary surface, table header */
+  --ax-surface-raised:  rgba(255,255,255,0.80);   /* header/sidebar default (glass) */
+  --ax-surface-overlay: rgba(255,255,255,0.92);   /* popover/dropdown/modal (denser glass) */
+  --ax-fill-hover:      var(--ax-light-fill-1);   /* hover bg */
+  --ax-fill-active:     var(--ax-light-fill-2);   /* pressed/selected bg */
+
+  /* ── borders ── */
+  --ax-border:          var(--ax-light-stroke);   /* 1px hairline on glass */
+  --ax-border-strong:   var(--ax-light-stroke-2);
+
+  /* ── text ── */
+  --ax-text-strong:     var(--ax-neutral-900);    /* #151B27 headings, key numbers */
+  --ax-text:            var(--ax-neutral-700);     /* #3A4456 body */
+  --ax-text-muted:      var(--ax-neutral-600);     /* #535E74 secondary */
+  --ax-text-subtle:     var(--ax-neutral-500);     /* #6E7A92 tertiary, captions, idle icons */
+  --ax-text-disabled:   var(--ax-neutral-400);     /* #94A0B8 */
+
+  /* ── accent (Verdigris default — LIGHT base) ── */
+  --ax-accent:          var(--ax-accent-500);     /* #1E856C */
+  --ax-accent-hover:    var(--ax-accent-600);     /* #197059 */
+  --ax-accent-wash:     var(--ax-accent-50);      /* #E8F4F0 selected-row tint */
+  --ax-on-accent:       #FFFFFF;
+  --ax-accent-rgb:      30, 133, 108;             /* #1E856C → for glow shadows/alpha fills */
+  --ax-link:            var(--ax-accent-700);     /* #155C49 */
+  --ax-focus-ring:      var(--ax-accent-500);     /* #1E856C */
+  /* soft translucent focus halo — blends over any surface (card/canvas/glass),
+     replaces the old hard canvas-gap double-ring. Per-accent via --ax-accent-rgb. */
+  --ax-focus-shadow:    0 0 0 3px rgba(var(--ax-accent-rgb), 0.18);
+
+  /* Verdigris default ramp (so :root w/o [data-ax-accent] resolves
+     the --ax-accent-* stops the role aliases above reference) */
+  --ax-accent-50:#E8F4F0; --ax-accent-100:#C9E6DD; --ax-accent-200:#9AD2C3;
+  --ax-accent-300:#63B8A3; --ax-accent-400:#39A185; --ax-accent-500:#1E856C;
+  --ax-accent-600:#197059; --ax-accent-700:#155C49; --ax-accent-800:#10463A; --ax-accent-900:#0B3029;
+
+  /* ── ambient glow blob colors (light = pale/soft, see recipes §6) ── */
+  --ax-glow-1: rgba(255, 176, 120, 0.16);   /* warm-amber, paler than dark */
+  --ax-glow-2: rgba(120, 130, 246, 0.16);   /* indigo */
+  --ax-glow-3: rgba(var(--ax-accent-rgb), 0.10); /* accent-tinted */
+
+  /* glass inset top highlight (resolved per mode; consumed by .ax-card) */
+  --ax-glass-hi: var(--ax-light-glass-hi);
+}
+
+[data-ax-theme="dark"] {
+  color-scheme: dark;
+
+  /* surfaces — Aurora preview verbatim */
+  --ax-canvas:          var(--ax-dark-950);        /* #0A0C11 */
+  --ax-surface:         var(--ax-dark-panel);      /* rgba(22,26,35,.72) glass card */
+  --ax-surface-solid:   var(--ax-dark-850);        /* #161A23 */
+  --ax-surface-subtle:  var(--ax-dark-panel-2);    /* rgba(28,33,44,.80) */
+  --ax-surface-raised:  rgba(16,19,28,0.72);       /* header/sidebar glass */
+  --ax-surface-overlay: rgba(20,24,33,0.92);       /* popover/dropdown/modal */
+  --ax-fill-hover:      var(--ax-dark-fill-1);     /* rgba(255,255,255,.04) */
+  --ax-fill-active:     var(--ax-dark-fill-2);     /* rgba(255,255,255,.09) */
+
+  /* borders — alpha strokes */
+  --ax-border:          var(--ax-dark-stroke);     /* rgba(255,255,255,.07) */
+  --ax-border-strong:   var(--ax-dark-stroke-2);   /* rgba(255,255,255,.12) */
+
+  /* text — preview verbatim */
+  --ax-text-strong:     var(--ax-dark-50);         /* #EAEDF3 */
+  --ax-text:            var(--ax-dark-100);         /* #D4DAE4 (body slightly below strong) */
+  --ax-text-muted:      var(--ax-dark-300);         /* #98A2B3 */
+  --ax-text-subtle:     var(--ax-dark-500);         /* #646E80 */
+  --ax-text-disabled:   var(--ax-dark-600);         /* #3A4351 */
+
+  /* accent — Verdigris DARK lightened base (spec §3.5.1 / preview) */
+  --ax-accent:          #39A185;
+  --ax-accent-hover:    #63B8A3;
+  --ax-accent-wash:     #16302A;       /* ~16% L tint, dark selected-row */
+  --ax-on-accent:       #0B1F1A;       /* warm dark ink on lightened accent */
+  --ax-accent-rgb:      57, 161, 133;  /* #39A185 */
+  --ax-link:            #63B8A3;
+  --ax-focus-ring:      #63B8A3;
+  --ax-focus-shadow:    0 0 0 3px rgba(var(--ax-accent-rgb), 0.30);
+
+  /* ambient glow blobs — Aurora preview verbatim opacities */
+  --ax-glow-1: rgba(255, 138, 76, 0.18);    /* warm-amber top-left */
+  --ax-glow-2: rgba(99, 102, 241, 0.20);    /* indigo bottom-right */
+  --ax-glow-3: rgba(var(--ax-accent-rgb), 0.12); /* accent-tinted mid-right */
+
+  /* glass inset top highlight (dark) */
+  --ax-glass-hi: var(--ax-dark-glass-hi);
+}

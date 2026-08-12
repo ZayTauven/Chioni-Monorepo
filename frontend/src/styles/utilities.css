@@ -1,0 +1,301 @@
+/*
+ * Vireo — HTML reference edition · utilities.css
+ * ────────────────────────────────────────────────────────────────────────
+ * Token-driven helper classes that Tailwind's built-ins don't cleanly cover.
+ * Kept deliberately MINIMAL — Tailwind utilities handle most spacing/flex/
+ * color needs; these encode Aurora/spec-specific micro-patterns.
+ *
+ * All values reference Layer-2 role tokens or Layer-1 scale tokens — never a
+ * raw stop, never a themeable literal hex.
+ */
+
+/* ── Numerics ───────────────────────────────────────────────────────────
+   Tabular figures for KPIs, table columns, ledgers, axis labels (spec 01 §4.1). */
+.ax-num,
+[data-ax-tabular] {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1;
+}
+.ax-mono {
+  font-family: var(--ax-font-mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
+}
+
+/* ── Display / eyebrow type ─────────────────────────────────────────────── */
+.ax-display {
+  font-family: var(--ax-font-display);
+  font-weight: var(--ax-weight-bold);
+  letter-spacing: -0.015em;
+}
+.ax-eyebrow {
+  display: block;
+  font-size: var(--ax-text-2xs);
+  line-height: var(--ax-leading-2xs);
+  font-weight: var(--ax-weight-semibold);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ax-text-subtle);
+}
+
+/* ── Accessibility ──────────────────────────────────────────────────────── */
+.visually-hidden,
+.sr-only {
+  position: absolute !important;
+  inline-size: 1px;
+  block-size: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+/* skip-link / focusable variant: reveals itself when focused */
+.visually-hidden-focusable:not(:focus):not(:focus-within) {
+  position: absolute !important;
+  inline-size: 1px;
+  block-size: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ── Truncation / clamping ──────────────────────────────────────────────── */
+.ax-truncate {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-inline-size: 0;
+}
+.ax-clamp-2 {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.ax-clamp-3 {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* ── Flex helpers ───────────────────────────────────────────────────────
+   .ax-stack = vertical flow with gap · .ax-cluster = inline-wrap with gap.
+   Gap defaults to --ax-space-4; override via inline --ax-gap. */
+.ax-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ax-gap, var(--ax-space-4));
+}
+.ax-cluster {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ax-gap, var(--ax-space-2));
+}
+.ax-cluster--between {
+  justify-content: space-between;
+}
+.ax-center {
+  display: grid;
+  place-items: center;
+}
+/* logical-flow spacer (pushes siblings apart in flex rows/columns) */
+.ax-spacer {
+  flex: 1 1 auto;
+}
+
+/* ── Scroll region (overlay, contained) ─────────────────────────────────── */
+.ax-scroll {
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--ax-scrollbar-thumb) transparent;
+}
+.ax-scroll-x {
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+}
+.ax-scroll-y {
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior-y: contain;
+}
+
+/* ── Hairline divider ───────────────────────────────────────────────────── */
+.ax-divider {
+  border: 0;
+  block-size: 1px;
+  inline-size: 100%;
+  background: var(--ax-border);
+}
+.ax-divider--vertical {
+  inline-size: 1px;
+  block-size: auto;
+  align-self: stretch;
+}
+.ax-divider--strong {
+  background: var(--ax-border-strong);
+}
+
+/* ── Skeleton shimmer (loading placeholder; reduced-motion safe) ─────────── */
+.ax-skeleton {
+  position: relative;
+  overflow: hidden;
+  background: var(--ax-fill-hover);
+  border-radius: var(--ax-radius-sm);
+}
+.ax-skeleton::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--ax-fill-active) 50%,
+    transparent 100%
+  );
+  animation: ax-shimmer 1.4s var(--ax-ease-linear) infinite;
+}
+@keyframes ax-shimmer {
+  100% {
+    transform: translateX(100%);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ax-skeleton::after {
+    animation: none;
+    /* steady mid-tone so it still reads as a placeholder without motion */
+    background: var(--ax-fill-active);
+    transform: none;
+    opacity: 0.6;
+  }
+}
+
+/* ── Aspect-ratio media frame ───────────────────────────────────────────── */
+.ax-ratio {
+  position: relative;
+  aspect-ratio: var(--ax-ratio, 16 / 9);
+  overflow: hidden;
+  border-radius: var(--ax-radius-md);
+}
+.ax-ratio > img,
+.ax-ratio > video,
+.ax-ratio > iframe {
+  position: absolute;
+  inset: 0;
+  inline-size: 100%;
+  block-size: 100%;
+  object-fit: cover;
+}
+
+/* ── Status / utility text colors (role-token aliases) ──────────────────── */
+.ax-text-strong {
+  color: var(--ax-text-strong);
+}
+.ax-text-muted {
+  color: var(--ax-text-muted);
+}
+.ax-text-subtle {
+  color: var(--ax-text-subtle);
+}
+.ax-text-accent {
+  color: var(--ax-accent);
+}
+.ax-text-success {
+  color: var(--ax-success-500);
+}
+.ax-text-warning {
+  color: var(--ax-warning-500);
+}
+.ax-text-danger {
+  color: var(--ax-danger-500);
+}
+.ax-text-info {
+  color: var(--ax-info-500);
+}
+
+/* ── Interaction guards ─────────────────────────────────────────────────── */
+.ax-no-select {
+  user-select: none;
+  -webkit-user-select: none;
+}
+.ax-pointer-none {
+  pointer-events: none;
+}
+.ax-fill {
+  inline-size: 100%;
+  block-size: 100%;
+}
+
+/* ── Reduced-motion escape hatch (opt-in per element) ───────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  .ax-motion-safe {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   DASHBOARD / PAGE GRID — the 12-column layout primitive every content page
+   uses instead of inlining `style="display:grid…"`. Gutter 24px (16px <md).
+   Span helpers `ax-col--N`; auto-stack at lg / sm per the responsive contract.
+   ───────────────────────────────────────────────────────────────────────── */
+.ax-dash-grid {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  gap: var(--ax-space-6);
+  align-items: stretch;        /* cards in the same row match height; shorter ones gain inner blank space */
+}
+@media (max-width: 768px) {
+  .ax-dash-grid {
+    gap: var(--ax-space-4);
+  }
+}
+
+.ax-col--12 { grid-column: span 12; }
+.ax-col--11 { grid-column: span 11; }
+.ax-col--10 { grid-column: span 10; }
+.ax-col--9  { grid-column: span 9; }
+.ax-col--8  { grid-column: span 8; }
+.ax-col--7  { grid-column: span 7; }
+.ax-col--6  { grid-column: span 6; }
+.ax-col--5  { grid-column: span 5; }
+.ax-col--4  { grid-column: span 4; }
+.ax-col--3  { grid-column: span 3; }
+.ax-col--2  { grid-column: span 2; }
+
+/* lg: halves/two-thirds → full; quarters/thirds → halves */
+@media (max-width: 992px) {
+  .ax-col--11, .ax-col--10, .ax-col--9, .ax-col--8, .ax-col--7, .ax-col--6 {
+    grid-column: span 12;
+  }
+  .ax-col--5, .ax-col--4, .ax-col--3, .ax-col--2 {
+    grid-column: span 6;
+  }
+}
+/* sm: everything stacks */
+@media (max-width: 576px) {
+  [class*="ax-col--"] {
+    grid-column: span 12;
+  }
+}
+
+/* Display utilities for elements toggled by Alpine x-show.
+   x-show strips the inline `display` property when showing an element, which
+   silently destroys an inline `display:grid`/`display:flex` (the element falls
+   back to `display:block`). Driving display from a class survives the toggle:
+   x-show sets inline `display:none` to hide, and removing it falls back here. */
+.ax-grid { display: grid; }
+.ax-flex { display: flex; }

@@ -1,0 +1,190 @@
+/*
+ * Vireo — Aurora token model · THE 12 ACCENT PRESETS
+ * Source of truth: brief 01-tokens.md §4.
+ * Each preset = a light block [data-ax-accent="x"] (full --ax-accent-50..900
+ * ramp + 7 accent role aliases + --ax-accent-rgb) AND a dark compound block
+ * [data-ax-theme="dark"][data-ax-accent="x"] (lightened accent override).
+ * Verdigris is also the :root default (see _roles.css); the explicit block
+ * here makes selection symmetric. A preset block touches ONLY accent tokens.
+ * Dark compound (2 attrs) outranks the light block (1 attr) — no !important.
+ */
+
+/* ════════════════ 1 · VERDIGRIS (default) ════════════════ */
+[data-ax-accent="verdigris"] {
+  --ax-accent-50:#E8F4F0; --ax-accent-100:#C9E6DD; --ax-accent-200:#9AD2C3;
+  --ax-accent-300:#63B8A3; --ax-accent-400:#39A185; --ax-accent-500:#1E856C;
+  --ax-accent-600:#197059; --ax-accent-700:#155C49; --ax-accent-800:#10463A; --ax-accent-900:#0B3029;
+  --ax-accent:var(--ax-accent-500); --ax-accent-hover:var(--ax-accent-600);
+  --ax-accent-wash:var(--ax-accent-50); --ax-on-accent:#FFFFFF;
+  --ax-focus-ring:var(--ax-accent-500); --ax-link:var(--ax-accent-700);
+  --ax-accent-rgb:30,133,108;
+}
+[data-ax-theme="dark"][data-ax-accent="verdigris"] {
+  --ax-accent:#39A185; --ax-accent-hover:#63B8A3; --ax-accent-wash:#16302A;
+  --ax-link:#63B8A3; --ax-focus-ring:#63B8A3; --ax-on-accent:#0B1F1A; --ax-accent-rgb:57,161,133;
+}
+
+/* ════════════════ 2 · COBALT ════════════════ */
+[data-ax-accent="cobalt"] {
+  --ax-accent-50:#E7EDFB; --ax-accent-100:#C9D7F4; --ax-accent-200:#9DB6EA;
+  --ax-accent-300:#6E90DE; --ax-accent-400:#4A77D6; --ax-accent-500:#2A5FCC;
+  --ax-accent-600:#2350AE; --ax-accent-700:#1D428F; --ax-accent-800:#163167; --ax-accent-900:#0F2145;
+  --ax-accent:var(--ax-accent-500); --ax-accent-hover:var(--ax-accent-600);
+  --ax-accent-wash:var(--ax-accent-50); --ax-on-accent:#FFFFFF;
+  --ax-focus-ring:var(--ax-accent-500); --ax-link:var(--ax-accent-700);
+  --ax-accent-rgb:42,95,204;
+}
+[data-ax-theme="dark"][data-ax-accent="cobalt"] {
+  --ax-accent:#5883DD; --ax-accent-hover:#8FACE8; --ax-accent-wash:#0F182C;
+  --ax-link:#8FACE8; --ax-focus-ring:#8FACE8; --ax-on-accent:#0B1F1A; --ax-accent-rgb:88,131,221;
+}
+
+/* ════════════════ 3 · INDIGO ════════════════ */
+[data-ax-accent="indigo"] {
+  --ax-accent-50:#ECEAFB; --ax-accent-100:#D6D2F5; --ax-accent-200:#B2ACEC;
+  --ax-accent-300:#8881DF; --ax-accent-400:#665CD4; --ax-accent-500:#4F46C9;
+  --ax-accent-600:#4038AC; --ax-accent-700:#332C8A; --ax-accent-800:#262164; --ax-accent-900:#191643;
+  --ax-accent:var(--ax-accent-500); --ax-accent-hover:var(--ax-accent-600);
+  --ax-accent-wash:var(--ax-accent-50); --ax-on-accent:#FFFFFF;
+  --ax-focus-ring:var(--ax-accent-500); --ax-link:var(--ax-accent-700);
+  --ax-accent-rgb:79,70,201;
+}
+[data-ax-theme="dark"][data-ax-accent="indigo"] {
+  --ax-accent:#807AD8; --ax-accent-hover:#B1ADE7; --ax-accent-wash:#110F2C;
+  --ax-link:#B1ADE7; --ax-focus-ring:#B1ADE7; --ax-on-accent:#0B1F1A; --ax-accent-rgb:128,122,216;
+}
+
+/* ════════════════ 4 · AMETHYST ════════════════ */
+[data-ax-accent="amethyst"] {
+  --ax-accent-50:#F3EAFA; --ax-accent-100:#E6D4F4; --ax-accent-200:#CFAEEA;
+  --ax-accent-300:#B07AD0; --ax-accent-400:#9D5FC4; --ax-accent-500:#8A46B5;
+  --ax-accent-600:#74399A; --ax-accent-700:#5D2E7C; --ax-accent-800:#44235B; --ax-accent-900:#2C173B;
+  --ax-accent:var(--ax-accent-500); --ax-accent-hover:var(--ax-accent-600);
+  --ax-accent-wash:var(--ax-accent-50); --ax-on-accent:#FFFFFF;
+  --ax-focus-ring:var(--ax-accent-500); --ax-link:var(--ax-accent-700);
+  --ax-accent-rgb:138,70,181;
+}
+[data-ax-theme="dark"][data-ax-accent="amethyst"] {
+  --ax-accent:#A56EC7; --ax-accent-hover:#C29ED9; --ax-accent-wash:#20102A;
+  --ax-link:#C29ED9; --ax-focus-ring:#C29ED9; --ax-on-accent:#0B1F1A; --ax-accent-rgb:165,110,199;
+}
+
+/* ════════════════ 5 · MAGENTA ════════════════ */
+[data-ax-accent="magenta"] {
+  --ax-accent-50:#FBE9F2; --ax-accent-100:#F6D0E3; --ax-accent-200:#EDA6C9;
+  --ax-accent-300:#DE70A6; --ax-accent-400:#D15095; --ax-accent-500:#C13C84;
+  --ax-accent-600:#A53170; --ax-accent-700:#85285A; --ax-accent-800:#611D42; --ax-accent-900:#3F132B;
+  --ax-accent:var(--ax-accent-500); --ax-accent-hover:var(--ax-accent-600);
+  --ax-accent-wash:var(--ax-accent-50); --ax-on-accent:#FFFFFF;
+  --ax-focus-ring:var(--ax-accent-500); --ax-link:var(--ax-accent-700);
+  --ax-accent-rgb:193,60,132;
+}
+[data-ax-theme="dark"][data-ax-accent="magenta"] {
+  --ax-accent:#CD5E9A; --ax-accent-hover:#DD91BA; --ax-accent-wash:#2C0F1F;
+  --ax-link:#DD91BA; --ax-focus-ring:#DD91BA; --ax-on-accent:#0B1F1A; --ax-accent-rgb:205,94,154;
+}
+
+/* ════════════════ 6 · TERRACOTTA ════════════════ */
+[data-ax-accent="terracotta"] {
+  --ax-accent-50:#FBEAE4; --ax-accent-100:#F6D3C7; --ax-accent-200:#EDAD97;
+  --ax-accent-300:#DC7C5E; --ax-accent-400:#D2654A; --ax-accent-500:#C25339;
+  --ax-accent-600:#AB4630; --ax-accent-700:#8A3826; --ax-accent-800:#65291C; --ax-accent-900:#421B12;
+  --ax-accent:var(--ax-accent-500); --ax-accent-hover:var(--ax-accent-600);
+  --ax-accent-wash:var(--ax-accent-50); --ax-on-accent:#FFFFFF;
+  --ax-focus-ring:var(--ax-accent-500); --ax-link:var(--ax-accent-700);
+  --ax-accent-rgb:194,83,57;
+}
+[data-ax-theme="dark"][data-ax-accent="terracotta"] {
+  --ax-accent:#CD674F; --ax-accent-hover:#DC9382; --ax-accent-wash:#2C140F;
+  --ax-link:#DC9382; --ax-focus-ring:#DC9382; --ax-on-accent:#0B1F1A; --ax-accent-rgb:205,103,79;
+}
+
+/* ════════════════ 7 · AMBER (dark ink on accent) ════════════════ */
+[data-ax-accent="amber"] {
+  --ax-accent-50:#FBF1DE; --ax-accent-100:#F6E2BB; --ax-accent-200:#EDC97E;
+  --ax-accent-300:#DDAB3C; --ax-accent-400:#D29A1E; --ax-accent-500:#C1820E;
+  --ax-accent-600:#A9720B; --ax-accent-700:#885B09; --ax-accent-800:#634207; --ax-accent-900:#412B04;
+  --ax-accent:var(--ax-accent-500); --ax-accent-hover:var(--ax-accent-600);
+  --ax-accent-wash:var(--ax-accent-50); --ax-on-accent:#1F1602; /* dark ink */
+  --ax-focus-ring:var(--ax-accent-500); --ax-link:var(--ax-accent-700);
+  --ax-accent-rgb:193,130,14;
+}
+[data-ax-theme="dark"][data-ax-accent="amber"] {
+  --ax-accent:#E0A53A; --ax-accent-hover:#EDBE6A; --ax-accent-wash:#2C220F;
+  --ax-link:#EDBE6A; --ax-focus-ring:#EDBE6A; --ax-on-accent:#1F1602; --ax-accent-rgb:224,165,58;
+}
+
+/* ════════════════ 8 · OLIVE ════════════════ */
+[data-ax-accent="olive"] {
+  --ax-accent-50:#F0F4DF; --ax-accent-100:#E0E9BC; --ax-accent-200:#C7D782;
+  --ax-accent-300:#9DB83C; --ax-accent-400:#7E9722; --ax-accent-500:#647F1C;
+  --ax-accent-600:#5C7419; --ax-accent-700:#495D14; --ax-accent-800:#36440F; --ax-accent-900:#232C09;
+  --ax-accent:var(--ax-accent-500); --ax-accent-hover:var(--ax-accent-600);
+  --ax-accent-wash:var(--ax-accent-50); --ax-on-accent:#FFFFFF;
+  --ax-focus-ring:var(--ax-accent-500); --ax-link:var(--ax-accent-700);
+  --ax-accent-rgb:100,127,28;
+}
+[data-ax-theme="dark"][data-ax-accent="olive"] {
+  --ax-accent:#84A725; --ax-accent-hover:#AAD33B; --ax-accent-wash:#242C0F;
+  --ax-link:#AAD33B; --ax-focus-ring:#AAD33B; --ax-on-accent:#0B1F1A; --ax-accent-rgb:132,167,37;
+}
+
+/* ════════════════ 9 · FOREST ════════════════ */
+[data-ax-accent="forest"] {
+  --ax-accent-50:#E6F2EB; --ax-accent-100:#C6E2D1; --ax-accent-200:#93C8A9;
+  --ax-accent-300:#4FA871; --ax-accent-400:#37915A; --ax-accent-500:#2C7A4B;
+  --ax-accent-600:#24643E; --ax-accent-700:#1D5032; --ax-accent-800:#153B25; --ax-accent-900:#0D2618;
+  --ax-accent:var(--ax-accent-500); --ax-accent-hover:var(--ax-accent-600);
+  --ax-accent-wash:var(--ax-accent-50); --ax-on-accent:#FFFFFF;
+  --ax-focus-ring:var(--ax-accent-500); --ax-link:var(--ax-accent-700);
+  --ax-accent-rgb:44,122,75;
+}
+[data-ax-theme="dark"][data-ax-accent="forest"] {
+  --ax-accent:#36965C; --ax-accent-hover:#4FBF7C; --ax-accent-wash:#102B1A;
+  --ax-link:#4FBF7C; --ax-focus-ring:#4FBF7C; --ax-on-accent:#0B1F1A; --ax-accent-rgb:54,150,92;
+}
+
+/* ════════════════ 10 · TEAL ════════════════ */
+[data-ax-accent="teal"] {
+  --ax-accent-50:#E1F1F3; --ax-accent-100:#BCDFE3; --ax-accent-200:#82C3CB;
+  --ax-accent-300:#2F9AAB; --ax-accent-400:#15909F; --ax-accent-500:#10808F;
+  --ax-accent-600:#0C6A77; --ax-accent-700:#0A555F; --ax-accent-800:#073F47; --ax-accent-900:#04292F;
+  --ax-accent:var(--ax-accent-500); --ax-accent-hover:var(--ax-accent-600);
+  --ax-accent-wash:var(--ax-accent-50); --ax-on-accent:#FFFFFF;
+  --ax-focus-ring:var(--ax-accent-500); --ax-link:var(--ax-accent-700);
+  --ax-accent-rgb:16,128,143;
+}
+[data-ax-theme="dark"][data-ax-accent="teal"] {
+  --ax-accent:#15A4B7; --ax-accent-hover:#27D0E7; --ax-accent-wash:#0F292C;
+  --ax-link:#27D0E7; --ax-focus-ring:#27D0E7; --ax-on-accent:#0B1F1A; --ax-accent-rgb:21,164,183;
+}
+
+/* ════════════════ 11 · SLATE ════════════════ */
+[data-ax-accent="slate"] {
+  --ax-accent-50:#EBEEF1; --ax-accent-100:#D5DBE1; --ax-accent-200:#AFBAC6;
+  --ax-accent-300:#7E8EA0; --ax-accent-400:#5F7184; --ax-accent-500:#4A5A6B;
+  --ax-accent-600:#3D4B59; --ax-accent-700:#313C47; --ax-accent-800:#242C34; --ax-accent-900:#171D22;
+  --ax-accent:var(--ax-accent-500); --ax-accent-hover:var(--ax-accent-600);
+  --ax-accent-wash:var(--ax-accent-50); --ax-on-accent:#FFFFFF;
+  --ax-focus-ring:var(--ax-accent-500); --ax-link:var(--ax-accent-700);
+  --ax-accent-rgb:74,90,107;
+}
+[data-ax-theme="dark"][data-ax-accent="slate"] {
+  --ax-accent:#72879D; --ax-accent-hover:#99A8B9; --ax-accent-wash:#181D23;
+  --ax-link:#99A8B9; --ax-focus-ring:#99A8B9; --ax-on-accent:#0B1F1A; --ax-accent-rgb:114,135,157;
+}
+
+/* ════════════════ 12 · GRAPHITE ════════════════ */
+[data-ax-accent="graphite"] {
+  --ax-accent-50:#EEEDEA; --ax-accent-100:#DAD9D4; --ax-accent-200:#BAB9B1;
+  --ax-accent-300:#8E8D85; --ax-accent-400:#6B6A64; --ax-accent-500:#52514C;
+  --ax-accent-600:#434240; --ax-accent-700:#363533; --ax-accent-800:#282826; --ax-accent-900:#1A1A18;
+  --ax-accent:var(--ax-accent-500); --ax-accent-hover:var(--ax-accent-600);
+  --ax-accent-wash:var(--ax-accent-50); --ax-on-accent:#FFFFFF;
+  --ax-focus-ring:var(--ax-accent-500); --ax-link:var(--ax-accent-700);
+  --ax-accent-rgb:82,81,76;
+}
+[data-ax-theme="dark"][data-ax-accent="graphite"] {
+  --ax-accent:#86857D; --ax-accent-hover:#A6A59F; --ax-accent-wash:#1E1E1C;
+  --ax-link:#A6A59F; --ax-focus-ring:#A6A59F; --ax-on-accent:#0B1F1A; --ax-accent-rgb:134,133,125;
+}

@@ -1,0 +1,1611 @@
+/*
+ * Vireo — HTML reference edition · SHELL-CHROME components (Aurora)
+ * ----------------------------------------------------------------------------
+ * Fills the component-CSS gaps for the six shell partials (head/sidebar/header/
+ * footer/customizer/scripts). The design-system foundation (tokens, .ax-card,
+ * .ax-btn, .ax-nav__*, sidebar/header LAYOUT in base.css, surface schemes in
+ * schemes.css, the .ax-menu dropdown recipe) was already built — this file ONLY
+ * adds the bespoke chrome classes the partials reference that had no rule:
+ *
+ *   · Alpine x-cloak guard (prevents customizer/dropdown flash before boot)
+ *   · .ax-customizer  full drawer (off-canvas → slide-in, glass, sticky head/foot)
+ *   · customizer controls: .ax-segmented, .ax-swatch grid, .ax-scheme / .ax-style
+ *     / .ax-thumb / .ax-tint previews, .ax-color-field / .ax-hex / .ax-recent-*,
+ *     .ax-toggle switch, .ax-note
+ *   · header chrome: .ax-icon-btn, .ax-search (⌘K trigger),
+ *     .ax-badge-count, and the .ax-dropdown PANEL + all .ax-dropdown__* internals
+ *     used by language / app-grid / cart / notifications / profile / overflow
+ *   · command palette: .ax-command__* (JS-emitted rows)
+ *   · sidebar content gaps: filter input, mark, nav-empty, promo, mini user card
+ *   · footer link row + two missing .ax-btn modifiers (--accent, --ghost-danger)
+ *
+ * TOKEN LAW (locked): Layer-2 role tokens / scales only; literal colour solely
+ * inside rgba(var(--ax-accent-rgb), a). CSS logical properties throughout (RTL).
+ * Open/close HOOKS match the JS that already exists — NOT invented:
+ *   · customizer  → Alpine `x-show="open"` + x-transition classes
+ *                   `.ax-customizer--enter` / `.ax-customizer--leave`
+ *   · dropdowns   → Alpine `x-show="open"` (display toggle; opacity transition)
+ *   · command     → `.is-open` class + `hidden` attr on `#ax-command` (vanilla JS)
+ * ----------------------------------------------------------------------------
+ */
+
+/*
+ * LAYER NOTE: this file is intentionally UNLAYERED (like base.css + schemes.css).
+ * base.css ships an unlayered reset `button { background: none }`; an unlayered
+ * rule beats ANY @layer rule regardless of specificity, so chrome built on
+ * <button> (swatches, segmented, scheme/style tiles, icon-btn, toggles…) must
+ * also be unlayered for its `background` to win. Normal specificity then applies
+ * (`.ax-swatch` 0,1,0 > `button` 0,0,1). Pages can still override via inline /
+ * higher-specificity selectors as needed.
+ */
+/* ════════════════════════════════════════════════════════════════════════
+     0 · ALPINE x-cloak — hide x-show/x-cloak elements until Alpine hydrates.
+     The customizer drawer and every header dropdown panel carry x-cloak; with
+     no rule they paint fully-open on first load. Display:none until boot.
+     ════════════════════════════════════════════════════════════════════════ */
+  [x-cloak] {
+    display: none !important;
+  }
+
+  /* ════════════════════════════════════════════════════════════════════════
+     1 · ICON BUTTON  .ax-icon-btn  (square ghost icon control — header + close)
+     base.css only paints `.ax-header .ax-icon-btn:hover`; the box is defined
+     here so it works in the header AND inside the customizer.
+     ════════════════════════════════════════════════════════════════════════ */
+  .ax-icon-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+    inline-size: 38px;
+    block-size: 38px;
+    padding: 0;
+    color: var(--ax-text-muted);
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: var(--ax-radius-md);
+    cursor: pointer;
+    -webkit-appearance: none;
+    appearance: none;
+    transition:
+      background var(--ax-motion-fast) var(--ax-ease-standard),
+      color var(--ax-motion-fast) var(--ax-ease-standard),
+      border-color var(--ax-motion-fast) var(--ax-ease-standard);
+  }
+  .ax-icon-btn:hover {
+    color: var(--ax-text-strong);
+    background: var(--ax-fill-hover);
+  }
+  .ax-icon-btn:active {
+    background: var(--ax-fill-active);
+  }
+  .ax-icon-btn[aria-expanded='true'],
+  .ax-icon-btn[aria-pressed='true'] {
+    color: var(--ax-accent);
+    background: var(--ax-accent-wash);
+  }
+  .ax-icon-btn .ax-icon {
+    inline-size: var(--ax-icon-md);
+    block-size: var(--ax-icon-md);
+  }
+
+  /* ════════════════════════════════════════════════════════════════════════
+     2 · HEADER ⌘K SEARCH TRIGGER + COUNT BADGE
+     ════════════════════════════════════════════════════════════════════════ */
+  /* ⌘K search pill (header.html §2) */
+  .ax-search {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--ax-space-2);
+    min-inline-size: 0;
+    max-inline-size: 280px;
+    block-size: 38px;
+    padding-inline: var(--ax-space-3);
+    color: var(--ax-text-muted);
+    background: var(--ax-surface-subtle);
+    border: 1px solid var(--ax-border);
+    border-radius: var(--ax-radius-pill);
+    cursor: text;
+    transition:
+      background var(--ax-motion-fast) var(--ax-ease-standard),
+      border-color var(--ax-motion-fast) var(--ax-ease-standard);
+  }
+  .ax-search:hover {
+    background: var(--ax-fill-hover);
+    border-color: var(--ax-border-strong);
+  }
+  .ax-search__icon {
+    flex: 0 0 auto;
+    inline-size: var(--ax-icon-sm);
+    block-size: var(--ax-icon-sm);
+    color: var(--ax-text-subtle);
+  }
+  .ax-search__placeholder {
+    flex: 1 1 auto;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: var(--ax-text-sm);
+    text-align: start;
+  }
+  .ax-search__keycap {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    padding-inline: var(--ax-space-2);
+    block-size: 20px;
+    font-family: var(--ax-font-mono);
+    font-size: var(--ax-text-2xs);
+    color: var(--ax-text-subtle);
+    background: var(--ax-surface);
+    border: 1px solid var(--ax-border);
+    border-radius: var(--ax-radius-xs);
+  }
+
+  /* count bubble on cart / notifications triggers (partial uses .ax-badge-count;
+     the styled token in components.css is .ax-badge--count, so this is a gap) */
+  .ax-badge-count {
+    position: absolute;
+    inset-block-start: 2px;
+    inset-inline-end: 2px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-inline-size: 16px;
+    block-size: 16px;
+    padding-inline: 4px;
+    font-family: var(--ax-font-mono);
+    font-size: 10px;
+    font-weight: var(--ax-weight-semibold);
+    line-height: 1;
+    color: var(--ax-on-accent);
+    background: var(--ax-accent);
+    border-radius: var(--ax-radius-pill);
+    box-shadow: 0 0 0 2px var(--ax-header-bg, var(--ax-surface-raised));
+    pointer-events: none;
+  }
+  .ax-badge-count--dot {
+    min-inline-size: 8px;
+    block-size: 8px;
+    padding: 0;
+    font-size: 0;
+    color: transparent;
+  }
+  /* trigger buttons that host a count need positioning context */
+  .ax-cart__trigger,
+  .ax-notif__trigger {
+    position: relative;
+  }
+
+  /* ════════════════════════════════════════════════════════════════════════
+     3 · HEADER DROPDOWN PANEL  .ax-dropdown (+ __* internals)
+     base.css gives `.ax-dropdown { position:relative; display:inline-flex }`
+     for the WRAPPER, but the header panels are `<div class="ax-dropdown …__menu">`
+     elements that float — so the floating glass surface + every interior item is
+     defined here (mirrors the .ax-menu recipe with the .ax-dropdown__ vocabulary
+     the partials actually use). Each cluster wrapper (.ax-lang/.ax-apps/.ax-cart/
+     .ax-notif/.ax-profile/.ax-overflow) is the relative anchor.
+     ════════════════════════════════════════════════════════════════════════ */
+  .ax-lang,
+  .ax-apps,
+  .ax-cart,
+  .ax-notif,
+  .ax-profile,
+  .ax-overflow {
+    position: relative;
+    display: inline-flex;
+    flex: 0 0 auto;
+  }
+
+  /* the floating panel itself — scoped to the header menu panels (each carries a
+     `.ax-…__menu` class) so it does NOT hijack the generic `.ax-dropdown` WRAPPER
+     that content pages use as a relative anchor (components.css defines that as
+     `position:relative; inline-flex`). `display:block` makes the items stack. */
+  .ax-lang__menu,
+  .ax-apps__menu,
+  .ax-cart__menu,
+  .ax-notif__menu,
+  .ax-profile__menu,
+  .ax-overflow__menu {
+    display: block;
+    position: absolute;
+    inset-block-start: calc(100% + var(--ax-space-2));
+    inset-inline-end: 0;
+    z-index: var(--ax-z-dropdown);
+    inline-size: max-content;
+    min-inline-size: 220px;
+    max-inline-size: min(92vw, 360px);
+    max-block-size: min(72vh, 480px);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding: var(--ax-space-2);
+    color: var(--ax-text);
+    /* Opaque, no backdrop-filter — header dropdowns read cleaner solid
+       (matches .ax-menu / .ax-combobox__panel / .ax-popover__panel). */
+    background: var(--ax-surface-solid);
+    border: 1px solid var(--ax-border);
+    border-radius: var(--ax-radius-lg);
+    box-shadow: var(--ax-shadow-lg);
+  }
+  /* the base.css wrapper rule (position:relative) must NOT defeat the panel:
+     re-assert inline-flex only on the cluster wrappers above, not the panel. */
+
+  .ax-dropdown__head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--ax-space-2);
+    padding: var(--ax-space-2) var(--ax-space-3) var(--ax-space-1);
+    font-size: var(--ax-text-2xs);
+    font-weight: var(--ax-weight-semibold);
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--ax-text-subtle);
+  }
+  .ax-dropdown__item {
+    display: flex;
+    align-items: center;
+    gap: var(--ax-space-3);
+    inline-size: 100%;
+    padding: var(--ax-space-2) var(--ax-space-3);
+    font-size: var(--ax-text-sm);
+    color: var(--ax-text);
+    text-align: start;
+    text-decoration: none;
+    background: transparent;
+    border: 0;
+    border-radius: var(--ax-radius-md);
+    cursor: pointer;
+    transition: background var(--ax-motion-instant) var(--ax-ease-standard);
+  }
+  .ax-dropdown__item:hover,
+  .ax-dropdown__item:focus-visible {
+    background: var(--ax-fill-hover);
+    color: var(--ax-text-strong);
+    outline: none;
+  }
+  .ax-dropdown__item.is-active,
+  .ax-dropdown__item[aria-checked='true'] {
+    color: var(--ax-accent);
+  }
+  .ax-dropdown__lead {
+    flex: 0 0 auto;
+    inline-size: var(--ax-icon-md);
+    block-size: var(--ax-icon-md);
+    color: var(--ax-text-subtle);
+  }
+  .ax-dropdown__item:hover .ax-dropdown__lead,
+  .ax-dropdown__item.is-active .ax-dropdown__lead {
+    color: inherit;
+  }
+  .ax-dropdown__check {
+    margin-inline-start: auto;
+    flex: 0 0 auto;
+    inline-size: var(--ax-icon-sm);
+    block-size: var(--ax-icon-sm);
+    color: var(--ax-accent);
+    opacity: 0;
+  }
+  .ax-dropdown__item.is-active .ax-dropdown__check,
+  .ax-dropdown__item[aria-checked='true'] .ax-dropdown__check {
+    opacity: 1;
+  }
+  .ax-dropdown__item--danger {
+    color: var(--ax-danger-500);
+  }
+  .ax-dropdown__item--danger .ax-dropdown__lead {
+    color: var(--ax-danger-500);
+  }
+  .ax-dropdown__item--danger:hover,
+  .ax-dropdown__item--danger:focus-visible {
+    background: color-mix(in oklab, var(--ax-danger-500) 12%, transparent);
+    color: var(--ax-danger-500);
+  }
+  .ax-dropdown__divider {
+    block-size: 1px;
+    margin-block: var(--ax-space-1);
+    margin-inline: calc(-1 * var(--ax-space-1));
+    background: var(--ax-border);
+  }
+  .ax-dropdown__foot {
+    display: block;
+    margin-block-start: var(--ax-space-1);
+    padding: var(--ax-space-2) var(--ax-space-3);
+    font-size: var(--ax-text-xs);
+    font-weight: var(--ax-weight-medium);
+    color: var(--ax-link);
+    text-align: center;
+    text-decoration: none;
+    border-block-start: 1px solid var(--ax-border);
+    border-radius: 0 0 var(--ax-radius-sm) var(--ax-radius-sm);
+  }
+  .ax-dropdown__foot:hover {
+    background: var(--ax-fill-hover);
+  }
+
+  /* ── LANGUAGE menu ── */
+  .ax-lang__code {
+    font-family: var(--ax-font-mono);
+    font-size: var(--ax-text-xs);
+    font-weight: var(--ax-weight-semibold);
+    letter-spacing: 0.02em;
+  }
+  .ax-lang__menu {
+    min-inline-size: 200px;
+  }
+  .ax-lang__name {
+    color: var(--ax-text-muted);
+  }
+  .ax-dropdown__item.is-active .ax-lang__name {
+    color: inherit;
+  }
+
+  /* ── APP-GRID menu ── */
+  .ax-apps__menu {
+    inline-size: 320px;
+  }
+  .ax-apps__grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: var(--ax-space-1);
+    padding: var(--ax-space-1);
+  }
+  .ax-apps__tile {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--ax-space-2);
+    padding-block: var(--ax-space-3);
+    padding-inline: var(--ax-space-2);
+    color: var(--ax-text-muted);
+    text-decoration: none;
+    border-radius: var(--ax-radius-md);
+    transition:
+      background var(--ax-motion-fast) var(--ax-ease-standard),
+      color var(--ax-motion-fast) var(--ax-ease-standard);
+  }
+  .ax-apps__tile:hover,
+  .ax-apps__tile:focus-visible {
+    background: var(--ax-fill-hover);
+    color: var(--ax-text-strong);
+    outline: none;
+  }
+  .ax-apps__tile-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    inline-size: 38px;
+    block-size: 38px;
+    color: var(--ax-accent);
+    background: var(--ax-accent-wash);
+    border-radius: var(--ax-radius-md);
+  }
+  .ax-apps__tile-icon .ax-icon {
+    inline-size: var(--ax-icon-md);
+    block-size: var(--ax-icon-md);
+  }
+  .ax-apps__tile-label {
+    font-size: var(--ax-text-xs);
+    font-weight: var(--ax-weight-medium);
+  }
+
+  /* ── CART menu ── */
+  .ax-cart__menu {
+    inline-size: 340px;
+  }
+  .ax-cart__count {
+    text-transform: none;
+    letter-spacing: 0;
+    color: var(--ax-text-muted);
+  }
+  .ax-cart__list {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  .ax-cart__row {
+    display: flex;
+    align-items: center;
+    gap: var(--ax-space-3);
+    padding: var(--ax-space-2) var(--ax-space-3);
+    border-radius: var(--ax-radius-md);
+  }
+  .ax-cart__row:hover {
+    background: var(--ax-fill-hover);
+  }
+  .ax-cart__thumb {
+    flex: 0 0 auto;
+    inline-size: 40px;
+    block-size: 40px;
+    object-fit: cover;
+    border-radius: var(--ax-radius-sm);
+    border: 1px solid var(--ax-border);
+  }
+  .ax-cart__meta {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-inline-size: 0;
+    flex: 1 1 auto;
+  }
+  .ax-cart__name {
+    font-size: var(--ax-text-sm);
+    font-weight: var(--ax-weight-semibold);
+    color: var(--ax-text-strong);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .ax-cart__qty {
+    font-size: var(--ax-text-xs);
+    color: var(--ax-text-muted);
+  }
+  .ax-cart__remove {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    inline-size: 28px;
+    block-size: 28px;
+    color: var(--ax-text-subtle);
+    background: transparent;
+    border: 0;
+    border-radius: var(--ax-radius-sm);
+    cursor: pointer;
+    transition: color var(--ax-motion-fast) var(--ax-ease-standard);
+  }
+  .ax-cart__remove:hover {
+    color: var(--ax-danger-500);
+    background: var(--ax-fill-hover);
+  }
+  .ax-cart__remove .ax-icon {
+    inline-size: var(--ax-icon-sm);
+    block-size: var(--ax-icon-sm);
+  }
+  .ax-cart__subtotal {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--ax-space-3);
+    margin-block-start: var(--ax-space-1);
+    font-weight: var(--ax-weight-semibold);
+    color: var(--ax-text-strong);
+    border-block-start: 1px solid var(--ax-border);
+  }
+  .ax-cart__actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--ax-space-2);
+    padding: var(--ax-space-1) var(--ax-space-2) var(--ax-space-2);
+  }
+
+  /* ── NOTIFICATIONS panel ── */
+  .ax-notif__menu {
+    inline-size: 360px;
+  }
+  .ax-notif__mark-all {
+    text-transform: none;
+    letter-spacing: 0;
+    font-size: var(--ax-text-xs);
+    font-weight: var(--ax-weight-medium);
+    color: var(--ax-link);
+    background: transparent;
+    border: 0;
+    cursor: pointer;
+  }
+  .ax-notif__mark-all:hover {
+    text-decoration: underline;
+  }
+  .ax-notif__tabs {
+    display: inline-flex;
+    gap: 2px;
+    margin: var(--ax-space-1) var(--ax-space-2) var(--ax-space-2);
+    padding: 3px;
+    background: var(--ax-surface-subtle);
+    border: 1px solid var(--ax-border);
+    border-radius: var(--ax-radius-pill);
+  }
+  .ax-notif__tab {
+    padding: 4px var(--ax-space-3);
+    font-size: var(--ax-text-xs);
+    font-weight: var(--ax-weight-medium);
+    color: var(--ax-text-muted);
+    background: transparent;
+    border: 0;
+    border-radius: var(--ax-radius-pill);
+    cursor: pointer;
+    transition:
+      background var(--ax-motion-fast) var(--ax-ease-standard),
+      color var(--ax-motion-fast) var(--ax-ease-standard);
+  }
+  .ax-notif__tab.is-active {
+    color: var(--ax-accent);
+    background: var(--ax-accent-wash);
+  }
+  .ax-notif__list {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: var(--ax-space-1);
+  }
+  .ax-notif__row {
+    position: relative;
+    display: flex;
+    align-items: flex-start;
+    gap: var(--ax-space-3);
+    padding: var(--ax-space-3);
+    border-radius: var(--ax-radius-md);
+  }
+  .ax-notif__row:hover {
+    background: var(--ax-fill-hover);
+  }
+  .ax-notif__row.is-unread {
+    background: var(--ax-accent-wash);
+  }
+  .ax-notif__chip {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    inline-size: 34px;
+    block-size: 34px;
+    color: var(--ax-text-subtle);
+    background: var(--ax-surface-subtle);
+    border-radius: var(--ax-radius-pill);
+    overflow: hidden;
+  }
+  .ax-notif__chip .ax-icon {
+    inline-size: var(--ax-icon-sm);
+    block-size: var(--ax-icon-sm);
+  }
+  .ax-notif__chip--success {
+    color: var(--ax-success-500);
+    background: var(--ax-success-50);
+  }
+  .ax-notif__chip--warning {
+    color: var(--ax-warning-500);
+    background: var(--ax-warning-50);
+  }
+  .ax-notif__body {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-inline-size: 0;
+    flex: 1 1 auto;
+  }
+  .ax-notif__title {
+    font-size: var(--ax-text-sm);
+    font-weight: var(--ax-weight-semibold);
+    color: var(--ax-text-strong);
+  }
+  .ax-notif__text {
+    font-size: var(--ax-text-xs);
+    line-height: var(--ax-leading-xs);
+    color: var(--ax-text-muted);
+  }
+  .ax-notif__time {
+    font-size: var(--ax-text-2xs);
+    color: var(--ax-text-subtle);
+  }
+  .ax-notif__dot {
+    flex: 0 0 auto;
+    align-self: center;
+    inline-size: 8px;
+    block-size: 8px;
+    background: var(--ax-accent);
+    border-radius: var(--ax-radius-pill);
+  }
+  .ax-notif__empty {
+    padding: var(--ax-space-5) var(--ax-space-3);
+    font-size: var(--ax-text-sm);
+    color: var(--ax-text-muted);
+    text-align: center;
+  }
+  .ax-notif__live {
+    position: absolute;
+    inline-size: 1px;
+    block-size: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+
+  /* ── PROFILE menu ── */
+  .ax-profile__trigger {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--ax-space-2);
+    padding: 4px var(--ax-space-2) 4px 4px;
+    color: var(--ax-text);
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: var(--ax-radius-pill);
+    cursor: pointer;
+    transition:
+      background var(--ax-motion-fast) var(--ax-ease-standard),
+      border-color var(--ax-motion-fast) var(--ax-ease-standard);
+  }
+  .ax-profile__trigger:hover {
+    background: var(--ax-fill-hover);
+    border-color: var(--ax-border);
+  }
+  .ax-profile__menu {
+    inline-size: 264px;
+  }
+  .ax-profile__card {
+    display: flex;
+    align-items: center;
+    gap: var(--ax-space-3);
+    padding: var(--ax-space-3);
+    margin-block-end: var(--ax-space-1);
+  }
+  .ax-profile__card-meta {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    min-inline-size: 0;
+  }
+  .ax-profile__card-meta b {
+    font-size: var(--ax-text-sm);
+    font-weight: var(--ax-weight-semibold);
+    color: var(--ax-text-strong);
+  }
+  .ax-profile__card-meta small {
+    font-size: var(--ax-text-xs);
+    color: var(--ax-text-muted);
+  }
+
+  /* ── OVERFLOW (mobile shed) — same panel system ── */
+  .ax-overflow__menu {
+    min-inline-size: 200px;
+  }
+
+  /* ════════════════════════════════════════════════════════════════════════
+     4 · THEME CUSTOMIZER DRAWER  .ax-customizer
+     HOOK: Alpine `x-show="open"` toggles display; the panel ELEMENT is the
+     360px drawer (glass), its `.ax-customizer__backdrop` child is a fixed
+     full-viewport scrim (z-index:-1) that dims the page. NOTE: a negative-z child
+     paints ABOVE its own parent's background, so head/body/foot each carry their
+     own `--ax-surface-overlay` fill to stay opaque over the scrim. RESTING =
+     translateX(100%) off the inline end; the x-transition classes slide it in/out.
+     ════════════════════════════════════════════════════════════════════════ */
+  .ax-customizer {
+    position: fixed;
+    inset-block: 0;
+    inset-inline-end: 0;
+    z-index: var(--ax-z-customizer);
+    display: flex;
+    flex-direction: column;
+    inline-size: 360px;
+    max-inline-size: 100vw;
+    color: var(--ax-text);
+    background: var(--ax-surface-overlay);
+    border-start-start-radius: var(--ax-radius-xl);
+    border-end-start-radius: var(--ax-radius-xl);
+    border-inline-start: 1px solid var(--ax-border);
+    box-shadow: var(--ax-shadow-lg);
+    -webkit-backdrop-filter: blur(22px) saturate(1.1);
+    backdrop-filter: blur(22px) saturate(1.1);
+    transform: translateX(0); /* shown state (x-show controls display) */
+  }
+  [dir='rtl'] .ax-customizer {
+    transform: translateX(0);
+  }
+
+  /* fixed full-viewport scrim — painted behind the panel via negative z-index */
+  .ax-customizer__backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    inline-size: 100vw;
+    block-size: 100vh;
+    padding: 0;
+    background: var(--ax-backdrop);
+    border: 0;
+    cursor: pointer;
+    -webkit-backdrop-filter: blur(2px);
+    backdrop-filter: blur(2px);
+  }
+
+  /* Alpine x-transition classes (slide + fade). Enter: start off-canvas →
+     rest; Leave: rest → off-canvas. These classes are present for the whole
+     transition; we drive the motion through `transition` + the start/rest
+     transforms Alpine snapshots. */
+  .ax-customizer--enter,
+  .ax-customizer--leave {
+    transition:
+      transform var(--ax-motion-slow) var(--ax-ease-emphasized),
+      opacity var(--ax-motion-base) var(--ax-ease-standard);
+  }
+  .ax-customizer--leave {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+  [dir='rtl'] .ax-customizer--leave {
+    transform: translateX(-100%);
+  }
+
+  /* sticky head */
+  .ax-customizer__head {
+    position: sticky;
+    inset-block-start: 0;
+    z-index: 1;
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--ax-space-3);
+    flex: 0 0 auto;
+    padding: var(--ax-space-5);
+    background: var(--ax-surface-overlay);
+    border-block-end: 1px solid var(--ax-border);
+  }
+  .ax-customizer__head-text {
+    min-inline-size: 0;
+  }
+  .ax-customizer__title {
+    font-family: var(--ax-font-display);
+    font-size: var(--ax-text-lg);
+    font-weight: var(--ax-weight-bold);
+    color: var(--ax-text-strong);
+  }
+  .ax-customizer__sub {
+    margin-block-start: 2px;
+    font-size: var(--ax-text-xs);
+    color: var(--ax-text-muted);
+  }
+
+  /* scrolling body — needs its own opaque surface: the `.ax-customizer__backdrop`
+     scrim is a z-index:-1 child, and a negative-z child paints ABOVE its parent's
+     own background (it cannot sit behind the parent box). __head/__foot escape via
+     their own bg + positioned layer; the body must match them or the dark scrim
+     bleeds through the whole scroll region (the grey slab in light mode). */
+  .ax-customizer__body {
+    flex: 1 1 auto;
+    min-block-size: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding: var(--ax-space-5);
+    display: flex;
+    flex-direction: column;
+    gap: var(--ax-space-6);
+    background: var(--ax-surface-overlay);
+  }
+  .ax-customizer__section {
+    display: flex;
+    flex-direction: column;
+    gap: var(--ax-space-3);
+  }
+  .ax-customizer__section.is-disabled {
+    opacity: 0.55;
+    pointer-events: none;
+  }
+  .ax-customizer__label {
+    margin-block-start: var(--ax-space-1);
+    font-size: var(--ax-text-xs);
+    font-weight: var(--ax-weight-medium);
+    color: var(--ax-text-muted);
+  }
+
+  /* sticky foot */
+  .ax-customizer__foot {
+    position: sticky;
+    inset-block-end: 0;
+    z-index: 1;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--ax-space-2);
+    flex: 0 0 auto;
+    padding: var(--ax-space-4) var(--ax-space-5);
+    background: var(--ax-surface-overlay);
+    border-block-start: 1px solid var(--ax-border);
+  }
+  .ax-customizer__live {
+    position: absolute;
+    inline-size: 1px;
+    block-size: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+
+  /* ════════════════════════════════════════════════════════════════════════
+     5 · SEGMENTED CONTROL  .ax-segmented / __btn  (hairline pill row)
+     ════════════════════════════════════════════════════════════════════════ */
+  .ax-segmented {
+    display: grid;
+    grid-auto-flow: column;
+    grid-auto-columns: 1fr;
+    gap: 2px;
+    padding: 3px;
+    background: var(--ax-surface-subtle);
+    border: 1px solid var(--ax-border);
+    border-radius: var(--ax-radius-md);
+  }
+  .ax-segmented__btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--ax-space-1);
+    padding: var(--ax-space-2) var(--ax-space-2);
+    font-size: var(--ax-text-xs);
+    font-weight: var(--ax-weight-medium);
+    color: var(--ax-text-muted);
+    background: transparent;
+    border: 0;
+    border-radius: var(--ax-radius-sm);
+    cursor: pointer;
+    transition:
+      background var(--ax-motion-fast) var(--ax-ease-standard),
+      color var(--ax-motion-fast) var(--ax-ease-standard);
+  }
+  .ax-segmented__btn .ax-icon {
+    inline-size: var(--ax-icon-sm);
+    block-size: var(--ax-icon-sm);
+  }
+  .ax-segmented__btn:hover {
+    color: var(--ax-text-strong);
+    background: var(--ax-fill-hover);
+  }
+  .ax-segmented__btn.is-active {
+    color: var(--ax-accent);
+    background: var(--ax-accent-wash);
+    box-shadow: inset 0 0 0 1px var(--ax-accent);
+  }
+
+  /* ════════════════════════════════════════════════════════════════════════
+     6 · ACCENT SWATCH GRID  .ax-swatch-grid / .ax-swatch (--sw per swatch)
+     Each swatch's fill comes from its inline `style="--sw:#hex"`.
+     ════════════════════════════════════════════════════════════════════════ */
+  .ax-swatch-grid {
+    display: grid;
+    grid-template-columns: repeat(6, 1fr);
+    gap: var(--ax-space-3);
+  }
+  .ax-swatch {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    aspect-ratio: 1;
+    inline-size: 100%;
+    color: #fff;
+    background: var(--sw, var(--ax-accent));
+    border: 0;
+    border-radius: var(--ax-radius-pill);
+    cursor: pointer;
+    box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.08);
+    transition:
+      transform var(--ax-motion-fast) var(--ax-ease-standard),
+      box-shadow var(--ax-motion-fast) var(--ax-ease-standard);
+  }
+  .ax-swatch:hover {
+    transform: scale(1.08);
+  }
+  .ax-swatch.is-active {
+    box-shadow:
+      0 0 0 2px var(--ax-surface-overlay),
+      0 0 0 4px var(--ax-accent);
+  }
+  .ax-swatch__check {
+    inline-size: var(--ax-icon-sm);
+    block-size: var(--ax-icon-sm);
+    filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.35));
+  }
+
+  /* recent-colour swatches + bg tint dots (smaller round chips) */
+  .ax-recent-swatches,
+  .ax-tint-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--ax-space-2);
+  }
+  .ax-recent-swatch,
+  .ax-tint {
+    inline-size: 26px;
+    block-size: 26px;
+    background: var(--sw, var(--ax-surface));
+    border: 1px solid var(--ax-border);
+    border-radius: var(--ax-radius-pill);
+    cursor: pointer;
+    box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.06);
+    transition: transform var(--ax-motion-fast) var(--ax-ease-standard);
+  }
+  .ax-recent-swatch:hover,
+  .ax-tint:hover {
+    transform: scale(1.1);
+  }
+
+  /* ════════════════════════════════════════════════════════════════════════
+     7 · CUSTOM COLOUR FIELDS  .ax-color-field / __label / __controls
+     .ax-color-input (native picker) / .ax-hex (text)
+     ════════════════════════════════════════════════════════════════════════ */
+  .ax-color-field {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--ax-space-3);
+  }
+  .ax-color-field__label {
+    font-size: var(--ax-text-sm);
+    color: var(--ax-text);
+  }
+  .ax-color-field__controls {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--ax-space-2);
+  }
+  .ax-color-input {
+    inline-size: 34px;
+    block-size: 34px;
+    padding: 0;
+    background: transparent;
+    border: 1px solid var(--ax-border);
+    border-radius: var(--ax-radius-sm);
+    cursor: pointer;
+  }
+  .ax-color-input::-webkit-color-swatch-wrapper {
+    padding: 3px;
+  }
+  .ax-color-input::-webkit-color-swatch {
+    border: 0;
+    border-radius: calc(var(--ax-radius-sm) - 4px);
+  }
+  .ax-color-input::-moz-color-swatch {
+    border: 0;
+    border-radius: calc(var(--ax-radius-sm) - 4px);
+  }
+  .ax-hex {
+    inline-size: 96px;
+    padding: var(--ax-space-2) var(--ax-space-3);
+    font-family: var(--ax-font-mono);
+    font-size: var(--ax-text-xs);
+    color: var(--ax-text-strong);
+    background: var(--ax-surface-subtle);
+    border: 1px solid var(--ax-border);
+    border-radius: var(--ax-radius-sm);
+  }
+  .ax-hex:focus-visible {
+    outline: none;
+    border-color: var(--ax-accent);
+  }
+
+  /* ════════════════════════════════════════════════════════════════════════
+     8 · SIDEBAR/HEADER SCHEME MINI-PREVIEWS  .ax-scheme-row / .ax-scheme--*
+     Small tiles showing the chrome colour; active = accent ring + check.
+     ════════════════════════════════════════════════════════════════════════ */
+  .ax-scheme-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--ax-space-2);
+  }
+  .ax-scheme {
+    position: relative;
+    inline-size: 44px;
+    block-size: 32px;
+    background: var(--ax-surface-solid);
+    border: 1px solid var(--ax-border);
+    border-radius: var(--ax-radius-sm);
+    cursor: pointer;
+    overflow: hidden;
+    transition: box-shadow var(--ax-motion-fast) var(--ax-ease-standard);
+  }
+  /* a left "rail" stripe to read as chrome */
+  .ax-scheme::before {
+    content: '';
+    position: absolute;
+    inset-block: 0;
+    inset-inline-start: 0;
+    inline-size: 14px;
+  }
+  .ax-scheme.is-active {
+    box-shadow:
+      0 0 0 1px var(--ax-accent),
+      0 0 0 3px var(--ax-accent-wash);
+    border-color: var(--ax-accent);
+  }
+  .ax-scheme.is-active::after {
+    content: '';
+    position: absolute;
+    inset-block-start: 3px;
+    inset-inline-end: 3px;
+    inline-size: 6px;
+    block-size: 6px;
+    background: var(--ax-accent);
+    border-radius: var(--ax-radius-pill);
+  }
+  .ax-scheme--light {
+    background: #eef1f6;
+  }
+  .ax-scheme--light::before {
+    background: #ffffff;
+    box-shadow: inset -1px 0 0 rgba(16, 22, 40, 0.14);
+  }
+  .ax-scheme--dark {
+    background: #2a2f3a;
+  }
+  .ax-scheme--dark::before {
+    background: #141821;
+  }
+  .ax-scheme--brand::before {
+    background: var(--ax-accent);
+  }
+  .ax-scheme--brand {
+    background: var(--ax-accent-wash);
+  }
+  /* light: --ax-accent-wash (accent-50) is near-white and reads edgeless on the
+     light panel — give the brand body a clearer accent tint (dark already reads). */
+  [data-ax-theme='light'] .ax-scheme--brand {
+    background: color-mix(in srgb, var(--ax-accent) 12%, #fff);
+  }
+  .ax-scheme--gradient::before {
+    background: var(--ax-gradient-accent);
+  }
+  .ax-scheme--gradient {
+    background: var(--ax-accent-wash);
+  }
+  .ax-scheme--transparent {
+    background:
+      repeating-conic-gradient(var(--ax-surface-subtle) 0% 25%, var(--ax-surface) 0% 50%)
+      0 / 12px 12px;
+  }
+  .ax-scheme--transparent::before {
+    background: rgba(var(--ax-accent-rgb), 0.12);
+  }
+
+  /* ════════════════════════════════════════════════════════════════════════
+     9 · SIDEBAR-STYLE DIAGRAMS  .ax-style-list / .ax-style / __diagram--*
+     Tiny schematic of each sidebar layout (rail + content blocks).
+     ════════════════════════════════════════════════════════════════════════ */
+  .ax-style-list {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: var(--ax-space-2);
+  }
+  /* Docked / Detached are the only two styles now — give them equal halves. */
+  .ax-style-list--pair {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .ax-style {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--ax-space-2);
+    padding: var(--ax-space-2);
+    background: transparent;
+    border: 1px solid var(--ax-border);
+    border-radius: var(--ax-radius-md);
+    cursor: pointer;
+    transition:
+      border-color var(--ax-motion-fast) var(--ax-ease-standard),
+      background var(--ax-motion-fast) var(--ax-ease-standard);
+  }
+  .ax-style:hover {
+    background: var(--ax-fill-hover);
+  }
+  .ax-style.is-active {
+    border-color: var(--ax-accent);
+    background: var(--ax-accent-wash);
+  }
+  .ax-style__label {
+    font-size: var(--ax-text-2xs);
+    font-weight: var(--ax-weight-medium);
+    color: var(--ax-text-muted);
+  }
+  .ax-style.is-active .ax-style__label {
+    color: var(--ax-accent);
+  }
+  .ax-style__diagram {
+    position: relative;
+    inline-size: 100%;
+    aspect-ratio: 16 / 11;
+    background: var(--ax-surface-solid);
+    border: 1px solid var(--ax-border);
+    border-radius: var(--ax-radius-xs);
+    overflow: hidden;
+  }
+  /* default: full rail */
+  .ax-style__diagram::before {
+    content: '';
+    position: absolute;
+    inset-block: 0;
+    inset-inline-start: 0;
+    inline-size: 32%;
+    background: var(--ax-accent);
+    opacity: 0.85;
+  }
+  .ax-style__diagram--compact::before {
+    inline-size: 16%;
+  }
+  .ax-style__diagram--icon-text::before {
+    inline-size: 22%;
+  }
+  .ax-style__diagram--icon-overlay::before {
+    inline-size: 14%;
+  }
+  .ax-style__diagram--detached::before {
+    inset-block: 12%;
+    inset-inline-start: 8%;
+    inline-size: 26%;
+    border-radius: 3px;
+  }
+  /* double: thin icon rail + secondary panel */
+  .ax-style__diagram--double::before {
+    inline-size: 14%;
+  }
+  .ax-style__diagram--double::after {
+    content: '';
+    position: absolute;
+    inset-block: 0;
+    inset-inline-start: 14%;
+    inline-size: 20%;
+    background: var(--ax-accent);
+    opacity: 0.4;
+  }
+
+  /* ════════════════════════════════════════════════════════════════════════
+     10 · SIDEBAR BACKGROUND-IMAGE THUMBS  .ax-thumb-strip / .ax-thumb(--none)
+     ════════════════════════════════════════════════════════════════════════ */
+  .ax-thumb-strip {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: var(--ax-space-2);
+  }
+  .ax-thumb {
+    aspect-ratio: 1;
+    background: var(--ax-accent-wash);
+    background-size: cover;
+    background-position: center;
+    border: 1px solid var(--ax-border);
+    border-radius: var(--ax-radius-xs);
+    cursor: pointer;
+    transition: box-shadow var(--ax-motion-fast) var(--ax-ease-standard);
+  }
+  /* per-texture previews — mirror the real sidebar gradients (schemes.css §6)
+     keyed on the thumb's own data-ax-value, layered over the accent-wash base. */
+  .ax-thumb[data-ax-value='texture-1'] {
+    background-image: radial-gradient(circle at 1px 1px, var(--ax-border-strong) 1px, transparent 0);
+    background-size: 6px 6px;
+  }
+  .ax-thumb[data-ax-value='texture-2'] {
+    background-image: repeating-linear-gradient(45deg, var(--ax-fill-hover) 0 4px, transparent 4px 8px);
+  }
+  .ax-thumb[data-ax-value='texture-3'] {
+    background-image: linear-gradient(160deg, var(--ax-accent-wash), transparent 60%);
+  }
+  .ax-thumb[data-ax-value='texture-4'] {
+    background-image: repeating-linear-gradient(90deg, var(--ax-fill-hover) 0 1px, transparent 1px 7px);
+  }
+  .ax-thumb[data-ax-value='texture-5'] {
+    background-image: radial-gradient(circle at 80% 0, var(--ax-accent-wash), transparent 55%);
+  }
+  .ax-thumb[data-ax-value='texture-6'] {
+    background-image: conic-gradient(from 180deg at 50% 0, var(--ax-fill-hover), transparent 40%);
+  }
+  .ax-thumb--none {
+    background:
+      linear-gradient(
+        to top left,
+        transparent calc(50% - 1px),
+        var(--ax-danger-500),
+        transparent calc(50% + 1px)
+      ),
+      var(--ax-surface-subtle);
+  }
+  .ax-thumb.is-active {
+    box-shadow:
+      0 0 0 1px var(--ax-accent),
+      0 0 0 3px var(--ax-accent-wash);
+    border-color: var(--ax-accent);
+  }
+  .ax-thumb-strip[aria-disabled='true'] {
+    opacity: 0.5;
+    pointer-events: none;
+  }
+
+  /* ════════════════════════════════════════════════════════════════════════
+     11 · TOGGLE SWITCH  .ax-toggle / __label / __input / __track / __thumb
+     ════════════════════════════════════════════════════════════════════════ */
+  .ax-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--ax-space-3);
+    cursor: pointer;
+  }
+  .ax-toggle__label {
+    font-size: var(--ax-text-sm);
+    color: var(--ax-text);
+  }
+  .ax-toggle__input {
+    position: absolute;
+    inline-size: 1px;
+    block-size: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+  .ax-toggle__track {
+    position: relative;
+    flex: 0 0 auto;
+    inline-size: 40px;
+    block-size: 22px;
+    background: var(--ax-border-strong);
+    border-radius: var(--ax-radius-pill);
+    transition: background var(--ax-motion-fast) var(--ax-ease-standard);
+  }
+  .ax-toggle__thumb {
+    position: absolute;
+    inset-block-start: 2px;
+    inset-inline-start: 2px;
+    inline-size: 18px;
+    block-size: 18px;
+    background: #fff;
+    border-radius: var(--ax-radius-pill);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+    transition: transform var(--ax-motion-fast) var(--ax-ease-emphasized);
+  }
+  .ax-toggle__input:checked + .ax-toggle__track {
+    background: var(--ax-accent);
+  }
+  .ax-toggle__input:checked + .ax-toggle__track .ax-toggle__thumb {
+    transform: translateX(18px);
+  }
+  [dir='rtl'] .ax-toggle__input:checked + .ax-toggle__track .ax-toggle__thumb {
+    transform: translateX(-18px);
+  }
+  .ax-toggle__input:focus-visible + .ax-toggle__track {
+    outline: 2px solid var(--ax-focus-ring);
+    outline-offset: 2px;
+  }
+
+  /* ════════════════════════════════════════════════════════════════════════
+     12 · HELPER NOTE  .ax-note (+ --warn)
+     ════════════════════════════════════════════════════════════════════════ */
+  .ax-note {
+    font-size: var(--ax-text-xs);
+    line-height: var(--ax-leading-xs);
+    color: var(--ax-text-subtle);
+  }
+  .ax-note--warn {
+    padding: var(--ax-space-2) var(--ax-space-3);
+    color: var(--ax-warning-500);
+    background: var(--ax-warning-50);
+    border-radius: var(--ax-radius-sm);
+  }
+
+  /* ════════════════════════════════════════════════════════════════════════
+     12b · LIGHT-MODE TILE DEFINITION
+     The customizer preview tiles (scheme/style/thumb/tint/swatch chips) use
+     white / near-white fills. On the dark panel they pop; on the near-white
+     LIGHT panel the default 8% hairline (--ax-border) leaves them edgeless and
+     they read as floating shapes. Promote their resting stroke to the stronger
+     14% hairline in LIGHT only — dark already reads, and active states (handled
+     above with their own accent border/ring) are excluded so they keep it.
+     ════════════════════════════════════════════════════════════════════════ */
+  [data-ax-theme='light'] :is(
+      .ax-scheme,
+      .ax-style,
+      .ax-style__diagram,
+      .ax-thumb,
+      .ax-tint,
+      .ax-recent-swatch,
+      .ax-color-input
+    ):not(.is-active) {
+    border-color: var(--ax-border-strong);
+  }
+
+  /* ════════════════════════════════════════════════════════════════════════
+     13 · COMMAND PALETTE  #ax-command / .ax-command__*
+     HOOK: command-palette.js toggles `.is-open` + the `hidden` attr on the
+     #ax-command root. (NOTE: the static #ax-command markup partial is not yet
+     present in the build — these rules paint it correctly once it exists; the
+     JS bails gracefully when the root is absent.) Rows/groups/empty are emitted
+     by the module into `.ax-command__results`.
+     ════════════════════════════════════════════════════════════════════════ */
+  .ax-command {
+    position: fixed;
+    inset: 0;
+    z-index: var(--ax-z-command);
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    padding-block-start: 12vh;
+    padding-inline: var(--ax-space-4);
+  }
+  .ax-command[hidden] {
+    display: none;
+  }
+  .ax-command__backdrop {
+    position: fixed;
+    inset: 0;
+    background: var(--ax-backdrop);
+    border: 0;
+    -webkit-backdrop-filter: blur(2px);
+    backdrop-filter: blur(2px);
+  }
+  .ax-command__panel {
+    position: relative;
+    inline-size: min(640px, 100%);
+    max-block-size: 70vh;
+    display: flex;
+    flex-direction: column;
+    color: var(--ax-text);
+    background: var(--ax-surface-overlay);
+    border: 1px solid var(--ax-border);
+    border-radius: var(--ax-radius-xl);
+    box-shadow: var(--ax-shadow-lg);
+    -webkit-backdrop-filter: blur(22px) saturate(1.1);
+    backdrop-filter: blur(22px) saturate(1.1);
+    overflow: hidden;
+  }
+  .ax-command__input {
+    display: flex;
+    align-items: center;
+    gap: var(--ax-space-3);
+    padding: var(--ax-space-4) var(--ax-space-5);
+    border-block-end: 1px solid var(--ax-border);
+  }
+  .ax-command__input .ax-icon {
+    flex: 0 0 auto;
+    inline-size: var(--ax-icon-md);
+    block-size: var(--ax-icon-md);
+    color: var(--ax-text-subtle);
+  }
+  .ax-command__input input {
+    flex: 1 1 auto;
+    min-inline-size: 0;
+    font-size: var(--ax-text-base);
+    color: var(--ax-text-strong);
+    background: transparent;
+    border: 0;
+    outline: none;
+  }
+  .ax-command__results {
+    flex: 1 1 auto;
+    min-block-size: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding: var(--ax-space-2);
+  }
+  .ax-command__group {
+    padding: var(--ax-space-3) var(--ax-space-3) var(--ax-space-1);
+    font-size: var(--ax-text-2xs);
+    font-weight: var(--ax-weight-semibold);
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--ax-text-subtle);
+  }
+  .ax-command__row {
+    display: flex;
+    align-items: center;
+    gap: var(--ax-space-3);
+    inline-size: 100%;
+    padding: var(--ax-space-2) var(--ax-space-3);
+    color: var(--ax-text);
+    text-align: start;
+    background: transparent;
+    border: 0;
+    border-radius: var(--ax-radius-md);
+    cursor: pointer;
+  }
+  .ax-command__row.is-active {
+    background: var(--ax-accent-wash);
+    color: var(--ax-accent);
+  }
+  .ax-command__row-title {
+    flex: 1 1 auto;
+    font-size: var(--ax-text-sm);
+    font-weight: var(--ax-weight-medium);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .ax-command__crumb {
+    flex: 0 0 auto;
+    font-size: var(--ax-text-2xs);
+    color: var(--ax-text-subtle);
+  }
+  .ax-command__row.is-active .ax-command__crumb {
+    color: inherit;
+  }
+  .ax-command__empty {
+    padding: var(--ax-space-6) var(--ax-space-4);
+    font-size: var(--ax-text-sm);
+    color: var(--ax-text-muted);
+    text-align: center;
+  }
+
+  /* ════════════════════════════════════════════════════════════════════════
+     14 · SIDEBAR CONTENT GAPS (containers are laid out in base.css; these are
+     the unstyled inner pieces: filter input/icon/clear, brand mark, nav-empty,
+     promo copy + CTA, mini user card + logout).
+     ════════════════════════════════════════════════════════════════════════ */
+  .ax-sidebar__mark {
+    display: inline-flex;
+    color: var(--ax-accent);
+  }
+  .ax-sidebar__mark .ax-icon {
+    inline-size: 24px;
+    block-size: 24px;
+  }
+  .ax-sidebar__search {
+    position: relative;
+  }
+  .ax-sidebar__search-icon {
+    position: absolute;
+    inset-block-start: 50%;
+    inset-inline-start: calc(var(--ax-space-4) + var(--ax-space-3));
+    transform: translateY(-50%);
+    inline-size: var(--ax-icon-sm);
+    block-size: var(--ax-icon-sm);
+    color: var(--ax-text-subtle);
+    pointer-events: none;
+  }
+  .ax-sidebar__filter {
+    inline-size: 100%;
+    padding-block: var(--ax-space-2);
+    padding-inline-start: calc(var(--ax-space-3) + var(--ax-icon-sm) + var(--ax-space-2));
+    padding-inline-end: var(--ax-space-3);
+    font-size: var(--ax-text-sm);
+    color: var(--ax-text-strong);
+    background: var(--ax-surface-subtle);
+    border: 1px solid var(--ax-border);
+    border-radius: var(--ax-radius-md);
+  }
+  .ax-sidebar__filter::placeholder {
+    color: var(--ax-text-subtle);
+  }
+  .ax-sidebar__filter:focus-visible {
+    outline: none;
+    border-color: var(--ax-accent);
+  }
+  .ax-sidebar__filter-clear {
+    position: absolute;
+    inset-block-start: 50%;
+    inset-inline-end: calc(var(--ax-space-4) + 6px);
+    transform: translateY(-50%);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    inline-size: 22px;
+    block-size: 22px;
+    color: var(--ax-text-subtle);
+    background: transparent;
+    border: 0;
+    border-radius: var(--ax-radius-pill);
+    cursor: pointer;
+  }
+  .ax-sidebar__filter-clear:hover {
+    color: var(--ax-text-strong);
+    background: var(--ax-fill-hover);
+  }
+  .ax-sidebar__filter-clear .ax-icon {
+    inline-size: 14px;
+    block-size: 14px;
+  }
+  .ax-sidebar__nav-empty {
+    padding: var(--ax-space-5) var(--ax-space-3);
+    font-size: var(--ax-text-sm);
+    color: var(--ax-text-muted);
+    text-align: center;
+  }
+
+  /* mini user card */
+  .ax-sidebar__user {
+    display: flex;
+    align-items: center;
+    gap: var(--ax-space-3);
+  }
+  .ax-sidebar__user-avatar {
+    flex: 0 0 auto;
+  }
+  .ax-sidebar__user-meta {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    min-inline-size: 0;
+    flex: 1 1 auto;
+  }
+  .ax-sidebar__user-name {
+    font-size: var(--ax-text-sm);
+    font-weight: var(--ax-weight-semibold);
+    color: var(--ax-text-strong);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .ax-sidebar__user-mail {
+    font-size: var(--ax-text-xs);
+    color: var(--ax-text-muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .ax-sidebar__logout {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    inline-size: 32px;
+    block-size: 32px;
+    color: var(--ax-text-subtle);
+    background: transparent;
+    border-radius: var(--ax-radius-md);
+    text-decoration: none;
+    transition:
+      color var(--ax-motion-fast) var(--ax-ease-standard),
+      background var(--ax-motion-fast) var(--ax-ease-standard);
+  }
+  .ax-sidebar__logout:hover {
+    color: var(--ax-danger-500);
+    background: var(--ax-fill-hover);
+  }
+  .ax-sidebar__logout .ax-icon {
+    inline-size: var(--ax-icon-md);
+    block-size: var(--ax-icon-md);
+  }
+
+  /* ════════════════════════════════════════════════════════════════════════
+     15 · FOOTER  .ax-footer__* link row (base.css lays out .ax-footer/.ax-footer__links)
+     ════════════════════════════════════════════════════════════════════════ */
+  .ax-footer__left {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--ax-space-2);
+    font-size: var(--ax-text-xs);
+    color: var(--ax-text-muted);
+  }
+  .ax-footer__sep {
+    color: var(--ax-text-disabled);
+  }
+  .ax-footer__version {
+    font-size: var(--ax-text-xs);
+    color: var(--ax-text-subtle);
+  }
+  .ax-footer__link {
+    font-size: var(--ax-text-xs);
+    color: var(--ax-text-muted);
+    text-decoration: none;
+    transition: color var(--ax-motion-fast) var(--ax-ease-standard);
+  }
+  .ax-footer__link:hover {
+    color: var(--ax-accent);
+  }
+
+  /* ════════════════════════════════════════════════════════════════════════
+     16 · MISSING BUTTON MODIFIERS used by chrome (cart / promo / customizer foot)
+     base.css/components.css define .ax-btn + --ghost/--primary/--sm; these two
+     are referenced by partials but had no rule.
+     ════════════════════════════════════════════════════════════════════════ */
+  .ax-btn--accent {
+    color: var(--ax-on-accent);
+    background: var(--ax-gradient-accent);
+    border-color: transparent;
+    box-shadow: var(--ax-glow-accent);
+  }
+  .ax-btn--accent:hover {
+    background: var(--ax-accent-hover);
+  }
+  .ax-btn--ghost-danger {
+    color: var(--ax-danger-500);
+    background: transparent;
+    border-color: transparent;
+  }
+  .ax-btn--ghost-danger:hover {
+    background: color-mix(in oklab, var(--ax-danger-500) 12%, transparent);
+    color: var(--ax-danger-500);
+  }
+
+  /* ════════════════════════════════════════════════════════════════════════
+     17 · REDUCED MOTION — instant for the drawer/scrim/transitions
+     ════════════════════════════════════════════════════════════════════════ */
+  @media (prefers-reduced-motion: reduce) {
+    .ax-customizer,
+    .ax-customizer--enter,
+    .ax-customizer--leave,
+    .ax-toggle__thumb,
+    .ax-swatch,
+    .ax-apps__tile,
+    .ax-segmented__btn {
+      transition-duration: 1ms !important;
+    }
+  }

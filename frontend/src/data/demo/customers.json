@@ -1,0 +1,12 @@
+[
+  { "id": "cus_001", "name": "Camila Rossi", "email": "camila.rossi@mailbox.test", "spend": 6180.00, "orders": 18, "status": "VIP", "joined": "2023-11-04" },
+  { "id": "cus_002", "name": "Henry Whitlock", "email": "h.whitlock@postoak.test", "spend": 1840.00, "orders": 7, "status": "Returning", "joined": "2024-02-18" },
+  { "id": "cus_003", "name": "Aisha Bello", "email": "aisha.bello@brightmail.test", "spend": 80.00, "orders": 1, "status": "New", "joined": "2025-06-09" },
+  { "id": "cus_004", "name": "Erik Lindqvist", "email": "erik.l@ridgeline.test", "spend": 5240.00, "orders": 24, "status": "Wholesale", "joined": "2023-08-21" },
+  { "id": "cus_005", "name": "Sofia Marchetti", "email": "sofia.m@harbor.test", "spend": 2110.00, "orders": 9, "status": "Returning", "joined": "2024-03-12" },
+  { "id": "cus_006", "name": "Daniel Cho", "email": "d.cho@clearbox.test", "spend": 24.00, "orders": 1, "status": "New", "joined": "2025-06-07" },
+  { "id": "cus_007", "name": "Olivia Penrose", "email": "o.penrose@meadowmail.test", "spend": 5980.00, "orders": 21, "status": "VIP", "joined": "2023-10-02" },
+  { "id": "cus_008", "name": "Rahul Menon", "email": "rahul.menon@northstreet.test", "spend": 1490.00, "orders": 6, "status": "Returning", "joined": "2024-07-30" },
+  { "id": "cus_009", "name": "Greta Hoffmann", "email": "greta.h@postoak.test", "spend": 640.00, "orders": 4, "status": "Churn-risk", "joined": "2024-01-15" },
+  { "id": "cus_010", "name": "Yuki Tanaka", "email": "yuki.tanaka@brightmail.test", "spend": 2870.00, "orders": 11, "status": "Returning", "joined": "2024-04-08" }
+]

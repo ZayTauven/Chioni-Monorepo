@@ -1,0 +1,332 @@
+/*
+ * Vireo — Sidebar navigation tree
+ * The base layout for the manifest-driven sidebar menu (.ax-sidebar__nav /
+ * .ax-nav__*). Active state + glow bar live in tokens/_recipes.css; the six
+ * sidebar STYLES (compact/overlay/…) live in base.css; this file owns the
+ * default tree: rows, nesting, collapse, carets, badges. Logical props (RTL).
+ */
+
+/* ── scroll region ── */
+.ax-sidebar__nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: var(--ax-space-2) var(--ax-space-3) var(--ax-space-4);
+  /* Scroll stays functional (long menus must remain reachable) but the rail
+     itself shows no scrollbar — cleaner sidebar edge. Firefox: none; WebKit
+     via the ::-webkit-scrollbar rule below. */
+  scrollbar-width: none;
+}
+.ax-sidebar__nav::-webkit-scrollbar {
+  inline-size: 0;
+  block-size: 0;
+}
+
+/* ── section eyebrow ── */
+.ax-sidebar__section {
+  margin: var(--ax-space-4) var(--ax-space-3) var(--ax-space-1);
+  font-size: var(--ax-text-2xs);
+  font-weight: var(--ax-weight-semibold);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ax-text-subtle);
+  user-select: none;
+}
+.ax-sidebar__nav > .ax-sidebar__section:first-child {
+  margin-top: var(--ax-space-1);
+}
+
+/* ── group container ── */
+.ax-nav__group {
+  display: block;
+}
+
+/* ── row (link or group-toggle button share .ax-nav__item) ── */
+.ax-nav__item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--ax-space-3);
+  inline-size: 100%;
+  margin: 0;
+  padding-block: 9px;
+  padding-inline: var(--ax-space-3);
+  border: 0;
+  border-radius: var(--ax-radius-md);
+  background: transparent;
+  color: var(--ax-text-muted);
+  font-family: inherit;
+  font-size: var(--ax-text-sm);
+  font-weight: var(--ax-weight-medium);
+  line-height: 1.2;
+  text-align: start;
+  text-decoration: none;
+  cursor: pointer;
+  transition:
+    background var(--ax-motion-fast) var(--ax-ease-standard),
+    color var(--ax-motion-fast) var(--ax-ease-standard);
+}
+.ax-nav__item:hover {
+  background: var(--ax-fill-hover);
+  color: var(--ax-text-strong);
+}
+.ax-nav__item:hover .ax-nav__icon {
+  opacity: 1;
+}
+
+/* ── icon + label + caret ── */
+.ax-nav__icon {
+  inline-size: var(--ax-icon-md);
+  block-size: var(--ax-icon-md);
+  flex: 0 0 auto;
+  opacity: 0.85;
+}
+.ax-nav__label {
+  flex: 1 1 auto;
+  min-inline-size: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.ax-nav__caret {
+  inline-size: var(--ax-icon-sm);
+  block-size: var(--ax-icon-sm);
+  flex: 0 0 auto;
+  color: var(--ax-text-subtle);
+  transition: transform var(--ax-motion-base) var(--ax-ease-standard);
+}
+.ax-nav__item--parent[aria-expanded='true'] .ax-nav__caret {
+  transform: rotate(90deg);
+}
+
+/* ── collapsible children ── */
+.ax-nav__children {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  position: relative;
+  margin-block: 2px;
+  /* tree guide hairline aligned under the parent icon centre */
+  margin-inline-start: calc(var(--ax-space-3) + (var(--ax-icon-md) / 2));
+  padding-inline-start: var(--ax-space-3);
+  border-inline-start: 1px solid var(--ax-border);
+}
+.ax-nav__children[hidden] {
+  display: none;
+}
+
+/* nested rows: tighter, lighter, indented by aria-level */
+.ax-nav__item--child {
+  padding-block: 7px;
+  font-size: var(--ax-text-sm);
+  color: var(--ax-text-muted);
+}
+.ax-nav__item[aria-level='3'] {
+  padding-inline-start: var(--ax-space-5);
+}
+.ax-nav__item[aria-level='4'] {
+  padding-inline-start: var(--ax-space-8);
+}
+/* the leading active marker (hidden until active) */
+.ax-nav__bar {
+  display: none;
+}
+
+/* ── badges ── */
+.ax-nav__badge {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-inline-size: 18px;
+  padding: 1px 7px;
+  border-radius: var(--ax-radius-pill);
+  font-size: var(--ax-text-2xs);
+  font-weight: var(--ax-weight-semibold);
+  line-height: 1.5;
+  font-variant-numeric: tabular-nums;
+}
+.ax-nav__badge--count {
+  background: var(--ax-fill-active);
+  color: var(--ax-text-muted);
+}
+.ax-nav__badge--new {
+  background: var(--ax-accent-wash);
+  color: var(--ax-accent);
+}
+.ax-nav__badge--hot {
+  background: color-mix(in srgb, var(--ax-danger-500) 16%, transparent);
+  color: var(--ax-danger-500);
+}
+.ax-nav__badge--beta {
+  background: var(--ax-fill-active);
+  color: var(--ax-text-subtle);
+}
+
+/* ── single top-level link (no children) keeps icon+label only ── */
+.ax-nav__item--single .ax-nav__caret {
+  display: none;
+}
+
+/* ── filter: dim non-matches, highlight matches (sidebar.js sets .is-hidden) ── */
+.ax-nav__group.is-hidden,
+.ax-nav__item.is-hidden {
+  display: none !important;
+}
+.ax-sidebar__nav mark {
+  background: var(--ax-accent-wash);
+  color: var(--ax-accent);
+  border-radius: 3px;
+  padding: 0 1px;
+}
+
+/* ── collapsed-rail flyout popover ────────────────────────────────────────
+   When the header-toggle collapse is active (base.css §7b) the in-rail child
+   panels are hidden. core/sidebar-flyout.js mounts this popover on <body> and
+   positions it beside the rail so a collapsed icon still reaches its sub-pages.
+   Body-level + ax-flyout__* classes keep it clear of the rail's overflow clip
+   and the §7b hide rules (which match .ax-nav__* under [data-ax-collapsed]). */
+.ax-flyout {
+  position: fixed;
+  z-index: var(--ax-z-dropdown);
+  display: flex;
+  flex-direction: column;
+  min-inline-size: 200px;
+  max-inline-size: 280px;
+  max-block-size: calc(100vh - 16px);
+  padding: var(--ax-space-2);
+  /* Opaque, no backdrop-filter — matches the rest of the dropdown family. */
+  background: var(--ax-surface-solid);
+  color: var(--ax-text);
+  border: 1px solid var(--ax-border);
+  border-radius: var(--ax-radius-lg);
+  box-shadow: var(--ax-shadow-lg);
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: none; /* match the rail: scroll works, no visible bar */
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: translateX(-4px);
+  transition:
+    opacity var(--ax-motion-fast) var(--ax-ease-standard),
+    transform var(--ax-motion-fast) var(--ax-ease-standard),
+    visibility 0s linear var(--ax-motion-fast);
+}
+[dir='rtl'] .ax-flyout {
+  transform: translateX(4px);
+}
+.ax-flyout::-webkit-scrollbar {
+  inline-size: 0;
+  block-size: 0;
+}
+.ax-flyout.is-open {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transform: none;
+  transition:
+    opacity var(--ax-motion-fast) var(--ax-ease-standard),
+    transform var(--ax-motion-fast) var(--ax-ease-standard);
+}
+/* invisible bridge spanning the rail→popover gap so the pointer can cross
+   diagonally without the hover dropping (paired with the JS close delay) */
+.ax-flyout::before {
+  content: '';
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: calc((var(--ax-space-2) + 8px) * -1);
+  inline-size: calc(var(--ax-space-2) + 8px);
+}
+[dir='rtl'] .ax-flyout::before {
+  inset-inline-start: auto;
+  inset-inline-end: calc((var(--ax-space-2) + 8px) * -1);
+}
+
+.ax-flyout__title {
+  padding: var(--ax-space-1) var(--ax-space-3) var(--ax-space-2);
+  font-size: var(--ax-text-2xs);
+  font-weight: var(--ax-weight-semibold);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ax-text-subtle);
+}
+.ax-flyout__list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.ax-flyout__group {
+  margin-block-start: var(--ax-space-1);
+  padding: var(--ax-space-1) var(--ax-space-3);
+  font-size: var(--ax-text-2xs);
+  font-weight: var(--ax-weight-semibold);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ax-text-subtle);
+}
+.ax-flyout__item {
+  display: flex;
+  align-items: center;
+  gap: var(--ax-space-2);
+  padding: 7px var(--ax-space-3);
+  border-radius: var(--ax-radius-md);
+  color: var(--ax-text-muted);
+  font-size: var(--ax-text-sm);
+  font-weight: var(--ax-weight-medium);
+  line-height: 1.2;
+  text-decoration: none;
+  white-space: nowrap;
+  transition:
+    background var(--ax-motion-fast) var(--ax-ease-standard),
+    color var(--ax-motion-fast) var(--ax-ease-standard);
+}
+.ax-flyout__item:hover,
+.ax-flyout__item:focus-visible {
+  background: var(--ax-fill-hover);
+  color: var(--ax-text-strong);
+  outline: none;
+}
+.ax-flyout__item.is-active {
+  background: var(--ax-fill-active);
+  color: var(--ax-text-strong);
+}
+.ax-flyout__label {
+  flex: 1 1 auto;
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ax-flyout__badge {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-inline-size: 18px;
+  padding: 1px 7px;
+  border-radius: var(--ax-radius-pill);
+  font-size: var(--ax-text-2xs);
+  font-weight: var(--ax-weight-semibold);
+  line-height: 1.5;
+  font-variant-numeric: tabular-nums;
+}
+.ax-flyout__badge--count {
+  background: var(--ax-fill-active);
+  color: var(--ax-text-muted);
+}
+.ax-flyout__badge--new {
+  background: var(--ax-accent-wash);
+  color: var(--ax-accent);
+}
+.ax-flyout__badge--hot {
+  background: color-mix(in srgb, var(--ax-danger-500) 16%, transparent);
+  color: var(--ax-danger-500);
+}
+.ax-flyout__badge--beta {
+  background: var(--ax-fill-active);
+  color: var(--ax-text-subtle);
+}

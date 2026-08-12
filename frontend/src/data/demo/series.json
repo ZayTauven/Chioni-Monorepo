@@ -1,0 +1,38 @@
+{
+  "monthlyRevenue": [
+    { "month": "Jul", "value": 42100, "prev": 38400 },
+    { "month": "Aug", "value": 48300, "prev": 41200 },
+    { "month": "Sep", "value": 45200, "prev": 43800 },
+    { "month": "Oct", "value": 53400, "prev": 47100 },
+    { "month": "Nov", "value": 57100, "prev": 50600 },
+    { "month": "Dec", "value": 55600, "prev": 53200 },
+    { "month": "Jan", "value": 62400, "prev": 54900 },
+    { "month": "Feb", "value": 60200, "prev": 58300 },
+    { "month": "Mar", "value": 68900, "prev": 61400 },
+    { "month": "Apr", "value": 72300, "prev": 64800 },
+    { "month": "May", "value": 70100, "prev": 67200 },
+    { "month": "Jun", "value": 74820, "prev": 69500 }
+  ],
+  "categorySplit": [
+    { "label": "Lighting", "value": 32, "color": "#38BDF8" },
+    { "label": "Desk", "value": 24, "color": "#A78BFA" },
+    { "label": "Drinkware", "value": 18, "color": "#F472B6" },
+    { "label": "Storage", "value": 11, "color": "#FBBF24" },
+    { "label": "Stationery", "value": 9, "color": "#34D399" },
+    { "label": "Tech accessories", "value": 6, "color": "#FB7185" }
+  ],
+  "trafficSources": [
+    { "label": "Direct", "value": 38 },
+    { "label": "Organic search", "value": 27 },
+    { "label": "Referral", "value": 14 },
+    { "label": "Social", "value": 9 },
+    { "label": "Email", "value": 7 },
+    { "label": "Paid", "value": 5 }
+  ],
+  "deviceSplit": [
+    { "label": "Desktop", "value": 58 },
+    { "label": "Mobile", "value": 34 },
+    { "label": "Tablet", "value": 8 }
+  ],
+  "balanceTrend": [31200, 33800, 32600, 35900, 38200, 37100, 41400, 40300, 44600, 46100, 45200, 48210]
+}

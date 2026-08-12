@@ -1,0 +1,256 @@
+/*
+ * Vireo — Aurora token model · LAYER 1 PRIMITIVES
+ * Source of truth: brief 01-tokens.md §1 (scales) + §2 (neutral ramps).
+ * Mode-agnostic literals (one :root definition) EXCEPT shadows + semantic
+ * ramps, which carry a [data-ax-theme="dark"] override. Verbatim values.
+ * Token NAMES are spec; values are Aurora. Components consume Layer 2/3 only.
+ */
+
+/* ═══════════════════════════════════════════════════════════════════════
+   §1 — PRIMITIVE SCALES
+   ═══════════════════════════════════════════════════════════════════════ */
+:root {
+  /* ─────────────────────────────────────────────────────────
+     SPACING — 4px base (spec 01 §6.1, unchanged)
+     ───────────────────────────────────────────────────────── */
+  --ax-space-0: 0;
+  --ax-space-1: 4px;
+  --ax-space-2: 8px;
+  --ax-space-3: 12px;
+  --ax-space-4: 16px;
+  --ax-space-5: 20px;
+  --ax-space-6: 24px;   /* default card padding */
+  --ax-space-7: 28px;
+  --ax-space-8: 32px;
+  --ax-space-9: 36px;
+  --ax-space-10: 40px;
+  --ax-space-12: 48px;  /* = --ax-footer-h */
+  --ax-space-16: 64px;
+  --ax-space-20: 80px;
+
+  /* ─────────────────────────────────────────────────────────
+     RADIUS — Aurora HIGH-radius. Spec NAMES kept; values raised
+     to match preview (--r-xl:24 --r-lg:18 --r-md:13 --r-sm:9).
+     Mapping: cards=xl(24), large media=lg(18), buttons/inputs/
+     popover-items=md(14), small controls/chips=sm(12), tags/
+     badges/checkboxes=xs(8), pills=full.
+     ───────────────────────────────────────────────────────── */
+  --ax-radius-none: 0;
+  --ax-radius-xs: 8px;     /* badges, tags, chips, checkboxes, legend swatches→ use 4-6px via xs scope if needed */
+  --ax-radius-sm: 12px;    /* small controls, segmented-control pills(inner), donut legend dots use raw */
+  --ax-radius-md: 14px;    /* buttons, inputs, dropdown items, popovers, modals (default surface radius for non-card) */
+  --ax-radius-lg: 18px;    /* large cards, media tiles, image frames, promo card, gradient plate */
+  --ax-radius-xl: 24px;    /* CARDS (default surface radius), customizer panel */
+  --ax-radius-pill: 999px; /* toggles, avatars, status dots, true pills, search bar, chip-range, primary btn */
+
+  /* ─────────────────────────────────────────────────────────
+     TYPE SIZES + LEADING (spec 01 §4.2 NAMES kept; px values
+     unchanged from spec EXCEPT base UI font-size = 14px to match
+     Aurora preview body, see §7. Tracking kept from spec.)
+     Each --ax-text-* is the FONT-SIZE; paired leading + weight +
+     tracking listed in comment, applied via utility classes.
+     ───────────────────────────────────────────────────────── */
+  --ax-text-2xs: 11px;   /* lh 16  w500  +0.02em  micro-labels, super-headers, badges */
+  --ax-text-xs:  12px;   /* lh 18  w500  +0.01em  captions, helper, timestamps, eyebrow */
+  --ax-text-sm:  13px;   /* lh 20  w450  0        secondary body, dense table cells */
+  --ax-text-base:15px;   /* lh 24  w450  0        default body (NOTE: chrome/dense UI may use 13-14, see §7) */
+  --ax-text-md:  17px;   /* lh 26  w500  -0.005em lead text, card subtitles */
+  --ax-text-lg:  20px;   /* lh 28  w560  -0.01em  card titles (H4) */
+  --ax-text-xl:  24px;   /* lh 32  w600  -0.012em section titles (H3) */
+  --ax-text-2xl: 30px;   /* lh 38  w600  -0.015em page titles (H2) */
+  --ax-text-3xl: 38px;   /* lh 46  w640  -0.018em hero/greeting (H1) — Space Grotesk */
+  --ax-text-4xl: 48px;   /* lh 54  w680  -0.02em  landing display — Space Grotesk */
+  --ax-num-kpi:  32px;   /* lh 36  w600  -0.01em  KPI stat figures — Space Grotesk (display), tabular */
+
+  /* line-height tokens (so utilities/components don't hard-code) */
+  --ax-leading-2xs: 16px; --ax-leading-xs: 18px; --ax-leading-sm: 20px;
+  --ax-leading-base: 24px; --ax-leading-md: 26px; --ax-leading-lg: 28px;
+  --ax-leading-xl: 32px; --ax-leading-2xl: 38px; --ax-leading-3xl: 46px;
+  --ax-leading-4xl: 54px; --ax-leading-kpi: 36px;
+
+  /* font WEIGHTS (Inter/Space Grotesk supply 400/500/600/700;
+     spec's 450/560/640/680 optical weights map to nearest loaded:
+     450→400, 500→500, 560→600, 600→600, 640→700, 680→700) */
+  --ax-weight-regular: 400;
+  --ax-weight-text: 400;     /* spec 450 → 400 (Inter has no 450) */
+  --ax-weight-medium: 500;
+  --ax-weight-semibold: 600; /* spec 560 & 600 → 600 */
+  --ax-weight-bold: 700;     /* spec 640 & 680 → 700 */
+
+  /* ─────────────────────────────────────────────────────────
+     ICON SIZES (spec 01 §9, unchanged)
+     Tabler outline, 24x24 viewBox, currentColor, 1.75px stroke
+     at 24px nominal (preview uses stroke-width="2" on its 24-grid;
+     standardize to 1.75 for the build, 2.4 for delta arrows/sparks).
+     ───────────────────────────────────────────────────────── */
+  --ax-icon-xs: 14px;
+  --ax-icon-sm: 16px;   /* default: inputs, buttons, menu items */
+  --ax-icon-md: 20px;
+  --ax-icon-lg: 24px;
+  --ax-icon-xl: 32px;
+  --ax-icon-stroke: 1.75;          /* default Tabler stroke */
+  --ax-icon-stroke-bold: 2.4;      /* delta arrows, sparklines */
+
+  /* ─────────────────────────────────────────────────────────
+     Z-INDEX (spec 01 §15.3, unchanged)
+     ───────────────────────────────────────────────────────── */
+  --ax-z-base: 0;
+  --ax-z-sticky: 100;
+  --ax-z-header: 200;
+  --ax-z-sidebar: 300;
+  --ax-z-overlay-backdrop: 900;
+  --ax-z-dropdown: 1000;
+  --ax-z-drawer: 1100;
+  --ax-z-modal: 1200;
+  --ax-z-toast: 1300;
+  --ax-z-command: 1400;
+  --ax-z-customizer: 1500;
+
+  /* ─────────────────────────────────────────────────────────
+     MOTION durations + easings (spec 01 §12.1, unchanged)
+     ───────────────────────────────────────────────────────── */
+  --ax-motion-instant: 80ms;
+  --ax-motion-fast: 140ms;
+  --ax-motion-base: 200ms;
+  --ax-motion-slow: 280ms;
+  --ax-motion-deliberate: 380ms;
+  --ax-ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --ax-ease-emphasized: cubic-bezier(0.3, 0, 0, 1);
+  --ax-ease-exit: cubic-bezier(0.4, 0, 1, 1);
+  --ax-ease-linear: linear;
+
+  /* ─────────────────────────────────────────────────────────
+     BREAKPOINTS (spec 01 §6.3, unchanged) — also bridged to
+     Tailwind v4 --breakpoint-* in @theme (see app.css §8).
+     ───────────────────────────────────────────────────────── */
+  --ax-bp-xs: 0px;
+  --ax-bp-sm: 576px;
+  --ax-bp-md: 768px;   /* sidebar → overlay below this */
+  --ax-bp-lg: 992px;
+  --ax-bp-xl: 1200px;
+  --ax-bp-2xl: 1400px; /* Boxed max applies */
+
+  /* ─────────────────────────────────────────────────────────
+     SHELL DIMENSION tokens (spec 01 §6.2, unchanged NAMES.
+     Sidebar width nudged to Aurora preview 248px; spec says 264.
+     USE 264px to honor spec contract; preview 248 is acceptable.
+     Build agents: use 264px expanded / 76px compact per spec.)
+     ───────────────────────────────────────────────────────── */
+  --ax-sidebar-w: 264px;
+  --ax-sidebar-w-compact: 76px;
+  --ax-header-h: 60px;
+  --ax-footer-h: 48px;
+  --ax-container-boxed: 1320px;
+
+  /* control heights (spec 01 §6.1) */
+  --ax-control-h: 38px;          /* default */
+  --ax-control-h-compact: 32px;
+  --ax-control-h-lg: 44px;
+
+  /* ─────────────────────────────────────────────────────────
+     SHADOWS — Aurora GLOW shadows (spec NAMES kept).
+     LIGHT mode = soft, low-opacity, neutral-dark glow.
+     DARK mode override block below.
+     none = resting cards still get the glass recipe's drop+inset,
+     so --ax-shadow-none is literal `none` (recipe applies its own).
+     ───────────────────────────────────────────────────────── */
+  --ax-shadow-none: none;
+  --ax-shadow-sm: 0 6px 18px -8px rgba(16,22,40,0.18), 0 2px 6px -2px rgba(16,22,40,0.10);
+  --ax-shadow-md: 0 14px 36px -14px rgba(16,22,40,0.22), 0 4px 12px -6px rgba(16,22,40,0.12);
+  --ax-shadow-lg: 0 28px 64px -20px rgba(16,22,40,0.28), 0 8px 20px -8px rgba(16,22,40,0.16);
+  /* Aurora glass card resting shadow (light) — used by .ax-card recipe */
+  --ax-shadow-card: 0 18px 44px -22px rgba(16,22,40,0.20), 0 2px 10px rgba(16,22,40,0.06);
+  /* accent glow (re-derives from --ax-accent-rgb, see recipes §6) */
+  --ax-glow-accent: 0 12px 26px -10px rgba(var(--ax-accent-rgb), 0.45);
+}
+
+/* DARK shadow override (verbatim Aurora preview --sh / --sh-sm + scaled) */
+[data-ax-theme="dark"] {
+  --ax-shadow-none: none;
+  --ax-shadow-sm: 0 6px 18px -8px rgba(0,0,0,0.50);
+  --ax-shadow-md: 0 8px 24px -6px rgba(0,0,0,0.55);
+  --ax-shadow-lg: 0 18px 48px -10px rgba(0,0,0,0.65);
+  --ax-shadow-card: 0 16px 44px -18px rgba(0,0,0,0.65), 0 2px 10px rgba(0,0,0,0.35);
+  --ax-glow-accent: 0 12px 26px -10px rgba(var(--ax-accent-rgb), 0.75);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   §2 — NEUTRAL RAMPS + GLASS/STROKE ALPHA PRIMITIVES + SEMANTIC RAMPS
+   ═══════════════════════════════════════════════════════════════════════ */
+:root {
+  /* ── LIGHT Aurora neutral ramp — cool slate near-white ──────
+     Canvas is a bright glassy near-white (#F6F8FC); text greys
+     mirror the dark mode's cool blue-grey family inverted.
+     ──────────────────────────────────────────────────────── */
+  --ax-neutral-0:    #FFFFFF;  /* glass-tinted surfaces, inputs (used with alpha in recipe) */
+  --ax-neutral-25:   #F6F8FC;  /* app canvas (cool near-white) */
+  --ax-neutral-50:   #F0F3F9;  /* subtle/secondary surface, table stripe */
+  --ax-neutral-100:  #E7ECF4;  /* hover fill, muted panel */
+  --ax-neutral-150:  #DDE3EE;  /* hairline border (default) */
+  --ax-neutral-200:  #CFD7E6;  /* strong border, divider */
+  --ax-neutral-300:  #B7C1D5;  /* disabled border, track */
+  --ax-neutral-400:  #94A0B8;  /* placeholder, disabled text */
+  --ax-neutral-500:  #6E7A92;  /* muted/tertiary text, idle icons */
+  --ax-neutral-600:  #535E74;  /* secondary text */
+  --ax-neutral-700:  #3A4456;  /* body text */
+  --ax-neutral-800:  #232B3A;  /* strong text / headings */
+  --ax-neutral-900:  #151B27;  /* highest-contrast text */
+  --ax-neutral-1000: #0A0E16;  /* reserved (max), matches dark canvas family */
+
+  /* ── DARK Aurora neutral ramp — verbatim from preview ───────
+     canvas #0A0C11, glass panels, strokes, cool text greys.
+     Mapped onto spec's --ax-dark-50..1000 NAMES (50=lightest text).
+     ──────────────────────────────────────────────────────── */
+  --ax-dark-1000: #06080C;  /* deepest base (boxed gutter, below canvas) */
+  --ax-dark-950:  #0A0C11;  /* APP CANVAS (preview --bg) */
+  --ax-dark-900:  #0F121A;  /* base surface fallback (solid behind glass) */
+  --ax-dark-850:  #161A23;  /* raised/solid panel (preview --panel-solid) header/sidebar */
+  --ax-dark-800:  #1C212C;  /* hover fill / inputs (preview --panel-2 solid form) */
+  --ax-dark-750:  #232A38;  /* popover / floating surface */
+  --ax-dark-700:  #2D3543;  /* hairline border baseline (see stroke roles) */
+  --ax-dark-600:  #3A4351;  /* strong border */
+  --ax-dark-500:  #646E80;  /* disabled text / track (preview --tx-sub) */
+  --ax-dark-400:  #7E889A;  /* tertiary text */
+  --ax-dark-300:  #98A2B3;  /* muted text / idle icons (preview --tx-mut) */
+  --ax-dark-200:  #B8C0CE;  /* secondary text */
+  --ax-dark-100:  #D4DAE4;  /* body text */
+  --ax-dark-50:   #EAEDF3;  /* strong text / headings (preview --tx) */
+
+  /* ── DARK glass/stroke alpha primitives (preview verbatim) ──
+     These are alpha-on-anything values; roles below reference them.
+     ──────────────────────────────────────────────────────── */
+  --ax-dark-panel:      rgba(22, 26, 35, 0.72);   /* preview --panel (glass card) */
+  --ax-dark-panel-2:    rgba(28, 33, 44, 0.80);   /* preview --panel-2 */
+  --ax-dark-glass-hi:   rgba(255, 255, 255, 0.06);/* preview --glass-hi (inset top highlight) */
+  --ax-dark-stroke:     rgba(255, 255, 255, 0.07);/* preview --stroke */
+  --ax-dark-stroke-2:   rgba(255, 255, 255, 0.12);/* preview --stroke-2 */
+  --ax-dark-fill-1:     rgba(255, 255, 255, 0.04);/* hover bg, control bg */
+  --ax-dark-fill-2:     rgba(255, 255, 255, 0.09);/* active/pressed bg, seg-on */
+
+  /* ── LIGHT glass/stroke alpha primitives (designed) ─────────
+     Light Aurora: white-tinted glass on a cool canvas; strokes
+     are dark-on-light at low alpha so hairlines read on glass.
+     ──────────────────────────────────────────────────────── */
+  --ax-light-panel:     rgba(255, 255, 255, 0.72);  /* light glass card */
+  --ax-light-panel-2:   rgba(255, 255, 255, 0.85);
+  --ax-light-glass-hi:  rgba(255, 255, 255, 0.90);  /* inset top highlight (brighter rim) */
+  --ax-light-stroke:    rgba(16, 22, 40, 0.08);     /* hairline on light glass */
+  --ax-light-stroke-2:  rgba(16, 22, 40, 0.14);
+  --ax-light-fill-1:    rgba(16, 22, 40, 0.04);     /* hover bg */
+  --ax-light-fill-2:    rgba(16, 22, 40, 0.08);     /* active/pressed bg */
+
+  /* ── SEMANTIC ramps (spec 01 §3.3) — kept as-is, they coexist
+     with Aurora. Light literals; dark remap in block below. ── */
+  --ax-success-50: #E7F4EC; --ax-success-200: #A8D8BC; --ax-success-500: #2E9E5B;
+  --ax-warning-50: #FBF1DE; --ax-warning-200: #EBCF93; --ax-warning-500: #C8870F;
+  --ax-danger-50:  #FBE9E6; --ax-danger-200:  #EFB3AA; --ax-danger-500:  #D24535;
+  --ax-info-50:    #E6EFFA; --ax-info-200:    #A9C8EC; --ax-info-500:    #2D74C4;
+}
+
+[data-ax-theme="dark"] {
+  /* dark semantic remaps (spec 01 §3.3 dark table) */
+  --ax-success-50: #16271C; --ax-success-200: #2C5C3D; --ax-success-500: #46B36F;
+  --ax-warning-50: #2A1F0A; --ax-warning-200: #5C4517; --ax-warning-500: #E0A53A;
+  --ax-danger-50:  #2A1512; --ax-danger-200:  #5C2C26; --ax-danger-500:  #E26A5B;
+  --ax-info-50:    #101F30; --ax-info-200:    #274A6E; --ax-info-500:    #5A95DA;
+}

@@ -1,0 +1,157 @@
+/*
+ * Vireo — Aurora token model · RECIPES (Aurora identity)
+ * Source of truth: brief 01-tokens.md §6 (recipes) + §7 (font var defs).
+ * These ARE the Aurora identity: ambient glow backdrop, glassy card
+ * primitive, accent + plate gradients, primary-button reference pill,
+ * nav active glow, :focus-visible, prefers-reduced-motion. Both modes;
+ * light values designed, dark verbatim from preview.
+ *
+ * FONT NOTE: this file defines the --ax-font-* CSS variables only
+ * (§7). The body/typography BASE rules (body font-family/size 14px/
+ * feature-settings, .ax-num tabular-nums, display headings, mono)
+ * belong in base.css — they are page-level base rules, not token defs.
+ *
+ * These are token/recipe primitives, NOT component classes. The only
+ * selectors here are the shared Aurora primitives (.ax-ambient, .ax-card,
+ * .ax-btn-primary, .ax-nav__item.is-active) referenced verbatim by the
+ * shell + components briefs.
+ */
+
+/* ════════════════ FONT FAMILIES (§7 var defs) ════════════════
+   Spec NAMES kept; Aurora families (preview --f-sans/--f-disp/--f-mono).
+   body/heading/mono BASE rules live in base.css per task split.
+*/
+:root {
+  --ax-font-sans:    "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --ax-font-display: "Space Grotesk", var(--ax-font-sans);
+  --ax-font-mono:    "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+
+/* ════════════════ AMBIENT GLOW BACKDROP ════════════════
+   Markup: a fixed full-bleed layer behind the app shell.
+   <div class="ax-ambient" aria-hidden="true"><i></i></div>
+   Three radial blobs: ::before warm-amber TL, ::after indigo BR,
+   <i> accent-tinted mid-right. Colors from role tokens --ax-glow-1/2/3
+   (light = paler, dark = preview opacities). z-index 0; app shell z 1.
+*/
+.ax-ambient {
+  position: fixed; inset: 0; z-index: 0; pointer-events: none; overflow: hidden;
+}
+.ax-ambient::before, .ax-ambient::after {
+  content: ""; position: absolute; border-radius: 50%; filter: blur(60px);
+}
+.ax-ambient::before {
+  width: 620px; height: 620px; left: -180px; top: -220px;
+  background: radial-gradient(circle at 50% 50%, var(--ax-glow-1), transparent 62%);
+}
+.ax-ambient::after {
+  width: 760px; height: 760px; right: -240px; bottom: -300px;
+  background: radial-gradient(circle at 50% 50%, var(--ax-glow-2), transparent 62%);
+}
+.ax-ambient i {
+  position: absolute; width: 540px; height: 540px; right: 18%; top: 30%;
+  border-radius: 50%; filter: blur(70px);
+  background: radial-gradient(circle at 50% 50%, var(--ax-glow-3), transparent 60%);
+}
+/* Light Aurora: glow is softer — reduce overall intensity */
+:root .ax-ambient { opacity: 0.85; }
+[data-ax-theme="dark"] .ax-ambient { opacity: 1; }
+
+/* ════════════════ GLASSY CARD PRIMITIVE ════════════════
+   .ax-card = the Aurora glass surface. Resting cards use THIS,
+   not --ax-shadow-none-as-flat. Spec's "hairline" name is honored
+   by the 1px --ax-border stroke; Aurora adds blur + glow + inset.
+   Radius = --ax-radius-xl (24px). Nested controls step down to md/sm.
+*/
+.ax-card {
+  position: relative; overflow: hidden;
+  background: var(--ax-surface);                 /* glass rgba */
+  border: 1px solid var(--ax-border);            /* hairline */
+  border-radius: var(--ax-radius-xl);            /* 24px */
+  box-shadow: var(--ax-shadow-card);             /* soft glow drop */
+  -webkit-backdrop-filter: blur(18px) saturate(1.1);
+  backdrop-filter: blur(18px) saturate(1.1);
+}
+/* When a combobox inside a card is open, let its absolutely-positioned panel
+   escape the card's overflow:hidden, and lift the card above its siblings so the
+   panel isn't painted behind the next card. Lives here (unlayered) so it beats
+   the .ax-card recipe above — an @layer rule would lose to this unlayered one. */
+.ax-card:has(.ax-combobox__trigger[aria-expanded="true"]) {
+  overflow: visible;
+  z-index: var(--ax-z-sticky);
+}
+/* inset top highlight rim (preview .card::after) */
+.ax-card::after {
+  content: ""; position: absolute; inset: 0; border-radius: inherit;
+  pointer-events: none;
+  box-shadow: inset 0 1px 0 var(--ax-glass-hi);
+}
+
+/* Glass performance fallback: if backdrop-filter is unsupported,
+   .ax-card falls back to --ax-surface-solid (opaque). */
+@supports not (backdrop-filter: blur(1px)) {
+  .ax-card { background: var(--ax-surface-solid); }
+}
+
+/* ════════════════ ACCENT GRADIENT (primary actions, brand mark) ════════════════
+   Re-derives from accent tokens automatically (preview --g-accent).
+   135deg from accent → accent-2 (hover/lighter step).
+*/
+:root {
+  --ax-gradient-accent: linear-gradient(135deg, var(--ax-accent) 0%, var(--ax-accent-hover) 100%);
+  /* fixed multicolour "card plate" gradient (preview --g-card) for the
+     My Card / balance plate — CONSTANT, does not follow accent */
+  --ax-gradient-plate: linear-gradient(135deg, #4F7CF7 0%, #8B5CF6 48%, #EC4899 100%);
+}
+
+/* ════════════════ PRIMARY BUTTON (Aurora pill) ════════════════
+   Reference recipe so components don't re-invent.
+*/
+.ax-btn-primary {
+  display: inline-flex; align-items: center; gap: var(--ax-space-2);
+  font-weight: var(--ax-weight-semibold); font-size: var(--ax-text-sm);
+  color: var(--ax-on-accent); border: 0; cursor: pointer;
+  padding: 11px 17px; border-radius: var(--ax-radius-pill);
+  background: var(--ax-gradient-accent);
+  box-shadow: var(--ax-glow-accent);
+  transition: filter var(--ax-motion-instant) var(--ax-ease-standard);
+}
+.ax-btn-primary:hover { filter: brightness(1.06); }
+.ax-btn-primary:active { filter: brightness(0.97); }
+
+/* ════════════════ NAV ACTIVE STATE (Aurora glow bar) ════════════════
+   Active nav item: accent-wash gradient fill + inset ring + leading
+   glow bar (preview .nav a.on). Selected per spec 01 §13.
+*/
+.ax-nav__item.is-active {
+  color: var(--ax-text-strong);
+  background: linear-gradient(90deg, rgba(var(--ax-accent-rgb),0.16), rgba(var(--ax-accent-rgb),0.04));
+  box-shadow: inset 0 0 0 1px rgba(var(--ax-accent-rgb),0.18);
+}
+.ax-nav__item.is-active::before {
+  content: ""; position: absolute; inset-inline-start: -14px; top: 50%;
+  transform: translateY(-50%); width: 3px; height: 20px;
+  border-radius: 0 3px 3px 0; background: var(--ax-accent);
+  box-shadow: 0 0 12px var(--ax-accent);
+}
+.ax-nav__item.is-active svg { color: var(--ax-accent); opacity: 1; }
+
+/* ════════════════ FOCUS RING (spec 01 §8.4 / §13) ════════════════ */
+/* Generic offset outline for tabbables WITHOUT a bespoke focus style.
+   Form fields (input/select/textarea + checkbox/radio/switch) are excluded —
+   they own a richer accent-border + soft halo in components.css. Listing them
+   here would double-ring them: this rule is unlayered, so it outranks the
+   layered .ax-input:focus { outline:none } (unlayered > @layer components). */
+:where(a, button, [tabindex], [role="button"]):focus-visible {
+  outline: 2px solid var(--ax-focus-ring); outline-offset: 2px;
+  border-radius: inherit;
+}
+
+/* ════════════════ REDUCED MOTION (spec 01 §12.4, mandatory) ════════════════ */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important; animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important; scroll-behavior: auto !important;
+  }
+  /* count-ups, shimmer, marquee disabled by component JS reading the query */
+}

@@ -1,0 +1,34 @@
+/* Vireo — Leaflet Aurora theme overrides (token-driven, dark-aware). */
+.leaflet-container {
+  background: var(--ax-surface-subtle);
+  font-family: var(--ax-font-sans);
+}
+.leaflet-container a { color: var(--ax-accent); }
+
+/* Popups → Aurora glass surface */
+.ax-leaflet-popup .leaflet-popup-content-wrapper {
+  background: var(--ax-surface-overlay);
+  color: var(--ax-text);
+  border: 1px solid var(--ax-border);
+  border-radius: var(--ax-radius-md);
+  box-shadow: var(--ax-shadow-md);
+}
+.ax-leaflet-popup .leaflet-popup-content { margin: var(--ax-space-3) var(--ax-space-4); }
+.ax-leaflet-popup .leaflet-popup-tip {
+  background: var(--ax-surface-overlay);
+  border: 1px solid var(--ax-border);
+  box-shadow: none;
+}
+
+/* Attribution → subtle pill */
+.leaflet-control-attribution {
+  background: var(--ax-surface) !important;
+  color: var(--ax-text-subtle) !important;
+  border: 1px solid var(--ax-border);
+  border-radius: var(--ax-radius-pill) 0 0 0;
+  font-size: var(--ax-text-2xs);
+  padding: 1px 8px;
+}
+.leaflet-control-attribution a { color: var(--ax-text-muted) !important; }
+
+.ax-leaflet-pin { background: none; border: 0; }

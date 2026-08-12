@@ -1,0 +1,3664 @@
+/*
+ * Vireo — HTML reference edition · COMPONENT LIBRARY (Aurora)
+ * ----------------------------------------------------------------------------
+ * One block per component, per BUILD BRIEF 04 (the contract). Everything lives
+ * in @layer components so Tailwind utilities and page-level overrides win.
+ *
+ * RULES (locked):
+ *  - Token law: consume Layer-2 role tokens (--ax-surface/--ax-text/--ax-accent/
+ *    --ax-border …) or Layer-3 component vars ONLY. Never a raw --ax-neutral
+ *    stop, never a raw --ax-accent-500 stop, never a literal theme hex. (The handful of
+ *    rgba(0,0,0,…) scrim/backdrop values and rgba(255,255,255,…) striping are
+ *    deliberate semi-transparent overlays, not theme colors, and are the only
+ *    literals permitted. #fff appears solely as on-semantic ink for solid
+ *    success/warning/danger fills where no on-color token exists.)
+ *  - Naming: BEM-ish .ax-block__element--modifier. State classes is-*. Behaviour
+ *    hooks data-ax-*.
+ *  - Aurora look: glass surfaces (.ax-card / .ax-glass recipe), high radius,
+ *    ambient glow, gradient-accent primary pills with glow, accent-wash selection.
+ *  - Both [data-ax-theme] modes + 12 [data-ax-accent] presets inherit for free,
+ *    because we never bind a stop/hex — only role tokens that the theme re-values.
+ *  - Focus is ALWAYS :focus-visible (the global ring lives in _recipes.css;
+ *    components only refine where outline clips a glass corner — there we use the
+ *    canvas-gap + accent-ring box-shadow recipe).
+ *  - prefers-reduced-motion honored per block (and globally in _recipes.css).
+ *
+ * "Alpine:" comments mark which blocks are driven by an Alpine component
+ * (src/js/alpine/*). CSS here only paints; behaviour is wired in JS.
+ * ----------------------------------------------------------------------------
+ */
+
+@layer components {
+  /* ========================================================================
+     0 · SHARED PRIMITIVES (mixins / helpers used across many components)
+     ======================================================================== */
+
+  /* Aurora glass surface — compose into menu / modal / popover / toast.
+     Cards use the dedicated .ax-card below; this is the generic floating glass. */
+  .ax-glass {
+    position: relative;
+    background: var(--ax-surface);
+    border: 1px solid var(--ax-border);
+    box-shadow: var(--ax-shadow-md);
+    -webkit-backdrop-filter: blur(18px) saturate(1.1);
+    backdrop-filter: blur(18px) saturate(1.1);
+  }
+  .ax-glass::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    pointer-events: none;
+    box-shadow: inset 0 1px 0 var(--ax-glass-hi);
+  }
+  @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+    .ax-glass {
+      background: var(--ax-surface-solid);
+    }
+  }
+
+  /* visually-hidden (a11y) — avatars/spinners/ratings/icon-only labels */
+  .ax-visually-hidden {
+    position: absolute !important;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  /* tabular numerics helper (also in primitives; safe to repeat) */
+  .ax-num {
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* shared keyframes */
+  @keyframes ax-spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+
+  /* ========================================================================
+     1 · BUTTONS — .ax-btn
+     Style variants: --primary(gradient pill glow), --solid(flat accent),
+       --secondary/--outline, --tertiary/--tonal, --ghost, --link,
+       --soft-{success|warning|info|danger}.
+     Tones: --accent(default), --neutral, --success, --warning, --danger, --info.
+     Sizes: --sm/--compact(32), default(38), --lg(44). Plus --icon, --block, --pill.
+     States: hover / :focus-visible / active / disabled / is-loading.
+     Alpine: none for base (toggles add aria-pressed; openers aria-expanded).
+     ======================================================================== */
+  .ax-btn {
+    --_btn-h: var(--ax-control-h); /* 38 */
+    --_btn-px: var(--ax-space-4);
+    --_btn-fz: var(--ax-text-sm);
+    --_btn-icon: var(--ax-icon-sm);
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--ax-space-2);
+    min-height: var(--_btn-h);
+    padding-block: 0;
+    padding-inline: var(--_btn-px);
+    font-family: var(--ax-font-sans);
+    font-size: var(--_btn-fz);
+    font-weight: var(--ax-weight-semibold);
+    line-height: 1;
+    color: var(--ax-text);
+    text-decoration: none;
+    white-space: nowrap;
+    cursor: pointer;
+    user-select: none;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: var(--ax-radius-sm);
+    transition: background var(--ax-motion-instant) var(--ax-ease-standard),
+      border-color var(--ax-motion-instant) var(--ax-ease-standard),
+      color var(--ax-motion-instant) var(--ax-ease-standard),
+      box-shadow var(--ax-motion-fast) var(--ax-ease-standard),
+      filter var(--ax-motion-instant) var(--ax-ease-standard);
+  }
+  .ax-btn__icon {
+    flex: 0 0 auto;
+    width: var(--_btn-icon);
+    height: var(--_btn-icon);
+    color: currentColor;
+  }
+  .ax-btn__label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    /* .ax-btn sets line-height:1 (for icon centring), but that makes the label's
+       line box = em-size, so overflow:hidden clips glyph descenders (g/j/p/q/y).
+       Restore enough leading to contain them; flex align-items:center keeps it
+       vertically centred regardless. */
+    line-height: 1.25;
+    padding-block: 0.05em;
+  }
+  .ax-btn__spinner {
+    position: absolute;
+    inset-inline-start: 50%;
+    top: 50%;
+    width: var(--_btn-icon);
+    height: var(--_btn-icon);
+    /* Centre via translate, not negative margins: the unlayered `* { margin:0 }`
+       reset in base.css beats this layered rule (unlayered > layered), so margins
+       compute to 0. `translate` is independent of the rotate animation's
+       `transform`, so both apply. */
+    translate: -50% -50%;
+    border-radius: 50%;
+    border: 2px solid currentColor;
+    border-inline-end-color: transparent;
+    opacity: 0;
+    animation: ax-spin 0.7s var(--ax-ease-linear) infinite;
+  }
+
+  /* — sizes — */
+  .ax-btn--sm,
+  .ax-btn--compact {
+    --_btn-h: var(--ax-control-h-compact);
+    --_btn-px: var(--ax-space-3);
+    --_btn-fz: var(--ax-text-xs);
+  }
+  .ax-btn--lg {
+    --_btn-h: var(--ax-control-h-lg);
+    --_btn-px: var(--ax-space-5);
+    --_btn-fz: var(--ax-text-base);
+    --_btn-icon: var(--ax-icon-md);
+  }
+
+  /* — icon-only — square; label hidden; REQUIRES aria-label — */
+  .ax-btn--icon {
+    padding-inline: 0;
+    width: var(--_btn-h);
+    aspect-ratio: 1;
+  }
+  .ax-btn--block {
+    display: flex;
+    width: 100%;
+  }
+  .ax-btn--pill {
+    border-radius: var(--ax-radius-pill);
+  }
+
+  /* — PRIMARY: Aurora gradient + accent glow (signature) — */
+  .ax-btn--primary {
+    color: var(--ax-on-accent);
+    background: var(--ax-gradient-accent);
+    border-color: transparent;
+    box-shadow: var(--ax-glow-accent);
+  }
+  .ax-btn--primary:hover {
+    filter: brightness(1.06);
+    box-shadow: var(--ax-glow-accent), var(--ax-shadow-sm);
+  }
+  .ax-btn--primary:active {
+    filter: brightness(0.97);
+  }
+
+  /* — SOLID: flat accent fill — */
+  .ax-btn--solid {
+    color: var(--ax-on-accent);
+    background: var(--ax-accent);
+    border-color: transparent;
+  }
+  .ax-btn--solid:hover {
+    background: var(--ax-accent-hover);
+  }
+  .ax-btn--solid:active {
+    filter: brightness(0.97);
+  }
+
+  /* — SECONDARY / OUTLINE — */
+  .ax-btn--secondary,
+  .ax-btn--outline {
+    color: var(--ax-text);
+    background: transparent;
+    border-color: var(--ax-border-strong);
+  }
+  .ax-btn--secondary:hover,
+  .ax-btn--outline:hover {
+    background: var(--ax-fill-hover);
+    color: var(--ax-text-strong);
+  }
+  .ax-btn--secondary:active,
+  .ax-btn--outline:active {
+    background: var(--ax-fill-active);
+  }
+
+  /* — TERTIARY / TONAL — */
+  .ax-btn--tertiary,
+  .ax-btn--tonal {
+    color: var(--ax-text-strong);
+    background: var(--ax-fill-hover);
+    border-color: transparent;
+  }
+  .ax-btn--tertiary:hover,
+  .ax-btn--tonal:hover {
+    background: var(--ax-fill-active);
+  }
+
+  /* — GHOST — */
+  .ax-btn--ghost {
+    color: var(--ax-text);
+    background: transparent;
+    border-color: transparent;
+  }
+  .ax-btn--ghost:hover {
+    background: var(--ax-fill-hover);
+    color: var(--ax-text-strong);
+  }
+  .ax-btn--ghost:active {
+    background: var(--ax-fill-active);
+  }
+
+  /* — LINK — */
+  .ax-btn--link {
+    min-height: 0;
+    padding: 0;
+    color: var(--ax-link);
+    background: transparent;
+    border: 0;
+    border-radius: var(--ax-radius-xs);
+  }
+  .ax-btn--link:hover {
+    color: var(--ax-accent-hover);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+
+  /* — TONE modifiers: locally remap the accent role to a semantic so
+       --primary/--solid/--ghost pick it up automatically — */
+  .ax-btn--success {
+    --ax-accent: var(--ax-success-500);
+    --ax-accent-hover: var(--ax-success-500);
+    --ax-on-accent: #fff;
+    --ax-link: var(--ax-success-500);
+    --ax-focus-ring: var(--ax-success-500);
+  }
+  .ax-btn--warning {
+    --ax-accent: var(--ax-warning-500);
+    --ax-accent-hover: var(--ax-warning-500);
+    --ax-on-accent: #fff;
+    --ax-link: var(--ax-warning-500);
+    --ax-focus-ring: var(--ax-warning-500);
+  }
+  .ax-btn--danger {
+    --ax-accent: var(--ax-danger-500);
+    --ax-accent-hover: var(--ax-danger-500);
+    --ax-on-accent: #fff;
+    --ax-link: var(--ax-danger-500);
+    --ax-focus-ring: var(--ax-danger-500);
+  }
+  .ax-btn--info {
+    --ax-accent: var(--ax-info-500);
+    --ax-accent-hover: var(--ax-info-500);
+    --ax-on-accent: #fff;
+    --ax-link: var(--ax-info-500);
+    --ax-focus-ring: var(--ax-info-500);
+  }
+  .ax-btn--neutral {
+    --ax-accent: var(--ax-text-strong);
+    --ax-accent-hover: var(--ax-text);
+    --ax-on-accent: var(--ax-canvas);
+    --ax-link: var(--ax-text);
+    --ax-focus-ring: var(--ax-text-strong);
+  }
+  /* semantic tones lack an --ax-accent-rgb glow pair → flatten primary fill */
+  .ax-btn--success.ax-btn--primary,
+  .ax-btn--warning.ax-btn--primary,
+  .ax-btn--danger.ax-btn--primary,
+  .ax-btn--info.ax-btn--primary,
+  .ax-btn--neutral.ax-btn--primary {
+    background: var(--ax-accent);
+    box-shadow: var(--ax-shadow-sm);
+  }
+
+  /* — SOFT semantic buttons — */
+  .ax-btn--soft-success {
+    color: var(--ax-success-500);
+    background: var(--ax-success-50);
+  }
+  .ax-btn--soft-warning {
+    color: var(--ax-warning-500);
+    background: var(--ax-warning-50);
+  }
+  .ax-btn--soft-danger {
+    color: var(--ax-danger-500);
+    background: var(--ax-danger-50);
+  }
+  .ax-btn--soft-info {
+    color: var(--ax-info-500);
+    background: var(--ax-info-50);
+  }
+  .ax-btn--soft-success:hover,
+  .ax-btn--soft-warning:hover,
+  .ax-btn--soft-danger:hover,
+  .ax-btn--soft-info:hover {
+    filter: brightness(0.97);
+  }
+
+  /* — disabled — */
+  .ax-btn:disabled,
+  .ax-btn[aria-disabled="true"],
+  .ax-btn.is-disabled {
+    color: var(--ax-text-disabled);
+    background: var(--ax-fill-hover);
+    border-color: transparent;
+    box-shadow: none;
+    filter: none;
+    cursor: not-allowed;
+    pointer-events: none;
+  }
+
+  /* — loading: reveal spinner, dim label, preserve width, block clicks — */
+  .ax-btn.is-loading {
+    pointer-events: none;
+  }
+  .ax-btn.is-loading .ax-btn__label {
+    opacity: 0;
+  }
+  .ax-btn.is-loading .ax-btn__icon {
+    opacity: 0;
+  }
+  .ax-btn.is-loading .ax-btn__spinner {
+    opacity: 1;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .ax-btn__spinner {
+      animation-duration: 1.2s;
+    }
+  }
+
+  /* ========================================================================
+     2 · BUTTON GROUP / SEGMENTED — .ax-btn-group
+     Variants: --action, --segmented(radio), --multi, --split, --vertical.
+     Members share one hairline seam; only outer corners rounded.
+     Selected (segmented) = accent-wash + accent text (NOT hover).
+     Alpine: axTabs-style roving tabindex; split caret uses axDropdown.
+     ======================================================================== */
+  .ax-btn-group {
+    display: inline-flex;
+    align-items: stretch;
+  }
+  .ax-btn-group > .ax-btn {
+    border-radius: 0;
+  }
+  .ax-btn-group > .ax-btn:not(:first-child) {
+    margin-inline-start: -1px;
+  }
+  .ax-btn-group > .ax-btn:first-child {
+    border-start-start-radius: var(--ax-radius-sm);
+    border-end-start-radius: var(--ax-radius-sm);
+  }
+  .ax-btn-group > .ax-btn:last-child {
+    border-start-end-radius: var(--ax-radius-sm);
+    border-end-end-radius: var(--ax-radius-sm);
+  }
+  .ax-btn-group > .ax-btn:hover,
+  .ax-btn-group > .ax-btn:focus-visible {
+    z-index: 1;
+  }
+
+  .ax-btn-group--vertical {
+    flex-direction: column;
+  }
+  .ax-btn-group--vertical > .ax-btn:not(:first-child) {
+    margin-inline-start: 0;
+    margin-top: -1px;
+  }
+  .ax-btn-group--vertical > .ax-btn:first-child {
+    border-radius: var(--ax-radius-sm) var(--ax-radius-sm) 0 0;
+  }
+  .ax-btn-group--vertical > .ax-btn:last-child {
+    border-radius: 0 0 var(--ax-radius-sm) var(--ax-radius-sm);
+  }
+
+  /* segmented: boxed track + accent-wash selection */
+  .ax-btn-group--segmented {
+    padding: var(--ax-space-1);
+    gap: var(--ax-space-1);
+    background: var(--ax-fill-hover);
+    border: 1px solid var(--ax-border);
+    border-radius: var(--ax-radius-md);
+  }
+  .ax-btn-group--segmented > .ax-btn {
+    border: 0;
+    margin-inline-start: 0;
+    border-radius: var(--ax-radius-sm) !important;
+    color: var(--ax-text-muted);
+    background: transparent;
+  }
+  .ax-btn-group--segmented > .ax-btn:hover {
+    color: var(--ax-text-strong);
+    background: var(--ax-fill-hover);
+  }
+  .ax-btn-group--segmented > .ax-btn[aria-checked="true"],
+  .ax-btn-group--segmented > .ax-btn.is-selected,
+  .ax-btn-group--segmented > .ax-btn[aria-pressed="true"] {
+    color: var(--ax-accent);
+    background: var(--ax-accent-wash);
+    box-shadow: var(--ax-shadow-sm);
+  }
+
+  .ax-btn-group--split > .ax-btn-group__caret {
+    padding-inline: var(--ax-space-2);
+  }
+
+  /* ========================================================================
+     3 · CARDS — .ax-card  (THE glass recipe surface)
+     Sub: __header/__titles/__eyebrow/__title/__subtitle/__actions/__media/
+          __body/__footer/__handle.
+     Variants: --stat/--chart/--media/--collapsible/--accent-edge/--interactive/
+               --compact/--selected. States: hover/selected/loading/dragging.
+     Alpine: --collapsible→axCollapse; --draggable→axSortable.
+     ======================================================================== */
+  .ax-card {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    color: var(--ax-text);
+    background: var(--ax-surface);
+    border: 1px solid var(--ax-border);
+    border-radius: var(--ax-radius-xl);
+    box-shadow: var(--ax-shadow-card);
+    -webkit-backdrop-filter: blur(18px) saturate(1.1);
+    backdrop-filter: blur(18px) saturate(1.1);
+    transition: box-shadow var(--ax-motion-base) var(--ax-ease-standard),
+      border-color var(--ax-motion-base) var(--ax-ease-standard),
+      transform var(--ax-motion-base) var(--ax-ease-standard);
+  }
+  .ax-card::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    pointer-events: none;
+    box-shadow: inset 0 1px 0 var(--ax-glass-hi);
+  }
+  @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+    .ax-card {
+      background: var(--ax-surface-solid);
+    }
+  }
+  .ax-card__header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--ax-space-3);
+    padding: var(--ax-space-5) var(--ax-space-6);
+  }
+  .ax-card__header + .ax-card__body {
+    padding-top: 0;
+  }
+  .ax-card__titles {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+  }
+  .ax-card__eyebrow {
+    font-size: var(--ax-text-2xs);
+    font-weight: var(--ax-weight-semibold);
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--ax-text-subtle);
+  }
+  .ax-card__title {
+    margin: 0;
+    font-family: var(--ax-font-display);
+    font-size: var(--ax-text-lg);
+    font-weight: var(--ax-weight-semibold);
+    line-height: var(--ax-leading-lg);
+    color: var(--ax-text-strong);
+  }
+  .ax-card__subtitle {
+    margin: 0;
+    font-size: var(--ax-text-sm);
+    color: var(--ax-text-muted);
+  }
+  .ax-card__actions {
+    display: flex;
+    align-items: center;
+    gap: var(--ax-space-2);
+    flex: 0 0 auto;
+  }
+  .ax-card__media {
+    position: relative;
+    overflow: hidden;
+  }
+  .ax-card__body {
+    padding: var(--ax-space-6);
+    flex: 1 1 auto;
+  }
+  .ax-card__footer {
+    display: flex;
+    align-items: center;
+    gap: var(--ax-space-3);
+    padding: var(--ax-space-4) var(--ax-space-6);
+    border-top: 1px solid var(--ax-border);
+  }
+  .ax-card__handle {
+    display: inline-flex;
+    color: var(--ax-text-subtle);
+    background: none;
+    border: 0;
+    cursor: grab;
+  }
+  .ax-card__handle:active {
+    cursor: grabbing;
+  }
+
+  .ax-card--compact .ax-card__header {
+    padding: var(--ax-space-4) var(--ax-space-5);
+  }
+  .ax-card--compact .ax-card__body {
+    padding: var(--ax-space-5);
+  }
+
+  /* Balance plate: stack the header so the currency switcher drops to its own
+     line instead of squeezing the title in the narrow (col--4) header. */
+  .ax-card--balance .ax-card__header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .ax-card--accent-edge::before {
+    content: "";
+    position: absolute;
+    inset-block: 0;
+    inset-inline-start: 0;
+    width: 3px;
+    background: var(--ax-accent);
+    z-index: 1;
+  }
+
+  .ax-card--interactive {
+    cursor: pointer;
+  }
+  .ax-card--interactive:hover {
+    box-shadow: var(--ax-shadow-lg);
+    border-color: var(--ax-border-strong);
+  }
+  .ax-card--interactive:focus-visible {
+    outline: 2px solid var(--ax-focus-ring);
+    outline-offset: 2px;
+  }
+
+  .ax-card.is-selected,
+  .ax-card--selected {
+    border-color: var(--ax-accent);
+  }
+  .ax-card.is-selected .ax-card__header,
+  .ax-card--selected .ax-card__header {
+    background: var(--ax-accent-wash);
+  }
+
+  .ax-card.is-loading {
+    pointer-events: none;
+  }
+  .ax-card.is-dragging {
+    opacity: 0.6;
+    box-shadow: var(--ax-shadow-lg);
+  }
+  .ax-card--media .ax-card__media {
+    border-radius: var(--ax-radius-xl) var(--ax-radius-xl) 0 0;
+  }
+
+  /* ========================================================================
+     4 · KPI WIDGET — .ax-kpi (standalone) + .ax-card--stat (card flavour)
+     __icon tile (c1..c4 = accent/cyan/violet/amber), __value (display, tabular),
+     __delta up/down chip, __label, optional __spark.
+     Alpine: none (count-up via page JS; disabled under reduced-motion).
+     ======================================================================== */
+  .ax-kpi {
+    display: flex;
+    flex-direction: column;
+    gap: var(--ax-space-3);
+  }
+  .ax-kpi__top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--ax-space-3);
+  }
+  .ax-kpi__icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    border-radius: var(--ax-radius-md);
+    color: var(--ax-accent);
+    background: rgba(var(--ax-accent-rgb), 0.14);
+  }
+  .ax-kpi__icon svg {
+    width: var(--ax-icon-md);
+    height: var(--ax-icon-md);
+  }
+  .ax-kpi__icon--c1 {
+    color: var(--ax-accent);
+    background: rgba(var(--ax-accent-rgb), 0.14);
+  }
+  .ax-kpi__icon--c2 {
+    color: var(--ax-viz-cyan);
+    background: color-mix(in oklab, var(--ax-viz-cyan) 14%, transparent);
+  }
+  .ax-kpi__icon--c3 {
+    color: var(--ax-viz-violet);
+    background: color-mix(in oklab, var(--ax-viz-violet) 14%, transparent);
+  }
+  .ax-kpi__icon--c4 {
+    color: var(--ax-viz-amber);
+    background: color-mix(in oklab, var(--ax-viz-amber) 14%, transparent);
+  }
+  .ax-kpi__label {
+    font-size: var(--ax-text-sm);
+    color: var(--ax-text-muted);
+  }
+  .ax-kpi__value {
+    font-family: var(--ax-font-display);
+    font-size: var(--ax-num-kpi);
+    line-height: var(--ax-leading-kpi);
+    font-weight: var(--ax-weight-semibold);
+    color: var(--ax-text-strong);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.01em;
+  }
+  .ax-kpi__meta {
+    display: flex;
+    align-items: center;
+    gap: var(--ax-space-2);
+    flex-wrap: wrap;
+  }
+  .ax-kpi__delta,
+  .ax-card__delta {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    padding: 2px var(--ax-space-2);
+    font-size: var(--ax-text-xs);
+    font-weight: var(--ax-weight-semibold);
+    font-variant-numeric: tabular-nums;
+    border-radius: var(--ax-radius-pill);
+  }
+  .ax-kpi__delta svg,
+  .ax-card__delta svg {
+    width: var(--ax-icon-xs);
+    height: var(--ax-icon-xs);
+    stroke-width: var(--ax-icon-stroke-bold);
+  }
+  .ax-kpi__delta--up,
+  .ax-card__delta--up {
+    color: var(--ax-delta-up);
+    background: color-mix(in oklab, var(--ax-delta-up) 14%, transparent);
+  }
+  .ax-kpi__delta--down,
+  .ax-card__delta--down {
+    color: var(--ax-delta-down);
+    background: color-mix(in oklab, var(--ax-delta-down) 14%, transparent);
+  }
+  .ax-kpi__caption {
+    font-size: var(--ax-text-xs);
+    color: var(--ax-text-subtle);
+  }
+  .ax-kpi__spark {
+    margin-top: var(--ax-space-2);
+  }
+
+  /* ── KPI layout: icon top-left · title + delta stacked top-right ·
+     value and spark each on their own row. The grid container is whatever
+     directly holds .ax-kpi__top — the card body, or the bare wrapper used in
+     the skeletons "loaded" preview — so every KPI card is patched uniformly
+     with no markup change. :has + display:contents sit inside the Tailwind v4
+     browser baseline this stack already targets. */
+  :has(> .ax-kpi__top) {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    column-gap: var(--ax-space-3);
+    row-gap: var(--ax-space-2);
+    align-items: center;
+  }
+  /* dissolve the icon/delta and value/spark wrappers so all five pieces
+     become direct grid items of the container above */
+  :has(> .ax-kpi__top) > .ax-kpi__top,
+  :has(> .ax-kpi__meta) > .ax-kpi__meta {
+    display: contents;
+  }
+  :has(> .ax-kpi__top) > .ax-kpi__top > .ax-kpi__icon {
+    grid-column: 1;
+    grid-row: 1 / span 2;
+    align-self: start;
+  }
+  :has(> .ax-kpi__top) > .ax-kpi__label {
+    grid-column: 2;
+    grid-row: 1;
+    justify-self: end;
+    text-align: end;
+  }
+  :has(> .ax-kpi__top) > .ax-kpi__top > .ax-kpi__delta {
+    grid-column: 2;
+    grid-row: 2;
+    justify-self: end;
+  }
+  :has(> .ax-kpi__top) > .ax-kpi__value,
+  :has(> .ax-kpi__meta) > .ax-kpi__meta > .ax-kpi__value {
+    grid-column: 1 / -1;
+    grid-row: 3;
+    margin: 0;
+  }
+  :has(> .ax-kpi__meta) > .ax-kpi__meta > .ax-kpi__spark {
+    grid-column: 1 / -1;
+    grid-row: 4;
+    width: 100%;
+    margin: 0;
+  }
+
+  /* card-stat flavour reuses kpi internals */
+  .ax-card--stat .ax-card__body {
+    display: flex;
+    flex-direction: column;
+    gap: var(--ax-space-3);
+  }
+  .ax-card__kpi-val {
+    font-family: var(--ax-font-display);
+    font-size: var(--ax-num-kpi);
+    line-height: var(--ax-leading-kpi);
+    font-weight: var(--ax-weight-semibold);
+    color: var(--ax-text-strong);
+    font-variant-numeric: tabular-nums;
+  }
+  .ax-card__kpi-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    border-radius: var(--ax-radius-md);
+    color: var(--ax-accent);
+    background: rgba(var(--ax-accent-rgb), 0.14);
+  }
+  .ax-card__kpi-icon--c1 {
+    color: var(--ax-accent);
+    background: rgba(var(--ax-accent-rgb), 0.14);
+  }
+  .ax-card__kpi-icon--c2 {
+    color: var(--ax-viz-cyan);
+    background: color-mix(in oklab, var(--ax-viz-cyan) 14%, transparent);
+  }
+  .ax-card__kpi-icon--c3 {
+    color: var(--ax-viz-violet);
+    background: color-mix(in oklab, var(--ax-viz-violet) 14%, transparent);
+  }
+  .ax-card__kpi-icon--c4 {
+    color: var(--ax-viz-amber);
+    background: color-mix(in oklab, var(--ax-viz-amber) 14%, transparent);
+  }
+
+  /* ========================================================================
+     5 · BADGES — .ax-badge
+     Variants: --soft(default)/--solid/--outline/--dot/--count/--pill/--chip/--filter.
+     Tones: --success/--warning/--danger/--info/--neutral/--accent.
+     Sizes: --sm/default. Alpine: --chip remove / --filter toggles aria-pressed.
+     ======================================================================== */
+  .ax-badge {
+    --_badge-50: var(--ax-fill-hover);
+    --_badge-500: var(--ax-text-muted);
+    display: inline-flex;
+    align-items: center;
+    gap: var(--ax-space-1);
+    height: 20px;
+    padding-inline: var(--ax-space-2);
+    font-size: var(--ax-text-xs);
+    font-weight: var(--ax-weight-semibold);
+    line-height: 1;
+    white-space: nowrap;
+    border: 1px solid transparent;
+    border-radius: var(--ax-radius-xs);
+    color: var(--_badge-500);
+    background: var(--_badge-50);
+  }
+  .ax-badge__dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: currentColor;
+  }
+  .ax-badge__icon {
+    width: var(--ax-icon-xs);
+    height: var(--ax-icon-xs);
+  }
+  .ax-badge__remove {
+    display: inline-flex;
+    margin-inline-start: 2px;
+    color: currentColor;
+    background: none;
+    border: 0;
+    cursor: pointer;
+    opacity: 0.7;
+  }
+  .ax-badge__remove svg {
+    width: var(--ax-icon-xs);
+    height: var(--ax-icon-xs);
+  }
+  .ax-badge__remove:hover {
+    color: var(--ax-danger-500);
+    opacity: 1;
+  }
+
+  /* tones */
+  .ax-badge--success {
+    --_badge-50: var(--ax-success-50);
+    --_badge-500: var(--ax-success-500);
+  }
+  .ax-badge--warning {
+    --_badge-50: var(--ax-warning-50);
+    --_badge-500: var(--ax-warning-500);
+  }
+  .ax-badge--danger {
+    --_badge-50: var(--ax-danger-50);
+    --_badge-500: var(--ax-danger-500);
+  }
+  .ax-badge--info {
+    --_badge-50: var(--ax-info-50);
+    --_badge-500: var(--ax-info-500);
+  }
+  .ax-badge--accent {
+    --_badge-50: var(--ax-accent-wash);
+    --_badge-500: var(--ax-accent);
+  }
+  .ax-badge--neutral {
+    --_badge-50: var(--ax-fill-hover);
+    --_badge-500: var(--ax-text-muted);
+  }
+
+  /* styles */
+  .ax-badge--soft {
+    color: var(--_badge-500);
+    background: var(--_badge-50);
+  }
+  .ax-badge--solid {
+    color: #fff;
+    background: var(--_badge-500);
+  }
+  .ax-badge--solid.ax-badge--accent {
+    color: var(--ax-on-accent);
+    background: var(--ax-accent);
+  }
+  .ax-badge--outline {
+    color: var(--_badge-500);
+    background: transparent;
+    border-color: var(--_badge-500);
+  }
+  .ax-badge--pill,
+  .ax-badge--chip,
+  .ax-badge--count {
+    border-radius: var(--ax-radius-pill);
+  }
+  .ax-badge--count {
+    min-width: 18px;
+    height: 18px;
+    padding-inline: 5px;
+    justify-content: center;
+    font-family: var(--ax-font-mono);
+    font-variant-numeric: tabular-nums;
+    color: var(--ax-on-accent);
+    background: var(--ax-accent);
+  }
+  .ax-badge--count.ax-badge--danger {
+    color: #fff;
+    background: var(--ax-danger-500);
+  }
+
+  /* sizes */
+  .ax-badge--sm {
+    height: 16px;
+    padding-inline: var(--ax-space-1);
+    font-size: var(--ax-text-2xs);
+  }
+
+  /* interactive */
+  .ax-badge--chip,
+  .ax-badge--filter {
+    cursor: pointer;
+  }
+  .ax-badge--filter:hover {
+    background: var(--ax-fill-active);
+  }
+  .ax-badge--filter[aria-pressed="true"],
+  .ax-badge--filter.is-selected {
+    color: var(--ax-accent);
+    background: var(--ax-accent-wash);
+    border-color: transparent;
+  }
+
+  /* ========================================================================
+     6 · AVATARS — .ax-avatar
+     image / __initials / __icon fallback. Shapes --circle(default)/--squircle.
+     Sizes --xs/--sm/--md(default)/--lg/--xl/--2xl. Status dot. Group + overflow.
+     Alpine: __overflow → axPopover list.
+     ======================================================================== */
+  .ax-avatar {
+    --_av-size: 36px;
+    --_av-status: 8px;
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: var(--_av-size);
+    height: var(--_av-size);
+    flex: 0 0 auto;
+    overflow: hidden;
+    font-size: calc(var(--_av-size) * 0.38);
+    font-weight: var(--ax-weight-semibold);
+    color: var(--ax-text-muted);
+    background: var(--ax-fill-active);
+    border-radius: var(--ax-radius-pill);
+    user-select: none;
+  }
+  .ax-avatar__img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    border-radius: inherit;
+  }
+  .ax-avatar__initials {
+    line-height: 1;
+  }
+  .ax-avatar__icon {
+    width: 60%;
+    height: 60%;
+    color: var(--ax-text-subtle);
+  }
+  .ax-avatar--squircle {
+    border-radius: var(--ax-radius-sm);
+  }
+  .ax-avatar--xs {
+    --_av-size: 20px;
+    --_av-status: 6px;
+  }
+  .ax-avatar--sm {
+    --_av-size: 28px;
+    --_av-status: 8px;
+  }
+  .ax-avatar--md {
+    --_av-size: 36px;
+  }
+  .ax-avatar--lg {
+    --_av-size: 48px;
+    --_av-status: 10px;
+  }
+  .ax-avatar--xl {
+    --_av-size: 64px;
+    --_av-status: 12px;
+  }
+  .ax-avatar--2xl {
+    --_av-size: 96px;
+    --_av-status: 14px;
+  }
+  .ax-avatar--ringed {
+    box-shadow: 0 0 0 2px var(--ax-surface-solid), 0 0 0 3px var(--ax-border-strong);
+  }
+  .ax-avatar.is-current,
+  .ax-avatar--selected {
+    box-shadow: 0 0 0 2px var(--ax-surface-solid), 0 0 0 4px var(--ax-accent);
+  }
+  .ax-avatar__status {
+    position: absolute;
+    inset-block-end: 0;
+    inset-inline-end: 0;
+    width: var(--_av-status);
+    height: var(--_av-status);
+    border-radius: 50%;
+    box-shadow: 0 0 0 2px var(--ax-surface-solid);
+    background: var(--ax-text-subtle);
+  }
+  .ax-avatar__status--online {
+    background: var(--ax-viz-emerald);
+  }
+  .ax-avatar__status--away {
+    background: var(--ax-viz-amber);
+  }
+  .ax-avatar__status--busy {
+    background: var(--ax-viz-red);
+  }
+  .ax-avatar__status--offline {
+    background: var(--ax-text-subtle);
+  }
+
+  .ax-avatar-group {
+    display: inline-flex;
+    align-items: center;
+  }
+  .ax-avatar-group > .ax-avatar:not(:first-child) {
+    margin-inline-start: -10px;
+  }
+  .ax-avatar-group > .ax-avatar {
+    box-shadow: 0 0 0 2px var(--ax-surface-solid);
+  }
+  .ax-avatar__overflow {
+    font-size: var(--ax-text-xs);
+    color: var(--ax-text-muted);
+    background: var(--ax-fill-active);
+    border: 0;
+    cursor: pointer;
+  }
+
+  /* ========================================================================
+     7 · ALERTS — .ax-alert
+     Tones + --solid/--inline/--dismissible/--with-actions/--accent-edge.
+     Alpine: dismiss removes node + returns focus.
+     ======================================================================== */
+  .ax-alert {
+    --_a-50: var(--ax-fill-hover);
+    --_a-500: var(--ax-text-muted);
+    position: relative;
+    display: flex;
+    align-items: flex-start;
+    gap: var(--ax-space-3);
+    padding: var(--ax-space-4) var(--ax-space-5);
+    color: var(--ax-text);
+    background: var(--_a-50);
+    border: 1px solid var(--ax-border);
+    border-radius: var(--ax-radius-md);
+  }
+  .ax-alert__icon {
+    flex: 0 0 auto;
+    width: var(--ax-icon-md);
+    height: var(--ax-icon-md);
+    color: var(--_a-500);
+  }
+  .ax-alert__content {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+  .ax-alert__title {
+    margin: 0;
+    font-weight: var(--ax-weight-semibold);
+    color: var(--ax-text-strong);
+  }
+  .ax-alert__message {
+    margin: 2px 0 0;
+    font-size: var(--ax-text-sm);
+    color: var(--ax-text-muted);
+  }
+  .ax-alert__actions {
+    display: flex;
+    gap: var(--ax-space-2);
+    margin-top: var(--ax-space-2);
+  }
+  .ax-alert__dismiss {
+    flex: 0 0 auto;
+    display: inline-flex;
+    color: var(--ax-text-subtle);
+    background: none;
+    border: 0;
+    cursor: pointer;
+  }
+  .ax-alert__dismiss svg {
+    width: var(--ax-icon-sm);
+    height: var(--ax-icon-sm);
+  }
+  .ax-alert__dismiss:hover {
+    color: var(--ax-text-strong);
+  }
+  .ax-alert--info {
+    --_a-50: var(--ax-info-50);
+    --_a-500: var(--ax-info-500);
+  }
+  .ax-alert--success {
+    --_a-50: var(--ax-success-50);
+    --_a-500: var(--ax-success-500);
+  }
+  .ax-alert--warning {
+    --_a-50: var(--ax-warning-50);
+    --_a-500: var(--ax-warning-500);
+  }
+  .ax-alert--danger {
+    --_a-50: var(--ax-danger-50);
+    --_a-500: var(--ax-danger-500);
+  }
+  .ax-alert--accent {
+    --_a-50: var(--ax-accent-wash);
+    --_a-500: var(--ax-accent);
+  }
+  .ax-alert--neutral {
+    --_a-50: var(--ax-fill-hover);
+    --_a-500: var(--ax-text-muted);
+  }
+  .ax-alert--accent-edge {
+    border-inline-start: 3px solid var(--_a-500);
+  }
+  .ax-alert--solid {
+    color: #fff;
+    background: var(--_a-500);
+    border-color: transparent;
+  }
+  .ax-alert--solid .ax-alert__icon,
+  .ax-alert--solid .ax-alert__title,
+  .ax-alert--solid .ax-alert__message,
+  .ax-alert--solid .ax-alert__dismiss {
+    color: inherit;
+  }
+  .ax-alert--inline {
+    align-items: center;
+    padding: var(--ax-space-2) var(--ax-space-4);
+    font-size: var(--ax-text-sm);
+  }
+  .ax-alert.is-dismissing {
+    opacity: 0;
+    transition: opacity var(--ax-motion-base) var(--ax-ease-exit);
+  }
+
+  /* ========================================================================
+     8 · TOASTS — .ax-toast (region .ax-toast-region)
+     positions: top/bottom × start/center/end. Stack gap. Timer line.
+     Alpine: axToast global store (queue/timers/promise/politeness).
+     ======================================================================== */
+  .ax-toast-region {
+    position: fixed;
+    z-index: var(--ax-z-toast);
+    display: flex;
+    flex-direction: column;
+    gap: var(--ax-space-2);
+    width: min(380px, calc(100vw - var(--ax-space-8)));
+    padding: var(--ax-space-4);
+    pointer-events: none;
+  }
+  .ax-toast-region--bottom-end {
+    inset-block-end: 0;
+    inset-inline-end: 0;
+  }
+  .ax-toast-region--bottom-start {
+    inset-block-end: 0;
+    inset-inline-start: 0;
+  }
+  .ax-toast-region--bottom-center {
+    inset-block-end: 0;
+    inset-inline: 0;
+    margin-inline: auto;
+  }
+  .ax-toast-region--top-end {
+    inset-block-start: 0;
+    inset-inline-end: 0;
+  }
+  .ax-toast-region--top-start {
+    inset-block-start: 0;
+    inset-inline-start: 0;
+  }
+  .ax-toast-region--top-center {
+    inset-block-start: 0;
+    inset-inline: 0;
+    margin-inline: auto;
+  }
+  .ax-toast {
+    --_t-500: var(--ax-text-muted);
+    position: relative;
+    display: flex;
+    align-items: flex-start;
+    gap: var(--ax-space-3);
+    overflow: hidden;
+    padding: var(--ax-space-4);
+    pointer-events: auto;
+    color: var(--ax-text);
+    background: var(--ax-surface-overlay);
+    border: 1px solid var(--ax-border);
+    border-radius: var(--ax-radius-lg);
+    box-shadow: var(--ax-shadow-lg);
+    -webkit-backdrop-filter: blur(18px) saturate(1.1);
+    backdrop-filter: blur(18px) saturate(1.1);
+    transition: opacity var(--ax-motion-base) var(--ax-ease-standard),
+      transform var(--ax-motion-base) var(--ax-ease-standard);
+  }
+  .ax-toast__icon {
+    flex: 0 0 auto;
+    width: var(--ax-icon-md);
+    height: var(--ax-icon-md);
+    color: var(--_t-500);
+  }
+  .ax-toast__content {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+  .ax-toast__title {
+    margin: 0;
+    font-weight: var(--ax-weight-semibold);
+    color: var(--ax-text-strong);
+  }
+  .ax-toast__message {
+    margin: 2px 0 0;
+    font-size: var(--ax-text-sm);
+    color: var(--ax-text-muted);
+  }
+  .ax-toast__action {
+    flex: 0 0 auto;
+    align-self: center;
+    font-size: var(--ax-text-sm);
+    font-weight: var(--ax-weight-semibold);
+    color: var(--ax-link);
+    background: none;
+    border: 0;
+    cursor: pointer;
+  }
+  .ax-toast__dismiss {
+    flex: 0 0 auto;
+    display: inline-flex;
+    color: var(--ax-text-subtle);
+    background: none;
+    border: 0;
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity var(--ax-motion-fast) var(--ax-ease-standard);
+  }
+  .ax-toast__dismiss svg {
+    width: var(--ax-icon-sm);
+    height: var(--ax-icon-sm);
+  }
+  .ax-toast:hover .ax-toast__dismiss,
+  .ax-toast:focus-within .ax-toast__dismiss {
+    opacity: 1;
+  }
+  .ax-toast__timer {
+    position: absolute;
+    inset-block-end: 0;
+    inset-inline-start: 0;
+    height: 2px;
+    width: 100%;
+    transform-origin: left center;
+    background: var(--ax-accent);
+  }
+  .ax-toast--info {
+    --_t-500: var(--ax-info-500);
+  }
+  .ax-toast--success {
+    --_t-500: var(--ax-success-500);
+  }
+  .ax-toast--warning {
+    --_t-500: var(--ax-warning-500);
+  }
+  .ax-toast--danger {
+    --_t-500: var(--ax-danger-500);
+  }
+  .ax-toast--accent {
+    --_t-500: var(--ax-accent);
+  }
+  .ax-toast.is-entering {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  .ax-toast.is-leaving {
+    opacity: 0;
+    transform: translateY(4px);
+    transition-timing-function: var(--ax-ease-exit);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .ax-toast.is-entering,
+    .ax-toast.is-leaving {
+      transform: none;
+    }
+  }
+
+  /* ========================================================================
+     9 · DROPDOWN / MENU — .ax-dropdown / .ax-menu (glass overlay)
+     __item/__icon/__shortcut/__divider/__section-label/__check, --item--danger.
+     Alpine: axDropdown.
+     ======================================================================== */
+  .ax-dropdown {
+    position: relative;
+    display: inline-flex;
+  }
+  .ax-menu {
+    position: absolute;
+    z-index: var(--ax-z-dropdown);
+    min-width: 200px;
+    max-height: min(70vh, 420px);
+    overflow-y: auto;
+    padding: var(--ax-space-2);
+    color: var(--ax-text);
+    /* Opaque, no backdrop-filter — dropdown menus read cleaner solid, and when
+       nested in a glass card the blur can't reach the page anyway. */
+    background: var(--ax-surface-solid);
+    border: 1px solid var(--ax-border);
+    border-radius: var(--ax-radius-lg);
+    box-shadow: var(--ax-shadow-lg);
+  }
+  .ax-menu__section-label {
+    padding: var(--ax-space-2) var(--ax-space-3) var(--ax-space-1);
+    font-size: var(--ax-text-2xs);
+    font-weight: var(--ax-weight-semibold);
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--ax-text-subtle);
+  }
+  .ax-menu__item {
+    display: flex;
+    align-items: center;
+    gap: var(--ax-space-3);
+    width: 100%;
+    padding: var(--ax-space-2) var(--ax-space-3);
+    font-size: var(--ax-text-sm);
+    color: var(--ax-text);
+    text-align: start;
+    text-decoration: none;
+    background: transparent;
+    border: 0;
+    border-radius: var(--ax-radius-md);
+    cursor: pointer;
+    transition: background var(--ax-motion-instant) var(--ax-ease-standard);
+  }
+  .ax-menu__item:hover,
+  .ax-menu__item.is-active,
+  .ax-menu__item:focus-visible {
+    background: var(--ax-fill-hover);
+    color: var(--ax-text-strong);
+    outline: none;
+  }
+  .ax-menu__icon {
+    flex: 0 0 auto;
+    width: var(--ax-icon-sm);
+    height: var(--ax-icon-sm);
+    color: var(--ax-text-subtle);
+  }
+  .ax-menu__shortcut {
+    margin-inline-start: auto;
+    font-family: var(--ax-font-mono);
+    font-size: var(--ax-text-2xs);
+    color: var(--ax-text-subtle);
+  }
+  .ax-menu__check {
+    margin-inline-start: auto;
+    width: var(--ax-icon-sm);
+    height: var(--ax-icon-sm);
+    color: var(--ax-accent);
+    opacity: 0;
+  }
+  .ax-menu__item[aria-checked="true"] .ax-menu__check,
+  .ax-menu__item.is-selected .ax-menu__check {
+    opacity: 1;
+  }
+  .ax-menu__item[aria-checked="true"],
+  .ax-menu__item.is-selected {
+    color: var(--ax-accent);
+  }
+  .ax-menu__item--danger {
+    color: var(--ax-danger-500);
+  }
+  .ax-menu__item--danger .ax-menu__icon {
+    color: var(--ax-danger-500);
+  }
+  .ax-menu__item:disabled,
+  .ax-menu__item[aria-disabled="true"] {
+    color: var(--ax-text-disabled);
+    pointer-events: none;
+  }
+  .ax-menu__divider {
+    height: 1px;
+    margin: var(--ax-space-1) 0;
+    border: 0;
+    background: var(--ax-border);
+  }
+
+  /* ========================================================================
+     10 · MODALS — .ax-modal
+     __backdrop/__dialog/__header/__title/__close/__body/__footer/__status/__counter.
+     Sizes --sm/default/--lg/--xl/--fullscreen. --scrollable / --centered.
+     Alpine: axModal.
+     ======================================================================== */
+  .ax-modal {
+    position: fixed;
+    inset: 0;
+    z-index: var(--ax-z-modal);
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    padding: var(--ax-space-8) var(--ax-space-4);
+    overflow-y: auto;
+  }
+  .ax-modal--centered {
+    align-items: center;
+  }
+  .ax-modal__backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(8, 10, 16, 0.6);
+    -webkit-backdrop-filter: blur(2px);
+    backdrop-filter: blur(2px);
+  }
+  .ax-modal__dialog {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    max-width: 560px;
+    max-height: calc(100vh - var(--ax-space-16));
+    margin: auto;
+    color: var(--ax-text);
+    background: var(--ax-surface-overlay);
+    border: 1px solid var(--ax-border);
+    border-radius: var(--ax-radius-lg);
+    box-shadow: var(--ax-shadow-lg);
+    -webkit-backdrop-filter: blur(18px) saturate(1.1);
+    backdrop-filter: blur(18px) saturate(1.1);
+  }
+  .ax-modal__dialog--sm {
+    max-width: 420px;
+  }
+  .ax-modal__dialog--lg {
+    max-width: 760px;
+  }
+  .ax-modal__dialog--xl {
+    max-width: 960px;
+  }
+  .ax-modal__dialog--fullscreen {
+    max-width: none;
+    width: 100vw;
+    height: 100vh;
+    max-height: 100vh;
+    border-radius: 0;
+  }
+  .ax-modal__header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--ax-space-3);
+    padding: var(--ax-space-5) var(--ax-space-6);
+    border-bottom: 1px solid var(--ax-border);
+  }
+  .ax-modal__title {
+    margin: 0;
+    font-family: var(--ax-font-display);
+    font-size: var(--ax-text-lg);
+    font-weight: var(--ax-weight-semibold);
+    color: var(--ax-text-strong);
+  }
+  .ax-modal__close {
+    flex: 0 0 auto;
+    display: inline-flex;
+    color: var(--ax-text-subtle);
+    background: none;
+    border: 0;
+    cursor: pointer;
+  }
+  .ax-modal__close svg {
+    width: var(--ax-icon-md);
+    height: var(--ax-icon-md);
+  }
+  .ax-modal__close:hover {
+    color: var(--ax-text-strong);
+  }
+  .ax-modal__body {
+    padding: var(--ax-space-6);
+    overflow-y: auto;
+  }
+  .ax-modal__footer {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: var(--ax-space-3);
+    padding: var(--ax-space-4) var(--ax-space-6);
+    border-top: 1px solid var(--ax-border);
+  }
+  .ax-modal__dialog--scrollable .ax-modal__header,
+  .ax-modal__dialog--scrollable .ax-modal__footer {
+    flex: 0 0 auto;
+  }
+  .ax-modal__dialog--scrollable .ax-modal__body {
+    flex: 1 1 auto;
+  }
+  .ax-modal__status {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 48px;
+    height: 48px;
+    border-radius: var(--ax-radius-pill);
+    color: var(--ax-accent);
+    background: var(--ax-accent-wash);
+  }
+  .ax-modal__status--success {
+    color: var(--ax-success-500);
+    background: var(--ax-success-50);
+  }
+  .ax-modal__status--warning {
+    color: var(--ax-warning-500);
+    background: var(--ax-warning-50);
+  }
+  .ax-modal__status--danger {
+    color: var(--ax-danger-500);
+    background: var(--ax-danger-50);
+  }
+  .ax-modal__status--info {
+    color: var(--ax-info-500);
+    background: var(--ax-info-50);
+  }
+  .ax-modal__counter {
+    font-family: var(--ax-font-mono);
+    font-variant-numeric: tabular-nums;
+    color: var(--ax-text-muted);
+  }
+
+  /* ========================================================================
+     11 · OFFCANVAS (drawer) — .ax-offcanvas (4 edges)
+     __backdrop/__panel/__header/__body/__footer. --start/--end/--top/--bottom.
+     Alpine: axOffcanvas.
+     ======================================================================== */
+  .ax-offcanvas {
+    position: fixed;
+    inset: 0;
+    z-index: var(--ax-z-drawer);
+  }
+  .ax-offcanvas__backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(8, 10, 16, 0.55);
+    -webkit-backdrop-filter: blur(2px);
+    backdrop-filter: blur(2px);
+  }
+  .ax-offcanvas__panel {
+    position: fixed;
+    display: flex;
+    flex-direction: column;
+    color: var(--ax-text);
+    background: var(--ax-surface-overlay);
+    border: 1px solid var(--ax-border);
+    box-shadow: var(--ax-shadow-lg);
+    -webkit-backdrop-filter: blur(18px) saturate(1.1);
+    backdrop-filter: blur(18px) saturate(1.1);
+  }
+  .ax-offcanvas__panel--end,
+  .ax-offcanvas__panel--start {
+    inset-block: 0;
+    width: min(420px, 92vw);
+  }
+  .ax-offcanvas__panel--end {
+    inset-inline-end: 0;
+    border-start-start-radius: var(--ax-radius-lg);
+    border-end-start-radius: var(--ax-radius-lg);
+  }
+  .ax-offcanvas__panel--start {
+    inset-inline-start: 0;
+    border-start-end-radius: var(--ax-radius-lg);
+    border-end-end-radius: var(--ax-radius-lg);
+  }
+  .ax-offcanvas__panel--top,
+  .ax-offcanvas__panel--bottom {
+    inset-inline: 0;
+    height: min(420px, 80vh);
+  }
+  .ax-offcanvas__panel--top {
+    inset-block-start: 0;
+    border-end-start-radius: var(--ax-radius-lg);
+    border-end-end-radius: var(--ax-radius-lg);
+  }
+  .ax-offcanvas__panel--bottom {
+    inset-block-end: 0;
+    border-start-start-radius: var(--ax-radius-lg);
+    border-start-end-radius: var(--ax-radius-lg);
+  }
+  .ax-offcanvas__panel--sm.ax-offcanvas__panel--end,
+  .ax-offcanvas__panel--sm.ax-offcanvas__panel--start {
+    width: min(320px, 92vw);
+  }
+  .ax-offcanvas__panel--lg.ax-offcanvas__panel--end,
+  .ax-offcanvas__panel--lg.ax-offcanvas__panel--start {
+    width: min(540px, 96vw);
+  }
+  .ax-offcanvas__panel--full.ax-offcanvas__panel--end,
+  .ax-offcanvas__panel--full.ax-offcanvas__panel--start {
+    width: 100vw;
+    border-radius: 0;
+  }
+  .ax-offcanvas__header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--ax-space-3);
+    padding: var(--ax-space-5) var(--ax-space-6);
+    border-bottom: 1px solid var(--ax-border);
+  }
+  .ax-offcanvas__header h2,
+  .ax-offcanvas__title {
+    margin: 0;
+    font-family: var(--ax-font-display);
+    font-size: var(--ax-text-lg);
+    font-weight: var(--ax-weight-semibold);
+    color: var(--ax-text-strong);
+  }
+  .ax-offcanvas__close {
+    display: inline-flex;
+    color: var(--ax-text-subtle);
+    background: none;
+    border: 0;
+    cursor: pointer;
+  }
+  .ax-offcanvas__close svg {
+    width: var(--ax-icon-md);
+    height: var(--ax-icon-md);
+  }
+  .ax-offcanvas__close:hover {
+    color: var(--ax-text-strong);
+  }
+  .ax-offcanvas__body {
+    flex: 1 1 auto;
+    padding: var(--ax-space-6);
+    overflow-y: auto;
+  }
+  .ax-offcanvas__footer {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: var(--ax-space-3);
+    padding: var(--ax-space-4) var(--ax-space-6);
+    border-top: 1px solid var(--ax-border);
+  }
+
+  /* ========================================================================
+     12 · TABS / NAVS / PILLS — .ax-tabs
+     --line(default)/--pill/--segmented/--vertical/--scrollable.
+     __list/__tab/__icon/__badge/__indicator/__panel. Alpine: axTabs.
+     ======================================================================== */
+  .ax-tabs {
+    display: flex;
+    flex-direction: column;
+  }
+  .ax-tabs__list {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: var(--ax-space-1);
+    border-bottom: 1px solid var(--ax-border);
+  }
+  .ax-tabs__tab {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    gap: var(--ax-space-2);
+    min-height: 40px;
+    padding: var(--ax-space-2) var(--ax-space-3);
+    font-size: var(--ax-text-sm);
+    font-weight: var(--ax-weight-medium);
+    color: var(--ax-text-muted);
+    background: none;
+    border: 0;
+    cursor: pointer;
+    transition: color var(--ax-motion-fast) var(--ax-ease-standard);
+  }
+  .ax-tabs__icon {
+    width: var(--ax-icon-sm);
+    height: var(--ax-icon-sm);
+  }
+  .ax-tabs__badge {
+    margin-inline-start: var(--ax-space-1);
+  }
+  .ax-tabs__tab:hover {
+    color: var(--ax-text);
+  }
+  .ax-tabs__tab[aria-selected="true"],
+  .ax-tabs__tab.is-active {
+    color: var(--ax-text-strong);
+  }
+  .ax-tabs__tab:disabled,
+  .ax-tabs__tab[aria-disabled="true"] {
+    color: var(--ax-text-disabled);
+    pointer-events: none;
+  }
+  .ax-tabs__indicator {
+    position: absolute;
+    inset-block-end: -1px;
+    inset-inline-start: 0;
+    height: 2px;
+    width: var(--ax-tabs-ind-w, 0);
+    transform: translateX(var(--ax-tabs-ind-x, 0));
+    background: var(--ax-accent);
+    border-radius: 2px;
+    transition: transform var(--ax-motion-base) var(--ax-ease-standard),
+      width var(--ax-motion-base) var(--ax-ease-standard);
+  }
+  .ax-tabs__panel {
+    padding-top: var(--ax-space-5);
+  }
+  .ax-tabs__panel[hidden] {
+    display: none;
+  }
+  .ax-tabs--pill .ax-tabs__list {
+    border-bottom: 0;
+    gap: var(--ax-space-2);
+  }
+  .ax-tabs--pill .ax-tabs__tab {
+    border-radius: var(--ax-radius-pill);
+    padding-inline: var(--ax-space-4);
+  }
+  .ax-tabs--pill .ax-tabs__tab[aria-selected="true"],
+  .ax-tabs--pill .ax-tabs__tab.is-active {
+    color: var(--ax-accent);
+    background: var(--ax-accent-wash);
+  }
+  .ax-tabs--pill .ax-tabs__indicator {
+    display: none;
+  }
+  .ax-tabs--segmented .ax-tabs__list {
+    gap: var(--ax-space-1);
+    padding: var(--ax-space-1);
+    background: var(--ax-fill-hover);
+    border: 1px solid var(--ax-border);
+    border-radius: var(--ax-radius-md);
+  }
+  .ax-tabs--segmented .ax-tabs__tab {
+    border-radius: var(--ax-radius-sm);
+  }
+  .ax-tabs--segmented .ax-tabs__tab[aria-selected="true"],
+  .ax-tabs--segmented .ax-tabs__tab.is-active {
+    color: var(--ax-accent);
+    background: var(--ax-accent-wash);
+    box-shadow: var(--ax-shadow-sm);
+  }
+  .ax-tabs--segmented .ax-tabs__indicator {
+    display: none;
+  }
+  .ax-tabs--vertical {
+    flex-direction: row;
+    gap: var(--ax-space-5);
+  }
+  .ax-tabs--vertical .ax-tabs__list {
+    flex-direction: column;
+    align-items: stretch;
+    border-bottom: 0;
+    border-inline-start: 1px solid var(--ax-border);
+  }
+  .ax-tabs--vertical .ax-tabs__tab {
+    justify-content: flex-start;
+  }
+  .ax-tabs--vertical .ax-tabs__indicator {
+    inset-block-start: 0;
+    inset-inline-start: -1px;
+    width: 2px;
+    height: var(--ax-tabs-ind-h, 0);
+    transform: translateY(var(--ax-tabs-ind-y, 0));
+    transition: transform var(--ax-motion-base) var(--ax-ease-standard),
+      height var(--ax-motion-base) var(--ax-ease-standard);
+  }
+  .ax-tabs--vertical .ax-tabs__panel {
+    flex: 1 1 auto;
+    padding-top: 0;
+  }
+  .ax-tabs--scrollable .ax-tabs__list {
+    overflow-x: auto;
+    scrollbar-width: none;
+    flex-wrap: nowrap;
+  }
+  .ax-tabs--scrollable .ax-tabs__list::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* ========================================================================
+     13 · BREADCRUMB — .ax-breadcrumb (chevron separators)
+     Alpine: collapsed overflow → axDropdown.
+     ======================================================================== */
+  .ax-breadcrumb__list {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--ax-space-1);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    font-size: var(--ax-text-sm);
+  }
+  .ax-breadcrumb__item {
+    display: inline-flex;
+    align-items: center;
+    min-width: 0;
+  }
+  .ax-breadcrumb__item a {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--ax-space-1);
+    color: var(--ax-text-muted);
+    text-decoration: none;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .ax-breadcrumb__item a:hover {
+    color: var(--ax-text);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+  .ax-breadcrumb__item [aria-current="page"] {
+    color: var(--ax-text-strong);
+    font-weight: var(--ax-weight-medium);
+  }
+  .ax-breadcrumb__home {
+    width: var(--ax-icon-sm);
+    height: var(--ax-icon-sm);
+  }
+  .ax-breadcrumb__sep {
+    display: inline-flex;
+    color: var(--ax-text-subtle);
+  }
+  .ax-breadcrumb__sep svg {
+    width: var(--ax-icon-xs);
+    height: var(--ax-icon-xs);
+  }
+  [dir="rtl"] .ax-breadcrumb__sep svg {
+    transform: scaleX(-1);
+  }
+
+  /* ========================================================================
+     14 · PAGINATION — .ax-pagination
+     __prev/__next/__pages/__page/__ellipsis/__summary. current = accent-wash.
+     Alpine: none (anchors/buttons).
+     ======================================================================== */
+  .ax-pagination {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--ax-space-3);
+  }
+  .ax-pagination__pages {
+    display: flex;
+    align-items: center;
+    gap: var(--ax-space-1);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  .ax-pagination__page,
+  .ax-pagination__prev,
+  .ax-pagination__next {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 36px;
+    height: 36px;
+    padding-inline: var(--ax-space-2);
+    font-size: var(--ax-text-sm);
+    font-variant-numeric: tabular-nums;
+    color: var(--ax-text);
+    text-decoration: none;
+    background: transparent;
+    border: 0;
+    border-radius: var(--ax-radius-sm);
+    cursor: pointer;
+    transition: background var(--ax-motion-instant) var(--ax-ease-standard);
+  }
+  .ax-pagination__page:hover,
+  .ax-pagination__prev:hover,
+  .ax-pagination__next:hover {
+    background: var(--ax-fill-hover);
+  }
+  .ax-pagination__page[aria-current="page"],
+  .ax-pagination__page.is-active {
+    color: var(--ax-accent);
+    background: var(--ax-accent-wash);
+    font-weight: var(--ax-weight-semibold);
+  }
+  .ax-pagination__prev svg,
+  .ax-pagination__next svg {
+    width: var(--ax-icon-sm);
+    height: var(--ax-icon-sm);
+  }
+  [dir="rtl"] .ax-pagination__prev svg,
+  [dir="rtl"] .ax-pagination__next svg {
+    transform: scaleX(-1);
+  }
+  .ax-pagination__prev:disabled,
+  .ax-pagination__next:disabled,
+  .ax-pagination__prev[aria-disabled="true"],
+  .ax-pagination__next[aria-disabled="true"] {
+    color: var(--ax-text-disabled);
+    pointer-events: none;
+  }
+  .ax-pagination__ellipsis {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 36px;
+    height: 36px;
+    color: var(--ax-text-subtle);
+  }
+  .ax-pagination__summary {
+    color: var(--ax-text-muted);
+    font-size: var(--ax-text-sm);
+  }
+
+  /* ========================================================================
+     15 · PROGRESS — .ax-progress (linear + striped + circle + segmented)
+     __track/__fill/__value/__center/__ring-track/__ring-fill.
+     Alpine: none (style/aria driven).
+     ======================================================================== */
+  .ax-progress {
+    --_p-h: 6px;
+    display: flex;
+    align-items: center;
+    gap: var(--ax-space-3);
+  }
+  .ax-progress__track {
+    position: relative;
+    flex: 1 1 auto;
+    height: var(--_p-h);
+    overflow: hidden;
+    background: var(--ax-fill-hover);
+    border-radius: var(--ax-radius-pill);
+  }
+  .ax-progress__fill {
+    height: 100%;
+    width: 0;
+    background: var(--ax-gradient-accent);
+    border-radius: inherit;
+    transition: width var(--ax-motion-base) var(--ax-ease-standard);
+  }
+  .ax-progress__value {
+    flex: 0 0 auto;
+    min-width: 3ch;
+    text-align: end;
+    font-size: var(--ax-text-xs);
+    font-variant-numeric: tabular-nums;
+    color: var(--ax-text-muted);
+  }
+  .ax-progress--xs {
+    --_p-h: 4px;
+  }
+  .ax-progress--sm {
+    --_p-h: 6px;
+  }
+  .ax-progress--md {
+    --_p-h: 8px;
+  }
+  .ax-progress--lg {
+    --_p-h: 12px;
+  }
+  .ax-progress--success .ax-progress__fill {
+    background: var(--ax-success-500);
+  }
+  .ax-progress--warning .ax-progress__fill {
+    background: var(--ax-warning-500);
+  }
+  .ax-progress--danger .ax-progress__fill {
+    background: var(--ax-danger-500);
+  }
+  .ax-progress--striped .ax-progress__fill {
+    background-image: linear-gradient(
+      45deg,
+      rgba(255, 255, 255, 0.2) 25%,
+      transparent 25%,
+      transparent 50%,
+      rgba(255, 255, 255, 0.2) 50%,
+      rgba(255, 255, 255, 0.2) 75%,
+      transparent 75%
+    );
+    background-size: 16px 16px;
+    background-color: var(--ax-accent);
+  }
+  .ax-progress--animated .ax-progress__fill {
+    animation: ax-progress-stripe 1s var(--ax-ease-linear) infinite;
+  }
+  .ax-progress--indeterminate .ax-progress__fill {
+    width: 35%;
+    background: var(--ax-accent);
+    animation: ax-progress-indeterminate 1.4s var(--ax-ease-standard) infinite;
+  }
+  .ax-progress--stacked .ax-progress__track,
+  .ax-progress--segmented .ax-progress__track {
+    display: flex;
+    gap: 2px;
+  }
+  .ax-progress--circle {
+    display: inline-flex;
+    position: relative;
+  }
+  .ax-progress--circle .ax-progress__ring-track {
+    stroke: var(--ax-fill-hover);
+    fill: none;
+  }
+  .ax-progress--circle .ax-progress__ring-fill {
+    stroke: var(--ax-accent);
+    fill: none;
+    stroke-linecap: round;
+    transition: stroke-dashoffset var(--ax-motion-base) var(--ax-ease-standard);
+  }
+  .ax-progress__center {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: var(--ax-font-mono);
+    font-variant-numeric: tabular-nums;
+    color: var(--ax-text-strong);
+  }
+  @keyframes ax-progress-stripe {
+    from {
+      background-position: 0 0;
+    }
+    to {
+      background-position: 16px 0;
+    }
+  }
+  @keyframes ax-progress-indeterminate {
+    0% {
+      margin-inline-start: -35%;
+    }
+    100% {
+      margin-inline-start: 100%;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .ax-progress--animated .ax-progress__fill,
+    .ax-progress--indeterminate .ax-progress__fill {
+      animation: none;
+    }
+    .ax-progress--indeterminate .ax-progress__fill {
+      width: 100%;
+    }
+  }
+
+  /* ========================================================================
+     16 · SPINNERS & LOADERS — .ax-spinner / .ax-page-loader
+     Alpine: none. data-ax-loader="off" hides page loader.
+     ======================================================================== */
+  .ax-spinner {
+    --_s-size: 24px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: var(--_s-size);
+    height: var(--_s-size);
+    color: var(--ax-accent);
+  }
+  .ax-spinner__glyph {
+    width: 100%;
+    height: 100%;
+    border-radius: 50%;
+    border: 2px solid currentColor;
+    border-inline-end-color: transparent;
+    animation: ax-spin 0.7s var(--ax-ease-linear) infinite;
+  }
+  .ax-spinner--xs {
+    --_s-size: 12px;
+  }
+  .ax-spinner--sm {
+    --_s-size: 16px;
+  }
+  .ax-spinner--md {
+    --_s-size: 24px;
+  }
+  .ax-spinner--lg {
+    --_s-size: 40px;
+  }
+  .ax-spinner--lg .ax-spinner__glyph {
+    border-width: 3px;
+  }
+  .ax-spinner--inline {
+    vertical-align: text-bottom;
+  }
+  .ax-page-loader {
+    position: fixed;
+    inset: 0;
+    z-index: var(--ax-z-command);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: var(--ax-space-5);
+    background: var(--ax-canvas);
+  }
+  .ax-page-loader__mark {
+    color: var(--ax-text-strong);
+  }
+  [data-ax-loader="off"] .ax-page-loader {
+    display: none;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .ax-spinner__glyph {
+      animation-duration: 1.4s;
+    }
+  }
+
+  /* ========================================================================
+     17 · SKELETONS — .ax-skeleton (+ composites)
+     --line/--circle/--rect, --shimmer(default)/--pulse/--static.
+     Alpine: none (CSS); container toggles aria-busy.
+     ======================================================================== */
+  .ax-skeleton {
+    position: relative;
+    overflow: hidden;
+    background: var(--ax-fill-hover);
+    border-radius: var(--ax-radius-md);
+  }
+  .ax-skeleton--line {
+    height: 0.75em;
+    width: 100%;
+    border-radius: var(--ax-radius-xs);
+  }
+  .ax-skeleton--circle {
+    border-radius: var(--ax-radius-pill);
+    aspect-ratio: 1;
+  }
+  .ax-skeleton--rect {
+    border-radius: var(--ax-radius-md);
+  }
+  .ax-skeleton::after,
+  .ax-skeleton--shimmer::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    transform: translateX(-100%);
+    background: linear-gradient(
+      90deg,
+      transparent,
+      var(--ax-fill-active),
+      transparent
+    );
+    animation: ax-shimmer 1.4s var(--ax-ease-standard) infinite;
+  }
+  .ax-skeleton--pulse::after {
+    animation: none;
+  }
+  .ax-skeleton--pulse {
+    animation: ax-pulse 1.4s var(--ax-ease-standard) infinite;
+  }
+  .ax-skeleton--static::after {
+    display: none;
+  }
+  .ax-skeleton-card,
+  .ax-skeleton-stat {
+    display: flex;
+    flex-direction: column;
+    gap: var(--ax-space-3);
+  }
+  .ax-skeleton-row {
+    display: flex;
+    align-items: center;
+    gap: var(--ax-space-3);
+  }
+  @keyframes ax-shimmer {
+    to {
+      transform: translateX(100%);
+    }
+  }
+  @keyframes ax-pulse {
+    50% {
+      opacity: 0.5;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .ax-skeleton::after,
+    .ax-skeleton--shimmer::after {
+      animation: none;
+    }
+    .ax-skeleton--pulse {
+      animation: none;
+    }
+  }
+
+  /* ========================================================================
+     18 · LIST GROUPS — .ax-list
+     __row/__leading/__content/__title/__meta/__trailing/__group-label.
+     --flush/--inset/--linked/--selectable/--actionable/--grouped + densities.
+     Alpine: --selectable roving; --sortable → axSortable.
+     ======================================================================== */
+  .ax-list {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+  }
+  .ax-list__row {
+    display: flex;
+    align-items: center;
+    gap: var(--ax-space-3);
+    min-height: 44px;
+    padding: var(--ax-space-3) var(--ax-space-4);
+    color: var(--ax-text);
+    text-decoration: none;
+    border-bottom: 1px solid var(--ax-border);
+    transition: background var(--ax-motion-instant) var(--ax-ease-standard);
+  }
+  .ax-list__row:last-child {
+    border-bottom: 0;
+  }
+  .ax-list__leading {
+    flex: 0 0 auto;
+    display: inline-flex;
+  }
+  .ax-list__content {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+  }
+  .ax-list__title {
+    font-weight: var(--ax-weight-medium);
+    color: var(--ax-text-strong);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .ax-list__meta {
+    font-size: var(--ax-text-sm);
+    color: var(--ax-text-muted);
+  }
+  .ax-list__trailing {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    gap: var(--ax-space-2);
+    color: var(--ax-text-subtle);
+  }
+  .ax-list--compact .ax-list__row {
+    min-height: 36px;
+  }
+  .ax-list--comfortable .ax-list__row {
+    min-height: 56px;
+  }
+  a.ax-list__row,
+  .ax-list--linked .ax-list__row,
+  .ax-list--selectable .ax-list__row,
+  .ax-list--actionable .ax-list__row {
+    cursor: pointer;
+  }
+  a.ax-list__row:hover,
+  .ax-list--linked .ax-list__row:hover,
+  .ax-list--selectable .ax-list__row:hover {
+    background: var(--ax-fill-hover);
+  }
+  .ax-list__row.is-active {
+    background: var(--ax-fill-active);
+  }
+  .ax-list__row.is-selected,
+  .ax-list__row[aria-selected="true"] {
+    background: var(--ax-accent-wash);
+  }
+  .ax-list__row.is-selected .ax-list__title,
+  .ax-list__row[aria-selected="true"] .ax-list__title {
+    color: var(--ax-accent);
+  }
+  .ax-list__row[aria-disabled="true"] {
+    color: var(--ax-text-disabled);
+    pointer-events: none;
+  }
+  .ax-list__group-label {
+    padding: var(--ax-space-2) var(--ax-space-4);
+    font-size: var(--ax-text-2xs);
+    font-weight: var(--ax-weight-semibold);
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--ax-text-subtle);
+  }
+
+  /* ========================================================================
+     19 · TIMELINE — .ax-timeline
+     __item/__marker/__content/__time/__title/__body. Hairline rail.
+     Alpine: none (expandable items use axCollapse).
+     ======================================================================== */
+  .ax-timeline {
+    position: relative;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  .ax-timeline__item {
+    position: relative;
+    display: flex;
+    gap: var(--ax-space-4);
+    padding-bottom: var(--ax-space-5);
+  }
+  .ax-timeline__item:last-child {
+    padding-bottom: 0;
+  }
+  .ax-timeline__marker {
+    position: relative;
+    z-index: 1;
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border-radius: var(--ax-radius-pill);
+    color: var(--ax-text-muted);
+    background: var(--ax-surface-subtle);
+    border: 1px solid var(--ax-border);
+  }
+  .ax-timeline__marker svg {
+    width: var(--ax-icon-sm);
+    height: var(--ax-icon-sm);
+  }
+  .ax-timeline__item:not(:last-child) .ax-timeline__marker::before {
+    content: "";
+    position: absolute;
+    top: 100%;
+    inset-inline-start: 50%;
+    width: 1px;
+    height: calc(var(--ax-space-5) + var(--ax-space-2));
+    transform: translateX(-50%);
+    background: var(--ax-border);
+  }
+  [dir="rtl"] .ax-timeline__item:not(:last-child) .ax-timeline__marker::before {
+    transform: translateX(50%);
+  }
+  .ax-timeline__content {
+    flex: 1 1 auto;
+    min-width: 0;
+    padding-top: 2px;
+  }
+  .ax-timeline__time {
+    font-family: var(--ax-font-mono);
+    font-size: var(--ax-text-xs);
+    color: var(--ax-text-subtle);
+  }
+  .ax-timeline__title {
+    margin: 2px 0 0;
+    font-weight: var(--ax-weight-medium);
+    color: var(--ax-text-strong);
+  }
+  .ax-timeline__body {
+    margin-top: var(--ax-space-1);
+    font-size: var(--ax-text-sm);
+    color: var(--ax-text-muted);
+  }
+  .ax-timeline__item.is-current .ax-timeline__marker {
+    color: var(--ax-on-accent);
+    background: var(--ax-accent);
+    border-color: transparent;
+  }
+  .ax-timeline__item--success .ax-timeline__marker {
+    color: #fff;
+    background: var(--ax-success-500);
+    border-color: transparent;
+  }
+  .ax-timeline__item--danger .ax-timeline__marker {
+    color: #fff;
+    background: var(--ax-danger-500);
+    border-color: transparent;
+  }
+  .ax-timeline__item--pending .ax-timeline__marker {
+    color: var(--ax-text-subtle);
+  }
+  .ax-timeline__item--pending:not(:last-child) .ax-timeline__marker::before {
+    background: repeating-linear-gradient(
+      var(--ax-border) 0 4px,
+      transparent 4px 8px
+    );
+  }
+
+  /* ========================================================================
+     20 · RIBBONS — .ax-ribbon (host must be position:relative; overflow:hidden)
+     --corner(--top-start/--top-end), --edge/--flag, --pill, semantic tones.
+     Alpine: none.
+     ======================================================================== */
+  .ax-ribbon {
+    position: absolute;
+    z-index: 2;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: var(--ax-text-2xs);
+    font-weight: var(--ax-weight-semibold);
+    letter-spacing: 0.02em;
+    line-height: 1;
+    color: var(--ax-on-accent);
+    background: var(--ax-accent);
+    pointer-events: none;
+  }
+  .ax-ribbon--corner {
+    inset-block-start: 14px;
+    width: 150px;
+    height: 22px;
+    transform: rotate(45deg);
+    box-shadow: var(--ax-shadow-sm);
+  }
+  .ax-ribbon--corner.ax-ribbon--top-end {
+    inset-inline-end: -40px;
+  }
+  .ax-ribbon--corner.ax-ribbon--top-start {
+    inset-inline-start: -40px;
+    transform: rotate(-45deg);
+  }
+  [dir="rtl"] .ax-ribbon--corner.ax-ribbon--top-end {
+    inset-inline-end: auto;
+    inset-inline-start: -40px;
+    transform: rotate(-45deg);
+  }
+  .ax-ribbon--edge,
+  .ax-ribbon--flag {
+    inset-block-start: var(--ax-space-3);
+    inset-inline-start: 0;
+    height: 22px;
+    padding-inline: var(--ax-space-3);
+    border-start-end-radius: var(--ax-radius-xs);
+    border-end-end-radius: var(--ax-radius-xs);
+  }
+  .ax-ribbon--pill {
+    inset-block-start: var(--ax-space-3);
+    inset-inline-end: var(--ax-space-3);
+    height: 20px;
+    padding-inline: var(--ax-space-2);
+    border-radius: var(--ax-radius-pill);
+  }
+  .ax-ribbon--success {
+    color: #fff;
+    background: var(--ax-success-500);
+  }
+  .ax-ribbon--warning {
+    color: #fff;
+    background: var(--ax-warning-500);
+  }
+  .ax-ribbon--danger {
+    color: #fff;
+    background: var(--ax-danger-500);
+  }
+
+  /* ========================================================================
+     21 · RATINGS — .ax-rating
+     __star(--full/--half/--empty), __value. Amber fill (documented exception).
+     Alpine: axRating (input).
+     ======================================================================== */
+  .ax-rating {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--ax-space-1);
+  }
+  .ax-rating__star {
+    --_r-size: 18px;
+    width: var(--_r-size);
+    height: var(--_r-size);
+    color: var(--ax-text-subtle);
+  }
+  .ax-rating--sm .ax-rating__star {
+    --_r-size: 14px;
+  }
+  .ax-rating--lg .ax-rating__star {
+    --_r-size: 24px;
+  }
+  .ax-rating__star--full {
+    color: var(--ax-warning-500);
+    fill: currentColor;
+  }
+  .ax-rating__star--half {
+    color: var(--ax-warning-500);
+  }
+  .ax-rating__value {
+    margin-inline-start: var(--ax-space-2);
+    font-variant-numeric: tabular-nums;
+    font-size: var(--ax-text-sm);
+    color: var(--ax-text-muted);
+  }
+  .ax-rating--input .ax-rating__star {
+    cursor: pointer;
+    transition: color var(--ax-motion-instant) var(--ax-ease-standard);
+  }
+  .ax-rating--input .ax-rating__star.is-preview,
+  .ax-rating--input .ax-rating__star.is-selected {
+    color: var(--ax-warning-500);
+    fill: currentColor;
+  }
+
+  /* ========================================================================
+     22 · ACCORDION / COLLAPSE — .ax-accordion / .ax-collapse
+     __item/__header/__title/__chevron/__panel. --bordered/--flush.
+     Alpine: axCollapse / axAccordion.
+     ======================================================================== */
+  .ax-accordion {
+    display: flex;
+    flex-direction: column;
+  }
+  .ax-accordion__item {
+    border-bottom: 1px solid var(--ax-border);
+  }
+  .ax-accordion__item:last-child {
+    border-bottom: 0;
+  }
+  .ax-accordion__header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--ax-space-3);
+    width: 100%;
+    min-height: 48px;
+    padding: var(--ax-space-3) var(--ax-space-4);
+    font-weight: var(--ax-weight-medium);
+    color: var(--ax-text-strong);
+    text-align: start;
+    background: transparent;
+    border: 0;
+    cursor: pointer;
+    transition: background var(--ax-motion-instant) var(--ax-ease-standard);
+  }
+  .ax-accordion__header:hover {
+    background: var(--ax-fill-hover);
+  }
+  .ax-accordion__title {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+  .ax-accordion__chevron {
+    flex: 0 0 auto;
+    width: var(--ax-icon-sm);
+    height: var(--ax-icon-sm);
+    color: var(--ax-text-subtle);
+    transition: transform var(--ax-motion-base) var(--ax-ease-standard);
+  }
+  .ax-accordion__header[aria-expanded="true"] {
+    background: var(--ax-fill-hover);
+  }
+  .ax-accordion__header[aria-expanded="true"] .ax-accordion__chevron {
+    transform: rotate(180deg);
+  }
+  .ax-accordion__panel {
+    padding: 0 var(--ax-space-4) var(--ax-space-5);
+    color: var(--ax-text-muted);
+    font-size: var(--ax-text-sm);
+  }
+  .ax-accordion__panel[hidden] {
+    display: none;
+  }
+  .ax-accordion--bordered {
+    gap: var(--ax-space-3);
+  }
+  .ax-accordion--bordered .ax-accordion__item {
+    border: 1px solid var(--ax-border);
+    border-radius: var(--ax-radius-md);
+    overflow: hidden;
+    background: var(--ax-surface);
+  }
+  .ax-collapse[hidden] {
+    display: none;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .ax-accordion__chevron {
+      transition: none;
+    }
+  }
+
+  /* ========================================================================
+     23 · TOOLTIP — .ax-tooltip (inverse dark bubble default)
+     __text/__arrow/__key. placements --top/--bottom/--start/--end.
+     Alpine: axTooltip.
+     ======================================================================== */
+  .ax-tooltip {
+    position: absolute;
+    z-index: var(--ax-z-dropdown);
+    max-width: 240px;
+    padding: var(--ax-space-2) var(--ax-space-3);
+    font-size: var(--ax-text-xs);
+    line-height: var(--ax-leading-xs);
+    color: var(--ax-text-strong);
+    background: var(--ax-surface-overlay);
+    border: 1px solid var(--ax-border);
+    border-radius: var(--ax-radius-sm);
+    box-shadow: var(--ax-shadow-md);
+    -webkit-backdrop-filter: blur(12px);
+    backdrop-filter: blur(12px);
+    pointer-events: none;
+  }
+  .ax-tooltip--inverse {
+    color: var(--ax-canvas);
+    background: var(--ax-text-strong);
+    border-color: transparent;
+  }
+  [data-ax-theme="dark"] .ax-tooltip--inverse {
+    color: var(--ax-text-strong);
+    background: var(--ax-surface-overlay);
+    border-color: var(--ax-border);
+  }
+  .ax-tooltip__arrow {
+    position: absolute;
+    width: 8px;
+    height: 8px;
+    background: inherit;
+    border: inherit;
+    transform: rotate(45deg);
+  }
+  .ax-tooltip__key {
+    margin-inline-start: var(--ax-space-2);
+    padding: 1px 5px;
+    font-family: var(--ax-font-mono);
+    font-size: var(--ax-text-2xs);
+    border: 1px solid var(--ax-border-strong);
+    border-radius: var(--ax-radius-xs);
+  }
+
+  /* ========================================================================
+     24 · POPOVER — .ax-popover (mini glass card)
+     __panel/__header/__body/__footer/__arrow. Alpine: axPopover.
+     ======================================================================== */
+  .ax-popover {
+    position: relative;
+    display: inline-flex;
+  }
+  .ax-popover__panel {
+    position: absolute;
+    z-index: var(--ax-z-dropdown);
+    min-width: 200px;
+    max-width: 360px;
+    color: var(--ax-text);
+    /* Opaque, no backdrop-filter (see .ax-menu / .ax-combobox__panel). */
+    background: var(--ax-surface-solid);
+    border: 1px solid var(--ax-border);
+    border-radius: var(--ax-radius-lg);
+    box-shadow: var(--ax-shadow-md);
+  }
+  .ax-popover__header {
+    padding: var(--ax-space-3) var(--ax-space-4);
+    font-weight: var(--ax-weight-semibold);
+    color: var(--ax-text-strong);
+    border-bottom: 1px solid var(--ax-border);
+  }
+  .ax-popover__body {
+    padding: var(--ax-space-4);
+    font-size: var(--ax-text-sm);
+  }
+  .ax-popover__footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--ax-space-2);
+    padding: var(--ax-space-3) var(--ax-space-4);
+    border-top: 1px solid var(--ax-border);
+  }
+  .ax-popover__arrow {
+    position: absolute;
+    width: 10px;
+    height: 10px;
+    background: var(--ax-surface-overlay);
+    border: 1px solid var(--ax-border);
+    transform: rotate(45deg);
+  }
+
+  /* ========================================================================
+     25 · TABLES — .ax-table (wrap + base/striped/bordered/hover/compact)
+     sticky header, selected row = accent-wash + accent marker, status pills.
+     Alpine: axTableSelect, sticky shadow toggle, column-vis via axDropdown.
+     ======================================================================== */
+  .ax-table-wrap {
+    position: relative;
+    width: 100%;
+    overflow-x: auto;
+  }
+  .ax-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: var(--ax-text-sm);
+    color: var(--ax-text);
+  }
+  .ax-table__head {
+    background: var(--ax-surface-subtle);
+  }
+  .ax-table__th {
+    padding: var(--ax-space-3) var(--ax-space-4);
+    text-align: start;
+    font-size: var(--ax-text-2xs);
+    font-weight: var(--ax-weight-semibold);
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--ax-text-muted);
+    white-space: nowrap;
+    border-bottom: 1px solid var(--ax-border-strong);
+  }
+  .ax-table__td {
+    padding: var(--ax-space-3) var(--ax-space-4);
+    border-bottom: 1px solid var(--ax-border);
+    vertical-align: middle;
+  }
+  .ax-table__td--num,
+  .ax-table__th--num {
+    text-align: end;
+    font-family: var(--ax-font-mono);
+    font-variant-numeric: tabular-nums;
+  }
+  .ax-table__foot {
+    background: var(--ax-surface-subtle);
+  }
+  .ax-table__foot td {
+    padding: var(--ax-space-3) var(--ax-space-4);
+    border-top: 1px solid var(--ax-border-strong);
+    font-weight: var(--ax-weight-semibold);
+  }
+  .ax-table--striped tbody tr:nth-child(even) {
+    background: var(--ax-surface-subtle);
+  }
+  .ax-table--bordered .ax-table__th,
+  .ax-table--bordered .ax-table__td {
+    border: 1px solid var(--ax-border);
+  }
+  .ax-table--hover tbody tr:hover,
+  .ax-table__row:hover {
+    background: var(--ax-fill-hover);
+  }
+  .ax-table--compact .ax-table__th,
+  .ax-table--compact .ax-table__td {
+    padding: var(--ax-space-2) var(--ax-space-3);
+  }
+  .ax-table--sticky .ax-table__head {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+  }
+  .ax-table--sticky.is-stuck .ax-table__head {
+    box-shadow: var(--ax-shadow-sm);
+  }
+  .ax-table__row.is-selected,
+  .ax-table__row[aria-selected="true"] {
+    background: var(--ax-accent-wash);
+  }
+  .ax-table__row.is-selected .ax-table__td:first-child,
+  .ax-table__row[aria-selected="true"] .ax-table__td:first-child {
+    box-shadow: inset 2px 0 0 var(--ax-accent);
+  }
+  .ax-table__row:focus-visible {
+    outline: 2px solid var(--ax-focus-ring);
+    outline-offset: -2px;
+  }
+  .ax-table__row--success {
+    background: var(--ax-success-50);
+  }
+  .ax-table__row--warning {
+    background: var(--ax-warning-50);
+  }
+  .ax-table__row--danger {
+    background: var(--ax-danger-50);
+  }
+  .ax-table__th--sortable {
+    cursor: pointer;
+    user-select: none;
+  }
+  .ax-table__th--sortable:hover {
+    color: var(--ax-text-strong);
+  }
+  .ax-table__sort {
+    margin-inline-start: var(--ax-space-1);
+    width: var(--ax-icon-xs);
+    height: var(--ax-icon-xs);
+    opacity: 0.5;
+    vertical-align: middle;
+  }
+  .ax-table__th[aria-sort] .ax-table__sort {
+    opacity: 1;
+    color: var(--ax-accent);
+  }
+  .ax-table__status {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--ax-space-1);
+    padding: 2px var(--ax-space-2);
+    font-size: var(--ax-text-2xs);
+    font-weight: var(--ax-weight-semibold);
+    border-radius: var(--ax-radius-pill);
+  }
+
+  /* ========================================================================
+     26 · FORMS — fields, inputs, selects, textarea, checks/radios/switch,
+     input-group, range, file/dropzone, combobox, labels/help/error, validation.
+     Alpine: axCombobox, axRange, axFileDrop (where noted).
+     ======================================================================== */
+
+  /* — field wrapper — */
+  .ax-field {
+    display: flex;
+    flex-direction: column;
+    gap: var(--ax-space-2);
+  }
+  .ax-field__label,
+  .ax-label {
+    font-size: var(--ax-text-sm);
+    font-weight: var(--ax-weight-medium);
+    color: var(--ax-text-strong);
+  }
+  .ax-field__required {
+    color: var(--ax-danger-500);
+  }
+  .ax-field__hint,
+  .ax-help {
+    font-size: var(--ax-text-xs);
+    color: var(--ax-text-subtle);
+  }
+  .ax-field__message {
+    min-height: var(--ax-leading-xs);
+    font-size: var(--ax-text-xs);
+  }
+  .ax-error,
+  .ax-field__message--error {
+    color: var(--ax-danger-500);
+  }
+  .ax-field__message--success {
+    color: var(--ax-success-500);
+  }
+
+  /* — glass field recipe (input / textarea / select) — */
+  .ax-input,
+  .ax-textarea,
+  .ax-select {
+    --_f-h: var(--ax-control-h);
+    width: 100%;
+    min-height: var(--_f-h);
+    padding: 0 var(--ax-space-3);
+    font-family: var(--ax-font-sans);
+    font-size: var(--ax-text-sm);
+    color: var(--ax-text);
+    background: var(--ax-surface);
+    border: 1px solid var(--ax-border);
+    border-radius: var(--ax-radius-sm);
+    transition: border-color var(--ax-motion-instant) var(--ax-ease-standard),
+      box-shadow var(--ax-motion-fast) var(--ax-ease-standard),
+      background var(--ax-motion-instant) var(--ax-ease-standard);
+  }
+  .ax-textarea {
+    padding: var(--ax-space-3);
+    min-height: calc(var(--ax-space-10) + var(--ax-space-6));
+    line-height: 1.5;
+    resize: vertical;
+  }
+  .ax-input::placeholder,
+  .ax-textarea::placeholder {
+    color: var(--ax-text-disabled);
+  }
+  .ax-input:hover,
+  .ax-textarea:hover,
+  .ax-select:hover {
+    border-color: var(--ax-border-strong);
+  }
+  .ax-input:focus-visible,
+  .ax-textarea:focus-visible,
+  .ax-select:focus-visible,
+  .ax-input:focus,
+  .ax-textarea:focus,
+  .ax-select:focus {
+    outline: none;
+    border-color: var(--ax-accent);
+    box-shadow: var(--ax-focus-shadow);
+  }
+  .ax-input:disabled,
+  .ax-textarea:disabled,
+  .ax-select:disabled {
+    color: var(--ax-text-disabled);
+    background: var(--ax-fill-hover);
+    cursor: not-allowed;
+  }
+  .ax-input[readonly],
+  .ax-textarea[readonly] {
+    background: var(--ax-surface-subtle);
+  }
+  .ax-input--sm,
+  .ax-select--sm {
+    --_f-h: var(--ax-control-h-compact);
+  }
+  .ax-input--lg,
+  .ax-select--lg {
+    --_f-h: var(--ax-control-h-lg);
+  }
+  .ax-select {
+    appearance: none;
+    -webkit-appearance: none;
+    padding-inline-end: var(--ax-space-8);
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%238A93A4' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right var(--ax-space-3) center;
+  }
+  [dir="rtl"] .ax-select {
+    background-position: left var(--ax-space-3) center;
+  }
+  .ax-input.is-invalid,
+  .ax-textarea.is-invalid,
+  .ax-select.is-invalid,
+  .ax-input[aria-invalid="true"],
+  .ax-textarea[aria-invalid="true"] {
+    border-color: var(--ax-danger-500);
+  }
+  .ax-input.is-invalid:focus-visible,
+  .ax-textarea.is-invalid:focus-visible {
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--ax-danger-500) 26%, transparent);
+  }
+  .ax-input.is-valid,
+  .ax-textarea.is-valid,
+  .ax-select.is-valid {
+    border-color: var(--ax-success-500);
+  }
+
+  /* — affixes (leading/trailing icon or button) — */
+  .ax-field__control {
+    position: relative;
+    display: flex;
+    align-items: center;
+  }
+  .ax-field__control .ax-input {
+    flex: 1 1 auto;
+  }
+  .ax-input--with-leading-icon {
+    padding-inline-start: var(--ax-space-8);
+  }
+  .ax-input--with-trailing {
+    padding-inline-end: var(--ax-space-8);
+  }
+  .ax-field__affix {
+    position: absolute;
+    display: inline-flex;
+    align-items: center;
+    color: var(--ax-text-subtle);
+    pointer-events: none;
+  }
+  .ax-field__affix--leading {
+    inset-inline-start: var(--ax-space-3);
+  }
+  .ax-field__affix--trailing {
+    inset-inline-end: var(--ax-space-3);
+  }
+  .ax-field__affix svg {
+    width: var(--ax-icon-sm);
+    height: var(--ax-icon-sm);
+  }
+  .ax-field__affix--button {
+    pointer-events: auto;
+    cursor: pointer;
+    background: none;
+    border: 0;
+  }
+
+  /* — floating label — */
+  .ax-input--floating {
+    position: relative;
+  }
+
+  /* — checkbox — */
+  .ax-check {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--ax-space-2);
+    cursor: pointer;
+    min-height: var(--ax-control-h);
+  }
+  .ax-checkbox {
+    position: relative;
+    flex: 0 0 auto;
+    width: 18px;
+    height: 18px;
+    appearance: none;
+    -webkit-appearance: none;
+    background: var(--ax-surface);
+    border: 1px solid var(--ax-border-strong);
+    border-radius: var(--ax-radius-xs);
+    cursor: pointer;
+    transition: background var(--ax-motion-instant) var(--ax-ease-standard),
+      border-color var(--ax-motion-instant) var(--ax-ease-standard);
+  }
+  .ax-checkbox:hover {
+    border-color: var(--ax-accent);
+  }
+  .ax-checkbox:checked,
+  .ax-checkbox:indeterminate {
+    background: var(--ax-accent);
+    border-color: var(--ax-accent);
+  }
+  .ax-checkbox:checked::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 12l5 5L20 7'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: center;
+  }
+  .ax-checkbox:indeterminate::after {
+    content: "";
+    position: absolute;
+    inset-inline: 3px;
+    top: 50%;
+    height: 2px;
+    transform: translateY(-50%);
+    background: #fff;
+    border-radius: 1px;
+  }
+  .ax-checkbox:focus-visible {
+    outline: none;
+    box-shadow: var(--ax-focus-shadow);
+  }
+  .ax-checkbox:disabled {
+    background: var(--ax-fill-hover);
+    border-color: var(--ax-border);
+    cursor: not-allowed;
+  }
+  .ax-checkbox.is-invalid {
+    border-color: var(--ax-danger-500);
+  }
+
+  /* — radio — */
+  .ax-radio {
+    position: relative;
+    flex: 0 0 auto;
+    width: 18px;
+    height: 18px;
+    appearance: none;
+    -webkit-appearance: none;
+    background: var(--ax-surface);
+    border: 1px solid var(--ax-border-strong);
+    border-radius: var(--ax-radius-pill);
+    cursor: pointer;
+    transition: border-color var(--ax-motion-instant) var(--ax-ease-standard);
+  }
+  .ax-radio:hover {
+    border-color: var(--ax-accent);
+  }
+  .ax-radio:checked {
+    border-color: var(--ax-accent);
+  }
+  .ax-radio:checked::after {
+    content: "";
+    position: absolute;
+    inset: 4px;
+    border-radius: 50%;
+    background: var(--ax-accent);
+  }
+  .ax-radio:focus-visible {
+    outline: none;
+    box-shadow: var(--ax-focus-shadow);
+  }
+  .ax-radio:disabled {
+    background: var(--ax-fill-hover);
+    cursor: not-allowed;
+  }
+
+  /* — switch (track → accent when on) — */
+  .ax-switch {
+    position: relative;
+    flex: 0 0 auto;
+    width: 36px;
+    height: 20px;
+    appearance: none;
+    -webkit-appearance: none;
+    background: var(--ax-border-strong);
+    border-radius: var(--ax-radius-pill);
+    cursor: pointer;
+    transition: background var(--ax-motion-fast) var(--ax-ease-standard);
+  }
+  .ax-switch::after {
+    content: "";
+    position: absolute;
+    top: 2px;
+    inset-inline-start: 2px;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: var(--ax-surface-solid);
+    box-shadow: var(--ax-shadow-sm);
+    transition: transform var(--ax-motion-fast) var(--ax-ease-standard);
+  }
+  .ax-switch:checked {
+    background: var(--ax-accent);
+  }
+  .ax-switch:checked::after {
+    transform: translateX(16px);
+  }
+  [dir="rtl"] .ax-switch:checked::after {
+    transform: translateX(-16px);
+  }
+  .ax-switch:focus-visible {
+    outline: none;
+    box-shadow: var(--ax-focus-shadow);
+  }
+  .ax-switch:disabled {
+    background: var(--ax-fill-hover);
+    cursor: not-allowed;
+  }
+  .ax-switch--sm {
+    width: 30px;
+    height: 16px;
+  }
+  .ax-switch--sm::after {
+    width: 12px;
+    height: 12px;
+  }
+  .ax-switch--sm:checked::after {
+    transform: translateX(14px);
+  }
+  .ax-switch--lg {
+    width: 44px;
+    height: 24px;
+  }
+  .ax-switch--lg::after {
+    width: 20px;
+    height: 20px;
+  }
+  .ax-switch--lg:checked::after {
+    transform: translateX(20px);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .ax-switch,
+    .ax-switch::after {
+      transition: none;
+    }
+  }
+
+  /* — input group — */
+  .ax-input-group {
+    display: flex;
+    align-items: stretch;
+    border: 1px solid var(--ax-border);
+    border-radius: var(--ax-radius-sm);
+    overflow: hidden;
+    background: var(--ax-surface);
+  }
+  .ax-input-group:hover {
+    border-color: var(--ax-border-strong);
+  }
+  .ax-input-group:focus-within {
+    border-color: var(--ax-accent);
+    box-shadow: var(--ax-focus-shadow);
+  }
+  .ax-input-group .ax-input,
+  .ax-input-group .ax-select {
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+  }
+  .ax-input-group .ax-input:focus-visible,
+  .ax-input-group .ax-select:focus-visible {
+    box-shadow: none;
+  }
+  .ax-input-group__addon {
+    display: inline-flex;
+    align-items: center;
+    padding-inline: var(--ax-space-3);
+    font-size: var(--ax-text-sm);
+    color: var(--ax-text-subtle);
+    background: var(--ax-surface-subtle);
+    white-space: nowrap;
+  }
+  .ax-input-group__addon:not(:last-child) {
+    border-inline-end: 1px solid var(--ax-border);
+  }
+  .ax-input-group__addon:not(:first-child) {
+    border-inline-start: 1px solid var(--ax-border);
+  }
+  .ax-input-group.is-invalid {
+    border-color: var(--ax-danger-500);
+  }
+
+  /* — range slider — Alpine: axRange — */
+  .ax-range {
+    display: flex;
+    align-items: center;
+    gap: var(--ax-space-3);
+    width: 100%;
+  }
+  .ax-range__track {
+    position: relative;
+    flex: 1 1 auto;
+    height: 4px;
+    background: var(--ax-fill-hover);
+    border-radius: var(--ax-radius-pill);
+  }
+  .ax-range__fill {
+    position: absolute;
+    inset-block: 0;
+    inset-inline-start: 0;
+    background: var(--ax-accent);
+    border-radius: inherit;
+  }
+  .ax-range__handle {
+    position: absolute;
+    top: 50%;
+    width: 16px;
+    height: 16px;
+    transform: translate(-50%, -50%);
+    background: var(--ax-surface-solid);
+    border: 2px solid var(--ax-accent);
+    border-radius: 50%;
+    box-shadow: var(--ax-shadow-sm);
+    cursor: grab;
+    transition: width var(--ax-motion-instant) var(--ax-ease-standard),
+      height var(--ax-motion-instant) var(--ax-ease-standard);
+  }
+  .ax-range__handle:hover,
+  .ax-range__handle:active {
+    width: 18px;
+    height: 18px;
+  }
+  .ax-range__handle:focus-visible {
+    outline: none;
+    box-shadow: var(--ax-focus-shadow);
+  }
+  .ax-range__bubble {
+    flex: 0 0 auto;
+    min-width: 4ch;
+    padding: 2px var(--ax-space-2);
+    font-size: var(--ax-text-xs);
+    font-variant-numeric: tabular-nums;
+    color: var(--ax-text-strong);
+    background: var(--ax-surface-overlay);
+    border: 1px solid var(--ax-border);
+    border-radius: var(--ax-radius-sm);
+    box-shadow: var(--ax-shadow-md);
+  }
+  .ax-range--native {
+    -webkit-appearance: none;
+    appearance: none;
+    height: 4px;
+    background: var(--ax-fill-hover);
+    border-radius: var(--ax-radius-pill);
+  }
+  .ax-range--native::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 16px;
+    height: 16px;
+    background: var(--ax-surface-solid);
+    border: 2px solid var(--ax-accent);
+    border-radius: 50%;
+  }
+  .ax-range--native::-moz-range-thumb {
+    width: 16px;
+    height: 16px;
+    background: var(--ax-surface-solid);
+    border: 2px solid var(--ax-accent);
+    border-radius: 50%;
+  }
+
+  /* — file upload / dropzone — Alpine: axFileDrop — */
+  .ax-file {
+    display: inline-flex;
+  }
+  .ax-dropzone {
+    display: flex;
+    flex-direction: column;
+    gap: var(--ax-space-3);
+  }
+  .ax-dropzone__area {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: var(--ax-space-2);
+    padding: var(--ax-space-8);
+    text-align: center;
+    color: var(--ax-text-muted);
+    background: var(--ax-surface);
+    border: 1.5px dashed var(--ax-border-strong);
+    border-radius: var(--ax-radius-md);
+    cursor: pointer;
+    transition: border-color var(--ax-motion-fast) var(--ax-ease-standard),
+      background var(--ax-motion-fast) var(--ax-ease-standard);
+  }
+  .ax-dropzone__area svg {
+    width: var(--ax-icon-lg);
+    height: var(--ax-icon-lg);
+    color: var(--ax-text-subtle);
+  }
+  .ax-dropzone.is-dragover .ax-dropzone__area {
+    border-color: var(--ax-accent);
+    background: var(--ax-accent-wash);
+  }
+  .ax-dropzone__list {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: var(--ax-space-2);
+  }
+  .ax-dropzone__file {
+    display: flex;
+    align-items: center;
+    gap: var(--ax-space-3);
+    padding: var(--ax-space-2) var(--ax-space-3);
+    background: var(--ax-surface-subtle);
+    border-radius: var(--ax-radius-sm);
+  }
+  .ax-dropzone__name {
+    flex: 1 1 auto;
+    min-width: 0;
+    font-size: var(--ax-text-sm);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .ax-dropzone__remove {
+    flex: 0 0 auto;
+    color: var(--ax-text-subtle);
+    background: none;
+    border: 0;
+    cursor: pointer;
+  }
+  .ax-dropzone__remove:hover {
+    color: var(--ax-danger-500);
+  }
+
+  /* — combobox / enhanced select — Alpine: axCombobox — */
+  .ax-combobox {
+    position: relative;
+    width: 100%;
+  }
+  .ax-combobox__trigger {
+    display: flex;
+    align-items: center;
+    gap: var(--ax-space-2);
+    width: 100%;
+    min-height: var(--ax-control-h);
+    padding: 0 var(--ax-space-3);
+    font-size: var(--ax-text-sm);
+    color: var(--ax-text);
+    text-align: start;
+    background: var(--ax-surface);
+    border: 1px solid var(--ax-border);
+    border-radius: var(--ax-radius-sm);
+    cursor: pointer;
+  }
+  .ax-combobox__trigger:hover {
+    border-color: var(--ax-border-strong);
+  }
+  .ax-combobox__trigger[aria-expanded="true"] {
+    border-color: var(--ax-accent);
+    box-shadow: var(--ax-focus-shadow);
+  }
+  .ax-combobox__value {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .ax-combobox__caret {
+    flex: 0 0 auto;
+    width: var(--ax-icon-sm);
+    height: var(--ax-icon-sm);
+    color: var(--ax-text-subtle);
+  }
+  .ax-combobox__clear {
+    color: var(--ax-text-subtle);
+    background: none;
+    border: 0;
+    cursor: pointer;
+  }
+  .ax-combobox__panel {
+    position: absolute;
+    z-index: var(--ax-z-dropdown);
+    inset-inline: 0;
+    margin-top: var(--ax-space-1);
+    max-height: 320px;
+    overflow-y: auto;
+    padding: var(--ax-space-2);
+    /* Opaque surface, no backdrop-filter: the panel lives inside a glass card
+       (a backdrop root), so its own backdrop-filter could only blur the card's
+       flat surface, never the page — solid reads cleaner for option lists. */
+    background: var(--ax-surface-solid);
+    border: 1px solid var(--ax-border);
+    border-radius: var(--ax-radius-lg);
+    box-shadow: var(--ax-shadow-md);
+  }
+  .ax-combobox__search {
+    width: 100%;
+    margin-bottom: var(--ax-space-2);
+    padding: var(--ax-space-2) var(--ax-space-3);
+    font-size: var(--ax-text-sm);
+    color: var(--ax-text);
+    background: var(--ax-surface);
+    border: 1px solid var(--ax-border);
+    border-radius: var(--ax-radius-sm);
+  }
+  .ax-combobox__group-label {
+    padding: var(--ax-space-2) var(--ax-space-3) var(--ax-space-1);
+    font-size: var(--ax-text-2xs);
+    font-weight: var(--ax-weight-semibold);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--ax-text-subtle);
+  }
+  .ax-combobox__option {
+    display: flex;
+    align-items: center;
+    gap: var(--ax-space-2);
+    padding: var(--ax-space-2) var(--ax-space-3);
+    font-size: var(--ax-text-sm);
+    color: var(--ax-text);
+    border-radius: var(--ax-radius-md);
+    cursor: pointer;
+  }
+  .ax-combobox__option:hover,
+  .ax-combobox__option.is-active {
+    background: var(--ax-fill-hover);
+  }
+  .ax-combobox__option.is-highlighted {
+    position: relative;
+    background: var(--ax-accent-wash);
+  }
+  .ax-combobox__option.is-highlighted::before {
+    content: "";
+    position: absolute;
+    inset-block: 4px;
+    inset-inline-start: 0;
+    width: 2px;
+    border-radius: 0 2px 2px 0;
+    background: var(--ax-accent);
+  }
+  .ax-combobox__option[aria-selected="true"] {
+    color: var(--ax-accent);
+    font-weight: var(--ax-weight-medium);
+  }
+  .ax-combobox__empty {
+    padding: var(--ax-space-3);
+    font-size: var(--ax-text-sm);
+    color: var(--ax-text-muted);
+    text-align: center;
+  }
+  .ax-combobox__chips {
+    display: inline-flex;
+    flex-wrap: wrap;
+    gap: var(--ax-space-1);
+  }
+
+  /* — tags input — */
+  .ax-tags {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--ax-space-1);
+    min-height: var(--ax-control-h);
+    padding: var(--ax-space-1) var(--ax-space-2);
+    background: var(--ax-surface);
+    border: 1px solid var(--ax-border);
+    border-radius: var(--ax-radius-sm);
+  }
+  .ax-tags:focus-within {
+    border-color: var(--ax-accent);
+    box-shadow: var(--ax-focus-shadow);
+  }
+  .ax-tags__input {
+    flex: 1 1 80px;
+    min-width: 80px;
+    border: 0;
+    background: transparent;
+    color: var(--ax-text);
+    font-size: var(--ax-text-sm);
+    outline: none;
+  }
+
+  /* — password strength meter — */
+  .ax-strength {
+    display: flex;
+    flex-direction: column;
+    gap: var(--ax-space-1);
+  }
+  .ax-strength__bars {
+    display: flex;
+    gap: 4px;
+  }
+  .ax-strength__bar {
+    flex: 1 1 0;
+    height: 4px;
+    background: var(--ax-fill-hover);
+    border-radius: var(--ax-radius-pill);
+  }
+  .ax-strength__bar.is-weak {
+    background: var(--ax-danger-500);
+  }
+  .ax-strength__bar.is-medium {
+    background: var(--ax-warning-500);
+  }
+  .ax-strength__bar.is-strong {
+    background: var(--ax-success-500);
+  }
+  .ax-strength__label {
+    font-size: var(--ax-text-2xs);
+    color: var(--ax-text-subtle);
+  }
+
+  /* — OTP — */
+  .ax-otp {
+    display: inline-flex;
+    gap: var(--ax-space-2);
+  }
+  .ax-otp__cell {
+    width: 44px;
+    height: 48px;
+    text-align: center;
+    font-family: var(--ax-font-mono);
+    font-size: var(--ax-text-lg);
+    color: var(--ax-text-strong);
+    background: var(--ax-surface);
+    border: 1px solid var(--ax-border);
+    border-radius: var(--ax-radius-sm);
+  }
+  .ax-otp__cell:focus-visible {
+    outline: none;
+    border-color: var(--ax-accent);
+    box-shadow: var(--ax-focus-shadow);
+  }
+
+  /* ========================================================================
+     27 · SEGMENT — .ax-segment (theme/dir/density segmented toggles)
+     Used by customizer + header. Active = accent-wash + accent text.
+     Alpine: none (buttons set data-ax-* / aria-pressed).
+     ======================================================================== */
+  .ax-segment {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--ax-space-1);
+    padding: var(--ax-space-1);
+    background: var(--ax-fill-hover);
+    border: 1px solid var(--ax-border);
+    border-radius: var(--ax-radius-md);
+  }
+  .ax-segment__option {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--ax-space-1);
+    min-height: 30px;
+    padding: 0 var(--ax-space-3);
+    font-size: var(--ax-text-xs);
+    font-weight: var(--ax-weight-medium);
+    color: var(--ax-text-muted);
+    background: transparent;
+    border: 0;
+    border-radius: var(--ax-radius-sm);
+    cursor: pointer;
+    transition: background var(--ax-motion-instant) var(--ax-ease-standard),
+      color var(--ax-motion-instant) var(--ax-ease-standard);
+  }
+  .ax-segment__option svg {
+    width: var(--ax-icon-sm);
+    height: var(--ax-icon-sm);
+  }
+  .ax-segment__option:hover {
+    color: var(--ax-text-strong);
+  }
+  .ax-segment__option[aria-pressed="true"],
+  .ax-segment__option.is-active,
+  .ax-segment__option[aria-checked="true"] {
+    color: var(--ax-accent);
+    background: var(--ax-accent-wash);
+    box-shadow: var(--ax-shadow-sm);
+  }
+
+  /* ========================================================================
+     28 · CHART WRAPPER — .ax-chart (JS-mounted box: ApexCharts/Chart.js/ECharts)
+     Sized container + legend + a11y data-mirror table styling.
+     Alpine: none (charts init by src/js/charts/* via data-ax-chart-*).
+     ======================================================================== */
+  .ax-chart {
+    position: relative;
+    width: 100%;
+    min-height: 120px;
+  }
+  .ax-chart__legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--ax-space-3);
+    margin-top: var(--ax-space-3);
+    font-size: var(--ax-text-xs);
+    color: var(--ax-text-muted);
+  }
+  .ax-chart__legend-item {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--ax-space-1);
+  }
+  .ax-chart__swatch {
+    width: 9px;
+    height: 9px;
+    border-radius: 3px;
+    flex: 0 0 auto;
+  }
+  .ax-chart__table[hidden] {
+    display: none;
+  }
+  .ax-chart--sparkline {
+    min-height: 40px;
+  }
+
+  /* ========================================================================
+     29 · INLINE TYPOGRAPHY HELPERS — link/code/kbd/mark/eyebrow/truncate
+     (consume role tokens; pages use these inline)
+     ======================================================================== */
+  .ax-link {
+    color: var(--ax-link);
+    text-decoration: none;
+  }
+  .ax-link:hover {
+    color: var(--ax-accent-hover);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+  .ax-code {
+    font-family: var(--ax-font-mono);
+    font-size: 0.9em;
+    padding: 1px 5px;
+    color: var(--ax-text-strong);
+    background: var(--ax-fill-hover);
+    border-radius: var(--ax-radius-xs);
+  }
+  .ax-kbd {
+    font-family: var(--ax-font-mono);
+    font-size: var(--ax-text-2xs);
+    padding: 2px 6px;
+    color: var(--ax-text);
+    background: var(--ax-surface-subtle);
+    border: 1px solid var(--ax-border-strong);
+    border-radius: var(--ax-radius-xs);
+    box-shadow: 0 1px 0 var(--ax-border-strong);
+  }
+  .ax-mark {
+    background: var(--ax-accent-wash);
+    color: var(--ax-text-strong);
+    border-radius: 2px;
+    padding: 0 2px;
+  }
+  .ax-eyebrow {
+    font-size: var(--ax-text-2xs);
+    font-weight: var(--ax-weight-semibold);
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--ax-text-subtle);
+  }
+  .ax-text-truncate {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}

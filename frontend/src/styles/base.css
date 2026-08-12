@@ -1,0 +1,1289 @@
+/*
+ * Vireo — HTML reference edition · base.css
+ * ────────────────────────────────────────────────────────────────────────
+ * Reset/normalize · root typography · global element defaults · scrollbars
+ * AND the Aurora app-shell layout (.ax-layout / .ax-sidebar / .ax-shell /
+ * .ax-header / .ax-main / .ax-footer) with the 6 sidebar styles, responsive
+ * offcanvas drawer, and the [data-ax-*] layout attribute contract.
+ *
+ * Consumes ONLY Layer-2 role tokens (--ax-surface, --ax-text, --ax-accent,
+ * --ax-border…) and Layer-1 scale tokens (--ax-space-*, --ax-radius-*,
+ * --ax-sidebar-w…) declared in tokens/_primitives.css + _roles.css.
+ * NEVER a raw neutral/accent stop (no --ax-neutral-NNN, no --ax-accent-500),
+ * NEVER a literal themeable hex.
+ *
+ * Authored entirely with CSS LOGICAL PROPERTIES (inset-inline-*, margin-inline-*,
+ * padding-block-*, border-inline-*) so RTL mirrors with zero duplicated rules.
+ */
+
+/* ════════════════════════════════════════════════════════════════════════
+   0 · SHELL-GEOMETRY TOKENS introduced by the shell brief (02 §0.1).
+   The core dimension tokens (--ax-sidebar-w/-compact, --ax-header-h,
+   --ax-footer-h, --ax-container-boxed) live in _primitives.css; these two
+   are shell-owned and declared here so base.css is self-sufficient.
+   ════════════════════════════════════════════════════════════════════════ */
+:root {
+  --ax-sidebar-w-double: 296px; /* double-column rail total (76 + 220) */
+  --ax-detached-inset: var(--ax-space-4); /* 16px floating-rail gutter */
+  --ax-drawer-w: 288px; /* mobile offcanvas width */
+  --ax-backdrop: rgba(20, 17, 13, 0.5); /* overlay scrim (mode-agnostic dim) */
+}
+[data-ax-theme='dark'] {
+  --ax-backdrop: rgba(0, 0, 0, 0.6);
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   1 · RESET / NORMALIZE  (modern, minimal — Tailwind preflight handles much;
+   these rules are token-aware and shell-specific so they live with us)
+   ════════════════════════════════════════════════════════════════════════ */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+* {
+  margin: 0;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+  -moz-tab-size: 4;
+  tab-size: 4;
+  scroll-behavior: smooth;
+}
+
+body {
+  min-height: 100vh;
+  font-family: var(--ax-font-sans);
+  font-size: 14px; /* Aurora chrome/dense UI base (spec 01 §7) */
+  line-height: 1.5;
+  color: var(--ax-text);
+  background-color: var(--ax-canvas);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  font-feature-settings: 'cv05', 'ss01'; /* Inter stylistic sets */
+  letter-spacing: -0.006em;
+  /* color/background follow theme-token transitions, not element fades */
+  transition:
+    background-color var(--ax-motion-fast) var(--ax-ease-standard),
+    color var(--ax-motion-fast) var(--ax-ease-standard);
+}
+
+/* media defaults */
+img,
+picture,
+video,
+canvas,
+svg {
+  display: block;
+  max-width: 100%;
+}
+/* Reset only SVGs that don't declare their own fill. Outline icons set fill="none"
+   explicitly; filled icons set fill="currentColor" (and dynamic :fill bindings set
+   tokens). A blanket `svg { fill: none }` overrides those presentation attributes
+   (CSS beats presentation attributes), which renders every filled glyph invisible. */
+svg:not([fill]) {
+  fill: none;
+}
+/* Sort-chevron glyphs sit inline within table-heading text, so they must opt out of
+   the svg{display:block} media reset above. This override must also be UNLAYERED —
+   a layered @layer components rule can't beat an unlayered one (unlayered > layered). */
+.ax-table__sort {
+  display: inline-block;
+}
+
+/* form inheritance — MUST be in @layer base so it sits BELOW @layer components.
+   Unlayered, it would outrank every layered component rule (unlayered > layered),
+   making .ax-btn / .ax-btn--primary inherit body color + weight instead of their
+   own tokens (white-on-accent text, semibold). */
+@layer base {
+  input,
+  button,
+  textarea,
+  select {
+    font: inherit;
+    color: inherit;
+    letter-spacing: inherit;
+  }
+}
+button {
+  cursor: pointer;
+}
+/* Reset UA chrome only on UNCLASSED buttons so classed .ax-btn components
+   (in @layer components) keep their background/border and remain override-able
+   by Tailwind utilities. */
+button:not([class]) {
+  background: none;
+  border: 0;
+}
+
+/* text wrapping */
+p,
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  overflow-wrap: break-word;
+}
+
+/* lists used as nav/menus reset their list affordances */
+:where(ul, ol)[role='list'],
+:where(ul, ol)[role='tree'],
+:where(ul, ol)[role='menu'] {
+  list-style: none;
+  padding: 0;
+}
+
+/* tables collapse by default */
+table {
+  border-collapse: collapse;
+  border-spacing: 0;
+}
+
+/* hidden attribute always wins (used by sidebar filter) */
+[hidden] {
+  display: none !important;
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   2 · ROOT TYPOGRAPHY  (headings → Space Grotesk via --ax-font-display;
+   sizes/leading from --ax-text-* / --ax-leading-* token scale)
+   ════════════════════════════════════════════════════════════════════════ */
+h1,
+h2,
+.ax-display {
+  font-family: var(--ax-font-display);
+}
+h3,
+h4,
+h5,
+h6 {
+  font-family: var(--ax-font-sans);
+}
+
+h1 {
+  font-size: var(--ax-text-3xl);
+  line-height: var(--ax-leading-3xl);
+  font-weight: var(--ax-weight-bold);
+  letter-spacing: -0.018em;
+  color: var(--ax-text-strong);
+}
+h2 {
+  font-size: var(--ax-text-2xl);
+  line-height: var(--ax-leading-2xl);
+  font-weight: var(--ax-weight-semibold);
+  letter-spacing: -0.015em;
+  color: var(--ax-text-strong);
+}
+h3 {
+  font-size: var(--ax-text-xl);
+  line-height: var(--ax-leading-xl);
+  font-weight: var(--ax-weight-semibold);
+  letter-spacing: -0.012em;
+  color: var(--ax-text-strong);
+}
+h4 {
+  font-size: var(--ax-text-lg);
+  line-height: var(--ax-leading-lg);
+  font-weight: var(--ax-weight-semibold);
+  letter-spacing: -0.01em;
+  color: var(--ax-text-strong);
+}
+h5 {
+  font-size: var(--ax-text-md);
+  line-height: var(--ax-leading-md);
+  font-weight: var(--ax-weight-medium);
+  letter-spacing: -0.005em;
+  color: var(--ax-text-strong);
+}
+h6 {
+  font-size: var(--ax-text-base);
+  line-height: var(--ax-leading-base);
+  font-weight: var(--ax-weight-medium);
+  color: var(--ax-text-strong);
+}
+
+small {
+  font-size: var(--ax-text-xs);
+  line-height: var(--ax-leading-xs);
+}
+
+strong,
+b {
+  font-weight: var(--ax-weight-semibold);
+  color: var(--ax-text-strong);
+}
+
+code,
+kbd,
+samp,
+pre {
+  font-family: var(--ax-font-mono);
+  font-size: 0.92em;
+}
+kbd {
+  font-size: var(--ax-text-2xs);
+  color: var(--ax-text-subtle);
+}
+
+/* links — color MUST be in @layer base so it sits BELOW @layer components.
+   Unlayered, it would outrank every layered component rule (unlayered > layered),
+   making anchor-based components (e.g. <a class="ax-btn ax-btn--primary">) inherit
+   the link color (--ax-link, a dark accent) instead of their own white-on-accent
+   text. Same rationale as the form-inheritance reset above. */
+@layer base {
+  a {
+    color: var(--ax-link);
+    text-decoration: none;
+    transition: color var(--ax-motion-instant) var(--ax-ease-standard);
+  }
+  a:hover {
+    color: var(--ax-accent-hover);
+  }
+}
+
+hr {
+  border: 0;
+  block-size: 1px;
+  background: var(--ax-border);
+  margin-block: var(--ax-space-4);
+}
+
+/* selection */
+::selection {
+  background: var(--ax-accent-wash);
+  color: var(--ax-text-strong);
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   3 · CUSTOM SCROLLBARS  (thin, hairline thumb on --ax-border-strong)
+   ════════════════════════════════════════════════════════════════════════ */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--ax-scrollbar-thumb) transparent;
+}
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background-color: var(--ax-scrollbar-thumb);
+  border-radius: var(--ax-radius-pill);
+  border: 3px solid transparent;
+  background-clip: padding-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background-color: var(--ax-scrollbar-thumb-hover);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* directional icons flip in RTL; non-directional never flip (shell brief §12) */
+[dir='rtl'] .ax-icon--directional {
+  transform: scaleX(-1);
+}
+/* keep numeric / mono runs LTR even in RTL context */
+.ax-num,
+.ax-mono,
+[data-ax-tabular] {
+  unicode-bidi: plaintext;
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   4 · APP-SHELL LAYOUT
+   Skeleton (task contract):
+     <div class="ax-ambient"><i></i></div>
+     <div class="ax-layout">
+       <aside class="ax-sidebar">…</aside>
+       <div class="ax-shell">
+         <header class="ax-header">…</header>
+         <main class="ax-main" id="ax-main">…</main>
+         <footer class="ax-footer">…</footer>
+       </div>
+     </div>
+     <aside class="ax-customizer">…</aside>
+   ════════════════════════════════════════════════════════════════════════ */
+
+/* root scope — sits above the fixed .ax-ambient glow layer (z-base 0) */
+.ax-layout {
+  position: relative;
+  z-index: 1;
+  min-block-size: 100vh;
+  isolation: isolate;
+}
+
+/* ── SIDEBAR rail — fixed, full height, width = active style token ── */
+.ax-sidebar {
+  position: fixed;
+  inset-block: 0;
+  inset-inline-start: 0;
+  inline-size: var(--ax-sidebar-w);
+  z-index: var(--ax-z-sidebar);
+  display: flex;
+  flex-direction: column;
+  background: var(--ax-sidebar-bg, var(--ax-surface-raised));
+  color: var(--ax-sidebar-fg, var(--ax-text));
+  border-inline-end: 1px solid var(--ax-sidebar-border, var(--ax-border));
+  -webkit-backdrop-filter: blur(14px) saturate(1.05);
+  backdrop-filter: blur(14px) saturate(1.05);
+  transition:
+    inline-size var(--ax-motion-base) var(--ax-ease-standard),
+    transform var(--ax-motion-slow) var(--ax-ease-emphasized);
+  overflow: hidden; /* nav owns the scroll */
+}
+
+/* ── SHELL column — offset by the sidebar via logical margin ── */
+.ax-shell {
+  display: flex;
+  flex-direction: column;
+  min-block-size: 100vh;
+  margin-inline-start: var(--ax-sidebar-w);
+  transition: margin-inline-start var(--ax-motion-base) var(--ax-ease-standard);
+}
+
+/* ── HEADER — sticky/fixed glass topbar aligned to the rail edge ── */
+.ax-header {
+  position: fixed;
+  inset-block-start: 0;
+  inset-inline-start: var(--ax-sidebar-w);
+  inset-inline-end: 0;
+  z-index: var(--ax-z-header);
+  display: flex;
+  align-items: center;
+  gap: var(--ax-space-2);
+  block-size: var(--ax-header-h);
+  padding-inline: var(--ax-space-5);
+  background: var(--ax-header-bg, var(--ax-surface-raised));
+  color: var(--ax-header-fg, var(--ax-text));
+  border-block-end: 1px solid var(--ax-header-border, var(--ax-border));
+  -webkit-backdrop-filter: blur(12px) saturate(1.05);
+  backdrop-filter: blur(12px) saturate(1.05);
+  transition:
+    inset-inline-start var(--ax-motion-base) var(--ax-ease-standard),
+    box-shadow var(--ax-motion-fast) var(--ax-ease-standard);
+}
+/* sticky-shadow when content is scrolled (Alpine toggles .is-scrolled) */
+.ax-header.is-scrolled {
+  box-shadow: var(--ax-shadow-sm);
+}
+
+/* ── MAIN — the scroll/padding region, offset below the fixed header ── */
+.ax-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  padding-block-start: var(--ax-header-h); /* clear the fixed header */
+  min-block-size: 0;
+}
+/* page padding (Fluid default); width modes override below */
+.ax-main > :not(.ax-footer) {
+  padding-inline: var(--ax-space-6);
+  padding-block: var(--ax-space-6);
+}
+
+/* ── FOOTER — pinned to column bottom, hairline top edge ── */
+.ax-footer {
+  margin-block-start: auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ax-space-4);
+  min-block-size: var(--ax-footer-h);
+  padding-block: var(--ax-space-4);
+  padding-inline: var(--ax-space-6);
+  border-block-start: 1px solid var(--ax-border);
+  color: var(--ax-text-muted);
+  font-size: var(--ax-text-sm);
+}
+.ax-footer a {
+  color: var(--ax-text-muted);
+}
+.ax-footer a:hover {
+  color: var(--ax-text);
+}
+.ax-footer__links {
+  display: flex;
+  gap: var(--ax-space-4);
+  flex-wrap: wrap;
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   5 · WIDTH MODES  [data-ax-width="fluid|full"]
+   fluid = padded (default) · full = edge-to-edge
+   ════════════════════════════════════════════════════════════════════════ */
+[data-ax-width='full'] .ax-main > :not(.ax-footer) {
+  padding-inline: var(--ax-space-4);
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   6 · HEADER POSITION  [data-ax-header-position="fixed|static"]
+   fixed (default) = chrome pinned · static = scrolls away with content
+   ════════════════════════════════════════════════════════════════════════ */
+[data-ax-header-position='static'] .ax-header {
+  /* static = scroll away with content. Must be `static` (not sticky): the base
+     rule leaves inset-block-start:0, which would keep a sticky header pinned. */
+  position: static;
+  inset-inline-start: auto;
+  inset-inline-end: auto;
+}
+[data-ax-header-position='static'] .ax-main {
+  padding-block-start: 0; /* header is in flow, no offset needed */
+}
+
+/* SIDEBAR POSITION [data-ax-sidebar-position="fixed|static"]
+   static = rail scrolls away with the page. `position:absolute` inside the
+   `position:relative` .ax-layout keeps it a 264px left column out of flow, so
+   .ax-shell's existing margin-inline-start and the fixed-header offset stay valid
+   (a sticky rail in the non-flex .ax-layout would stack ABOVE the shell). */
+[data-ax-sidebar-position='static'] .ax-sidebar {
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline-start: 0;
+  block-size: auto;
+  min-block-size: 100vh;
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   7 · THE SIX SIDEBAR STYLES  [data-ax-sidebar-style]
+   All consume the SAME nav data; switching only re-binds --ax-sidebar-w
+   and toggles label/flyout affordances. (shell brief §3.5)
+   ════════════════════════════════════════════════════════════════════════ */
+
+/* width re-bind: compact-family rails collapse to the 76px icon token */
+[data-ax-sidebar-style='compact'],
+[data-ax-sidebar-style='icon-text'],
+[data-ax-sidebar-style='icon-overlay'] {
+  --ax-sidebar-w: var(--ax-sidebar-w-compact);
+}
+[data-ax-sidebar-style='double'] {
+  --ax-sidebar-w: var(--ax-sidebar-w-double);
+}
+/* JS-driven temporary collapse via the header toggle (no style chosen) OR the
+   'compact' BEHAVIOR (locked icon rail, any style). The §7b icon-rail treatment
+   below shares the same :is() prefix so both look identical. Mobile-safe: the
+   drawer hard-sets .ax-sidebar inline-size + zeroes the shell offset. */
+:is([data-ax-collapsed]:not([data-ax-sidebar-style]), [data-ax-sidebar-behavior='compact']) {
+  --ax-sidebar-w: var(--ax-sidebar-w-compact);
+}
+
+/* ── SIDEBAR BEHAVIOR  [data-ax-sidebar-behavior="collapsible|expanded|compact"]
+   collapsible (default) keeps the header collapse toggle. expanded & compact
+   LOCK the rail, so the toggle button is removed (JS also no-ops it). ── */
+[data-ax-sidebar-behavior='expanded'] .ax-nav-toggle,
+[data-ax-sidebar-behavior='compact'] .ax-nav-toggle {
+  display: none;
+}
+
+/* ── DEFAULT (264px, icon + label) — hide compact-only affordances ── */
+.ax-sidebar__flyout {
+  display: none;
+}
+
+/* ── COMPACT (76px, icons only) ─────────────────────────────────────────
+   Hide labels/wordmark/section eyebrows/foot meta; reveal flyout on hover. */
+[data-ax-sidebar-style='compact'] .ax-sidebar__wordmark,
+[data-ax-sidebar-style='compact'] .ax-nav__label,
+[data-ax-sidebar-style='compact'] .ax-nav__badge,
+[data-ax-sidebar-style='compact'] .ax-nav__caret,
+[data-ax-sidebar-style='compact'] .ax-sidebar__section,
+[data-ax-sidebar-style='compact'] .ax-sidebar__search,
+[data-ax-sidebar-style='compact'] .ax-sidebar__promo,
+[data-ax-sidebar-style='compact'] .ax-sidebar__user-meta,
+[data-ax-sidebar-style='icon-overlay'] .ax-sidebar__wordmark,
+[data-ax-sidebar-style='icon-overlay'] .ax-nav__label,
+[data-ax-sidebar-style='icon-overlay'] .ax-nav__badge,
+[data-ax-sidebar-style='icon-overlay'] .ax-nav__caret,
+[data-ax-sidebar-style='icon-overlay'] .ax-sidebar__section,
+[data-ax-sidebar-style='icon-overlay'] .ax-sidebar__search,
+[data-ax-sidebar-style='icon-overlay'] .ax-sidebar__promo,
+[data-ax-sidebar-style='icon-overlay'] .ax-sidebar__user-meta {
+  display: none;
+}
+/* compact nav items center their icon; section becomes a hairline divider */
+[data-ax-sidebar-style='compact'] .ax-nav__item,
+[data-ax-sidebar-style='icon-overlay'] .ax-nav__item {
+  justify-content: center;
+  padding-inline: 0;
+}
+[data-ax-sidebar-style='compact'] .ax-sidebar__section,
+[data-ax-sidebar-style='icon-overlay'] .ax-sidebar__section {
+  display: block;
+  block-size: 1px;
+  margin: var(--ax-space-2) var(--ax-space-4);
+  padding: 0;
+  background: var(--ax-border);
+  overflow: hidden;
+  text-indent: -999px;
+}
+/* compact flyout (label tooltip / submenu panel) floats out on hover/focus */
+[data-ax-sidebar-style='compact'] .ax-nav__item:hover > .ax-sidebar__flyout,
+[data-ax-sidebar-style='compact'] .ax-nav__item:focus-visible > .ax-sidebar__flyout,
+[data-ax-sidebar-style='icon-overlay'] .ax-nav__item:hover > .ax-sidebar__flyout,
+[data-ax-sidebar-style='icon-overlay'] .ax-nav__item:focus-visible > .ax-sidebar__flyout {
+  display: block;
+  position: absolute;
+  inset-inline-start: calc(100% + var(--ax-space-2));
+  inset-block-start: 50%;
+  transform: translateY(-50%);
+  z-index: var(--ax-z-dropdown);
+  min-inline-size: 180px;
+  padding: var(--ax-space-2) var(--ax-space-3);
+  white-space: nowrap;
+  background: var(--ax-surface-overlay);
+  color: var(--ax-text);
+  border: 1px solid var(--ax-border);
+  border-radius: var(--ax-radius-md);
+  box-shadow: var(--ax-shadow-md);
+  -webkit-backdrop-filter: blur(18px) saturate(1.1);
+  backdrop-filter: blur(18px) saturate(1.1);
+}
+[data-ax-sidebar-style='compact'] .ax-nav__item,
+[data-ax-sidebar-style='icon-overlay'] .ax-nav__item {
+  position: relative;
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   7b · HEADER-TOGGLE COLLAPSE  [data-ax-collapsed] (no explicit style chosen)
+   The header collapse button only re-binds --ax-sidebar-w to the 76px icon
+   token (§7 width re-bind above). On its own that just squeezes the full 264px
+   rail content into 76px — clipping the wordmark, search, labels and promo (the
+   promo text wraps one char per line). Give it the real icon-rail treatment:
+   hide the text-bearing affordances, centre the brand mark + icons + avatar,
+   and drop the expanded child panels (leaf rows carry no icon, and there is no
+   hover flyout to reveal them). Desktop only — under md the rail is an offcanvas
+   drawer that must keep its full labels. */
+@media (min-width: 768px) {
+  :is([data-ax-collapsed]:not([data-ax-sidebar-style]), [data-ax-sidebar-behavior='compact']) .ax-sidebar__wordmark,
+  :is([data-ax-collapsed]:not([data-ax-sidebar-style]), [data-ax-sidebar-behavior='compact']) .ax-nav__label,
+  :is([data-ax-collapsed]:not([data-ax-sidebar-style]), [data-ax-sidebar-behavior='compact']) .ax-nav__badge,
+  :is([data-ax-collapsed]:not([data-ax-sidebar-style]), [data-ax-sidebar-behavior='compact']) .ax-nav__caret,
+  :is([data-ax-collapsed]:not([data-ax-sidebar-style]), [data-ax-sidebar-behavior='compact']) .ax-sidebar__search,
+  :is([data-ax-collapsed]:not([data-ax-sidebar-style]), [data-ax-sidebar-behavior='compact']) .ax-sidebar__promo,
+  :is([data-ax-collapsed]:not([data-ax-sidebar-style]), [data-ax-sidebar-behavior='compact']) .ax-sidebar__user-meta,
+  :is([data-ax-collapsed]:not([data-ax-sidebar-style]), [data-ax-sidebar-behavior='compact']) .ax-sidebar__user-avatar,
+  :is([data-ax-collapsed]:not([data-ax-sidebar-style]), [data-ax-sidebar-behavior='compact']) .ax-nav__children {
+    display: none;
+  }
+  /* brand → centred logo mark (drop the wordmark gutter) */
+  :is([data-ax-collapsed]:not([data-ax-sidebar-style]), [data-ax-sidebar-behavior='compact']) .ax-sidebar__brand {
+    justify-content: center;
+    padding-inline: 0;
+  }
+  :is([data-ax-collapsed]:not([data-ax-sidebar-style]), [data-ax-sidebar-behavior='compact']) .ax-sidebar__logo {
+    gap: 0;
+  }
+  /* nav rows → centred icon, no label gutter */
+  :is([data-ax-collapsed]:not([data-ax-sidebar-style]), [data-ax-sidebar-behavior='compact']) .ax-nav__item {
+    justify-content: center;
+    gap: 0;
+    padding-inline: 0;
+  }
+  /* active-section indicator: when the active leaf lives in a now-hidden child
+     panel, surface its trail PARENT as active so the rail still shows where you
+     are (mirrors the .is-active recipe, minus the off-rail leading glow bar). */
+  :is([data-ax-collapsed]:not([data-ax-sidebar-style]), [data-ax-sidebar-behavior='compact']) .ax-nav__item--trail {
+    color: var(--ax-text-strong);
+    background: linear-gradient(90deg, rgba(var(--ax-accent-rgb), 0.16), rgba(var(--ax-accent-rgb), 0.04));
+    box-shadow: inset 0 0 0 1px rgba(var(--ax-accent-rgb), 0.18);
+  }
+  :is([data-ax-collapsed]:not([data-ax-sidebar-style]), [data-ax-sidebar-behavior='compact']) .ax-nav__item--trail .ax-nav__icon {
+    color: var(--ax-accent);
+    opacity: 1;
+  }
+  /* section eyebrow → hairline divider (label text clipped away) */
+  :is([data-ax-collapsed]:not([data-ax-sidebar-style]), [data-ax-sidebar-behavior='compact']) .ax-sidebar__section {
+    block-size: 1px;
+    margin: var(--ax-space-2) var(--ax-space-4);
+    padding: 0;
+    overflow: hidden;
+    text-indent: -999px;
+    white-space: nowrap;
+    background: var(--ax-border);
+  }
+  /* foot → keep ONLY the logout icon, centred (avatar + meta both hidden) */
+  :is([data-ax-collapsed]:not([data-ax-sidebar-style]), [data-ax-sidebar-behavior='compact']) .ax-sidebar__user {
+    justify-content: center;
+  }
+  :is([data-ax-collapsed]:not([data-ax-sidebar-style]), [data-ax-sidebar-behavior='compact']) .ax-sidebar__foot {
+    padding-inline: var(--ax-space-3);
+  }
+}
+
+/* ── ICON-TEXT HOVER (rest 76px → 264px overlay on hover, no reflow) ──────
+   The rail keeps the shell offset at 76px; hovering expands the rail itself
+   as a floating overlay. We expand inline-size only on the rail, not the
+   shell margin, so content never reflows. */
+[data-ax-sidebar-style='icon-text'] .ax-sidebar__wordmark,
+[data-ax-sidebar-style='icon-text'] .ax-nav__label,
+[data-ax-sidebar-style='icon-text'] .ax-nav__badge,
+[data-ax-sidebar-style='icon-text'] .ax-nav__caret,
+[data-ax-sidebar-style='icon-text'] .ax-sidebar__section,
+[data-ax-sidebar-style='icon-text'] .ax-sidebar__promo,
+[data-ax-sidebar-style='icon-text'] .ax-sidebar__user-meta {
+  opacity: 0;
+  transition: opacity var(--ax-motion-fast) var(--ax-ease-standard);
+}
+[data-ax-sidebar-style='icon-text'] .ax-sidebar {
+  overflow: visible;
+}
+[data-ax-sidebar-style='icon-text'] .ax-sidebar:hover,
+[data-ax-sidebar-style='icon-text'] .ax-sidebar:focus-within {
+  inline-size: var(--ax-sidebar-w-expanded, 264px);
+  box-shadow: var(--ax-shadow-md);
+  overflow: hidden;
+}
+[data-ax-sidebar-style='icon-text'] .ax-sidebar:hover .ax-sidebar__wordmark,
+[data-ax-sidebar-style='icon-text'] .ax-sidebar:hover .ax-nav__label,
+[data-ax-sidebar-style='icon-text'] .ax-sidebar:hover .ax-nav__badge,
+[data-ax-sidebar-style='icon-text'] .ax-sidebar:hover .ax-nav__caret,
+[data-ax-sidebar-style='icon-text'] .ax-sidebar:hover .ax-sidebar__section,
+[data-ax-sidebar-style='icon-text'] .ax-sidebar:hover .ax-sidebar__promo,
+[data-ax-sidebar-style='icon-text'] .ax-sidebar:hover .ax-sidebar__user-meta,
+[data-ax-sidebar-style='icon-text'] .ax-sidebar:focus-within .ax-sidebar__wordmark,
+[data-ax-sidebar-style='icon-text'] .ax-sidebar:focus-within .ax-nav__label,
+[data-ax-sidebar-style='icon-text'] .ax-sidebar:focus-within .ax-nav__badge,
+[data-ax-sidebar-style='icon-text'] .ax-sidebar:focus-within .ax-nav__caret,
+[data-ax-sidebar-style='icon-text'] .ax-sidebar:focus-within .ax-sidebar__section,
+[data-ax-sidebar-style='icon-text'] .ax-sidebar:focus-within .ax-sidebar__promo,
+[data-ax-sidebar-style='icon-text'] .ax-sidebar:focus-within .ax-sidebar__user-meta {
+  opacity: 1;
+}
+
+/* ── ICON-OVERLAY (76px rail; submenu opens as a separate floating panel) ──
+   Width handled above (compact-family). The submenu overlay panel is the
+   sidebar JS concern; we provide the floating-panel skin via .ax-nav__overlay. */
+.ax-nav__overlay {
+  position: fixed;
+  inset-inline-start: var(--ax-sidebar-w-compact);
+  inset-block-start: var(--ax-header-h);
+  inline-size: 240px;
+  z-index: var(--ax-z-dropdown);
+  padding: var(--ax-space-3);
+  background: var(--ax-surface);
+  border: 1px solid var(--ax-border);
+  border-radius: var(--ax-radius-lg);
+  box-shadow: var(--ax-shadow-md);
+  -webkit-backdrop-filter: blur(18px) saturate(1.1);
+  backdrop-filter: blur(18px) saturate(1.1);
+}
+
+/* ── DETACHED (floating inset cards; the ONLY shell style that casts a shadow) ──
+   The Shell Style control: BOTH the sidebar AND the header float as inset cards
+   with matching radius + shadow; content sits beside/below them with a consistent
+   gutter. The header float is desktop-only (min-width:768px) so the mobile
+   drawer/header are untouched; with a top menu bar it docks (Horizontal/Hybrid
+   override below) so it never floats over the bar. */
+[data-ax-shell-style='detached'] .ax-sidebar {
+  inset-block: var(--ax-detached-inset);
+  inset-inline-start: var(--ax-detached-inset);
+  block-size: auto;
+  border: 1px solid var(--ax-border);
+  border-radius: var(--ax-radius-lg);
+  box-shadow: var(--ax-shadow-sm);
+}
+[data-ax-shell-style='detached'] .ax-shell {
+  margin-inline-start: calc(var(--ax-sidebar-w) + var(--ax-detached-inset) * 2);
+}
+@media (min-width: 768px) {
+  /* header floats to the right of the rail, aligned to the content column,
+     tops level with the sidebar card (both start at --ax-detached-inset) */
+  [data-ax-shell-style='detached'] .ax-header {
+    inset-block-start: var(--ax-detached-inset);
+    inset-inline-start: calc(var(--ax-sidebar-w) + var(--ax-detached-inset) * 2);
+    inset-inline-end: var(--ax-detached-inset);
+    border: 1px solid var(--ax-header-border, var(--ax-border));
+    border-radius: var(--ax-radius-lg);
+    box-shadow: var(--ax-shadow-sm);
+  }
+  /* clear the floated header: its height + the top inset + the gap below it */
+  [data-ax-shell-style='detached'] .ax-main {
+    padding-block-start: calc(var(--ax-header-h) + var(--ax-detached-inset) * 2);
+  }
+  /* static header is in flow (takes its own space) — no extra top padding */
+  [data-ax-header-position='static'][data-ax-shell-style='detached'] .ax-main {
+    padding-block-start: 0;
+  }
+  /* …but `position:static` ignores the float's inset-* offsets, so the card would
+     jam flush to the top + right with only its left gutter (the shell margin) left
+     intact, misaligned with the floated sidebar. Recreate the gutters with margins
+     instead. Vertical nav only — Horizontal/Hybrid dock the header to a flush band
+     (no float), so they must keep their full-bleed edges. */
+  [data-ax-header-position='static'][data-ax-shell-style='detached']:not([data-ax-nav='horizontal']):not([data-ax-nav='hybrid']) .ax-header {
+    margin-block: var(--ax-detached-inset);
+    margin-inline-end: var(--ax-detached-inset);
+  }
+  /* With a top menu bar (Horizontal/Hybrid) the header can't float over the bar —
+     dock it (flush band) there; only the sidebar detaches. */
+  [data-ax-nav='horizontal'][data-ax-shell-style='detached'] .ax-header,
+  [data-ax-nav='hybrid'][data-ax-shell-style='detached'] .ax-header {
+    inset-block-start: 0;
+    border: 0;
+    border-block-end: 1px solid var(--ax-header-border, var(--ax-border));
+    border-radius: 0;
+    box-shadow: none;
+  }
+  [data-ax-nav='horizontal'][data-ax-shell-style='detached'] .ax-header {
+    inset-inline-start: 0;
+    inset-inline-end: 0;
+  }
+  [data-ax-nav='hybrid'][data-ax-shell-style='detached'] .ax-header {
+    inset-inline-start: calc(var(--ax-sidebar-w) + var(--ax-detached-inset) * 2);
+    inset-inline-end: 0;
+  }
+}
+
+/* ── DOUBLE-COLUMN ────────────────────────────────────────────────────────
+   Only the 296px width re-bind ships today (see §7 width re-bind above). A true
+   two-column icon-rail + labeled-panel needs dedicated `.ax-sidebar__rail` /
+   `.ax-sidebar__panel` markup + JS that no edition emits, so `flex-direction:row`
+   on the single-column flex children only scrambled/clipped them. Renders as a
+   wider labeled rail until that markup exists. */
+
+/* ════════════════════════════════════════════════════════════════════════
+   8 · HORIZONTAL / HYBRID NAV  [data-ax-nav]
+   Horizontal hides the rail (header full width, no shell offset) and shows the
+   top menu bar instead. Hybrid keeps the rail AND shows the bar. The bar itself
+   is built from the sidebar tree by core/topnav.js and lives as a direct child
+   of `.ax-shell`; CSS here only gates its visibility + skins the dropdowns.
+   ════════════════════════════════════════════════════════════════════════ */
+[data-ax-nav='horizontal'] .ax-sidebar {
+  display: none;
+}
+[data-ax-nav='horizontal'] .ax-shell {
+  margin-inline-start: 0;
+}
+[data-ax-nav='horizontal'] .ax-header {
+  inset-inline-start: 0;
+}
+/* No rail in Horizontal mode (the sidebar is display:none at every width), so
+   the header's collapse toggle has nothing to act on — hide it. Hybrid keeps
+   the rail, so its toggle stays. */
+[data-ax-nav='horizontal'] .ax-nav-toggle {
+  display: none;
+}
+
+/* base bar skin (also used by the standalone .ax-topnav showcase patterns) */
+.ax-topnav {
+  position: sticky;
+  inset-block-start: var(--ax-header-h);
+  z-index: var(--ax-z-sticky);
+  display: flex;
+  align-items: center;
+  gap: var(--ax-space-1);
+  block-size: 48px;
+  padding-inline: var(--ax-space-6);
+  background: var(--ax-surface-raised);
+  border-block-end: 1px solid var(--ax-border);
+  -webkit-backdrop-filter: blur(12px) saturate(1.05);
+  backdrop-filter: blur(12px) saturate(1.05);
+}
+
+/* shell-injected bar: hidden in Vertical; fixed under the header for
+   Horizontal & Hybrid. NO backdrop-filter here — a filtered ancestor would
+   become a containing block and clip the position:fixed dropdown panels.
+   The bar itself NEVER scrolls (overflow:hidden); the inner __track scrolls and
+   the edge chevrons + fades (built by core/topnav.js) page it left/right. */
+.ax-shell > .ax-topnav {
+  display: none;
+}
+[data-ax-nav='horizontal'] .ax-shell > .ax-topnav,
+[data-ax-nav='hybrid'] .ax-shell > .ax-topnav {
+  display: flex;
+  align-items: stretch;
+  position: fixed;
+  inset-block-start: var(--ax-header-h);
+  inset-inline-start: 0;
+  inset-inline-end: 0;
+  z-index: calc(var(--ax-z-header) - 1);
+  block-size: 48px;
+  padding-inline: 0;
+  overflow: hidden;
+  background: var(--ax-surface-overlay);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+[data-ax-nav='hybrid'] .ax-shell > .ax-topnav {
+  inset-inline-start: var(--ax-sidebar-w);
+}
+/* clear the fixed header + the fixed top bar */
+[data-ax-nav='horizontal'] .ax-main,
+[data-ax-nav='hybrid'] .ax-main {
+  padding-block-start: calc(var(--ax-header-h) + 48px);
+}
+
+/* HEADER POSITION = STATIC → the header scrolls away with content, so the bar
+   must too: ride in normal flow directly under the (now in-flow) header and
+   STICK to the top once the header clears, leaving no empty gap above it. */
+[data-ax-header-position='static'][data-ax-nav='horizontal'] .ax-shell > .ax-topnav,
+[data-ax-header-position='static'][data-ax-nav='hybrid'] .ax-shell > .ax-topnav {
+  position: sticky;
+  inset-block-start: 0;
+  inset-inline: auto;
+}
+[data-ax-header-position='static'][data-ax-nav='horizontal'] .ax-main,
+[data-ax-header-position='static'][data-ax-nav='hybrid'] .ax-main {
+  padding-block-start: 0;
+}
+
+/* ── scrollable track (scrollbar hidden) ── */
+.ax-topnav__track {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  gap: var(--ax-space-1);
+  block-size: 100%;
+  padding-inline: var(--ax-space-5);
+  overflow-x: auto;
+  overflow-y: hidden;
+  scroll-behavior: smooth;
+  scrollbar-width: none; /* Firefox */
+}
+.ax-topnav__track::-webkit-scrollbar {
+  display: none; /* WebKit/Blink */
+}
+
+/* ── edge chevrons + fade (shown by JS only when overflowing that side) ── */
+.ax-topnav__edge {
+  position: relative;
+  z-index: 1;
+  flex: 0 0 auto;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  inline-size: 40px;
+  block-size: 100%;
+  padding: 0;
+  color: var(--ax-text-muted);
+  background: var(--ax-surface-overlay);
+  border: 0;
+  cursor: pointer;
+  transition: color var(--ax-motion-fast) var(--ax-ease-standard);
+}
+.ax-topnav__edge.is-visible {
+  display: inline-flex;
+}
+.ax-topnav__edge:hover {
+  color: var(--ax-text-strong);
+}
+/* the fade that bleeds the scrolling track under the chevron */
+.ax-topnav__edge::before {
+  content: '';
+  position: absolute;
+  inset-block: 0;
+  inline-size: 28px;
+  pointer-events: none;
+}
+.ax-topnav__edge--prev::before {
+  inset-inline-start: 100%;
+  background: linear-gradient(to right, var(--ax-surface-overlay), transparent);
+}
+.ax-topnav__edge--next::before {
+  inset-inline-end: 100%;
+  background: linear-gradient(to left, var(--ax-surface-overlay), transparent);
+}
+[dir='rtl'] .ax-topnav__edge--prev::before {
+  background: linear-gradient(to left, var(--ax-surface-overlay), transparent);
+}
+[dir='rtl'] .ax-topnav__edge--next::before {
+  background: linear-gradient(to right, var(--ax-surface-overlay), transparent);
+}
+
+/* ── bar entries (triggers + direct links) ── */
+.ax-topnav__item {
+  flex: 0 0 auto;
+}
+.ax-topnav__trigger,
+.ax-topnav__link {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ax-space-1);
+  block-size: 32px;
+  padding-inline: var(--ax-space-3);
+  font-size: var(--ax-text-sm);
+  font-weight: var(--ax-weight-medium);
+  color: var(--ax-text-muted);
+  white-space: nowrap;
+  background: transparent;
+  border: 0;
+  border-radius: var(--ax-radius-md);
+  cursor: pointer;
+  transition:
+    color var(--ax-motion-fast) var(--ax-ease-standard),
+    background var(--ax-motion-fast) var(--ax-ease-standard);
+}
+.ax-topnav__trigger:hover,
+.ax-topnav__link:hover {
+  color: var(--ax-text-strong);
+  background: var(--ax-fill-hover);
+}
+.ax-topnav__item.is-open .ax-topnav__trigger,
+.ax-topnav__link.is-active {
+  color: var(--ax-accent);
+  background: var(--ax-fill-hover);
+}
+.ax-topnav__caret {
+  transition: transform var(--ax-motion-fast) var(--ax-ease-standard);
+}
+.ax-topnav__item.is-open .ax-topnav__caret {
+  transform: rotate(180deg);
+}
+
+/* ── dropdown panels (position:fixed, placed by core/topnav.js) ── */
+.ax-topnav__menu {
+  position: fixed;
+  z-index: var(--ax-z-dropdown);
+  display: none;
+  flex-direction: column;
+  gap: 1px;
+  min-inline-size: 200px;
+  max-inline-size: 280px;
+  padding: var(--ax-space-2);
+  background: var(--ax-surface-overlay);
+  border: 1px solid var(--ax-border);
+  border-radius: var(--ax-radius-lg);
+  box-shadow: var(--ax-shadow-lg);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-backdrop-filter: blur(18px) saturate(1.1);
+  backdrop-filter: blur(18px) saturate(1.1);
+}
+.ax-topnav__item.is-open .ax-topnav__menu {
+  display: flex;
+}
+.ax-topnav__menu-link {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ax-space-2);
+  padding: var(--ax-space-2) var(--ax-space-3);
+  font-size: var(--ax-text-sm);
+  color: var(--ax-text-muted);
+  white-space: nowrap;
+  border-radius: var(--ax-radius-sm);
+}
+.ax-topnav__menu-link:hover {
+  color: var(--ax-text-strong);
+  background: var(--ax-fill-hover);
+}
+.ax-topnav__menu-link.is-active {
+  color: var(--ax-accent);
+  background: var(--ax-accent-wash);
+}
+.ax-topnav__menu-heading {
+  padding: var(--ax-space-3) var(--ax-space-3) var(--ax-space-1);
+  font-size: var(--ax-text-xs);
+  font-weight: var(--ax-weight-semibold);
+  color: var(--ax-text-subtle);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.ax-topnav__menu-heading:first-child {
+  padding-block-start: var(--ax-space-1);
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   9 · SIDEBAR INTERNALS  (brand / search / nav scroll / foot scaffolding)
+   Detailed nav-item visuals (active gradient, glow bar) are owned by the
+   recipes + components briefs; here we lay out the rail's flex regions.
+   ════════════════════════════════════════════════════════════════════════ */
+.ax-sidebar__brand {
+  display: flex;
+  align-items: center;
+  block-size: var(--ax-header-h);
+  padding-inline: var(--ax-space-5);
+  flex: 0 0 auto;
+}
+.ax-sidebar__logo {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ax-space-3);
+  color: var(--ax-text-strong);
+}
+.ax-sidebar__wordmark {
+  font-family: var(--ax-font-display);
+  font-size: var(--ax-text-lg);
+  font-weight: var(--ax-weight-bold);
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+}
+.ax-sidebar__search {
+  flex: 0 0 auto;
+  padding-inline: var(--ax-space-4);
+  /* gap below is a MARGIN (not padding) so the relative box equals the input
+     height — keeps the search icon + clear button vertically centred on it. */
+  margin-block-end: var(--ax-space-3);
+}
+.ax-sidebar__nav {
+  flex: 1;
+  min-block-size: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-inline: var(--ax-space-3);
+  padding-block: var(--ax-space-2);
+}
+.ax-sidebar__foot {
+  flex: 0 0 auto;
+  padding: var(--ax-space-4);
+  border-block-start: 1px solid var(--ax-border);
+}
+
+/* section eyebrow inside the rail */
+.ax-sidebar__section {
+  font-size: var(--ax-text-2xs);
+  line-height: var(--ax-leading-2xs);
+  font-weight: var(--ax-weight-semibold);
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--ax-text-subtle);
+  padding: var(--ax-space-3) var(--ax-space-3) var(--ax-space-2);
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   10 · RESPONSIVE  (auto-collapse 768–992, offcanvas drawer < md)
+   ════════════════════════════════════════════════════════════════════════ */
+
+/* 768–992: force compact rail unless the user explicitly chose a wider style */
+@media (min-width: 768px) and (max-width: 991.98px) {
+  :where(html):not([data-ax-shell-style='detached']) {
+    --ax-sidebar-w: var(--ax-sidebar-w-compact);
+  }
+  /* The width rebind alone squeezes the full 264px rail into 76px — clipping the
+     wordmark and wrapping the "MAIN" section eyebrow one char per line. Give the
+     DEFAULT sidebar the SAME icon-rail treatment as §7b (hide text affordances,
+     centre the brand + icons + avatar, eyebrow → hairline). Explicit styles
+     (icon-text / icon-overlay / compact / double) keep their own width + label
+     handling, so we exclude [data-ax-sidebar-style]. Keep in sync with §7b. */
+  :where(html):not([data-ax-shell-style='detached']):not([data-ax-sidebar-style]) :is(
+      .ax-sidebar__wordmark, .ax-nav__label, .ax-nav__badge, .ax-nav__caret,
+      .ax-sidebar__search, .ax-sidebar__promo, .ax-sidebar__user-meta,
+      .ax-sidebar__user-avatar, .ax-nav__children) {
+    display: none;
+  }
+  :where(html):not([data-ax-shell-style='detached']):not([data-ax-sidebar-style]) .ax-sidebar__brand {
+    justify-content: center;
+    padding-inline: 0;
+  }
+  :where(html):not([data-ax-shell-style='detached']):not([data-ax-sidebar-style]) .ax-sidebar__logo {
+    gap: 0;
+  }
+  :where(html):not([data-ax-shell-style='detached']):not([data-ax-sidebar-style]) .ax-nav__item {
+    justify-content: center;
+    gap: 0;
+    padding-inline: 0;
+  }
+  :where(html):not([data-ax-shell-style='detached']):not([data-ax-sidebar-style]) .ax-nav__item--trail {
+    color: var(--ax-text-strong);
+    background: linear-gradient(90deg, rgba(var(--ax-accent-rgb), 0.16), rgba(var(--ax-accent-rgb), 0.04));
+    box-shadow: inset 0 0 0 1px rgba(var(--ax-accent-rgb), 0.18);
+  }
+  :where(html):not([data-ax-shell-style='detached']):not([data-ax-sidebar-style]) .ax-nav__item--trail .ax-nav__icon {
+    color: var(--ax-accent);
+    opacity: 1;
+  }
+  :where(html):not([data-ax-shell-style='detached']):not([data-ax-sidebar-style]) .ax-sidebar__section {
+    block-size: 1px;
+    margin: var(--ax-space-2) var(--ax-space-4);
+    padding: 0;
+    overflow: hidden;
+    text-indent: -999px;
+    white-space: nowrap;
+    background: var(--ax-border);
+  }
+  :where(html):not([data-ax-shell-style='detached']):not([data-ax-sidebar-style]) .ax-sidebar__user {
+    justify-content: center;
+  }
+  :where(html):not([data-ax-shell-style='detached']):not([data-ax-sidebar-style]) .ax-sidebar__foot {
+    padding-inline: var(--ax-space-3);
+  }
+  /* The rail is locked to the icon width here, so the header toggle has no work
+     to do (same as the expanded / compact behavior locks above). Remove it —
+     the JS toggleSidebar() also no-ops via isAutoRail(). */
+  :where(html):not([data-ax-shell-style='detached']):not([data-ax-sidebar-style]) .ax-nav-toggle {
+    display: none;
+  }
+}
+
+/* < md: sidebar becomes an offcanvas drawer; shell reclaims full width */
+@media (max-width: 767.98px) {
+  .ax-shell,
+  [data-ax-shell-style='detached'] .ax-shell {
+    margin-inline-start: 0;
+  }
+  .ax-header {
+    inset-inline-start: 0;
+    inset-inline-end: 0;
+  }
+  .ax-sidebar {
+    inline-size: var(--ax-drawer-w);
+    --ax-sidebar-w: var(--ax-drawer-w);
+    transform: translateX(-100%); /* logical: hidden off inline-start */
+    box-shadow: var(--ax-shadow-lg);
+    border-radius: 0;
+    inset-block: 0;
+    inset-inline-start: 0;
+    z-index: var(--ax-z-drawer);
+  }
+  [dir='rtl'] .ax-sidebar {
+    transform: translateX(100%);
+  }
+  /* drawer open state (core/sidebar.js sets data-ax-drawer="open" on <html>) */
+  [data-ax-drawer='open'] .ax-sidebar {
+    transform: translateX(0);
+  }
+  /* labels/sections always visible inside the drawer regardless of style */
+  [data-ax-sidebar-style] .ax-nav__label,
+  [data-ax-sidebar-style] .ax-sidebar__wordmark,
+  [data-ax-sidebar-style] .ax-sidebar__section,
+  [data-ax-sidebar-style] .ax-nav__caret,
+  [data-ax-sidebar-style] .ax-nav__badge {
+    display: revert;
+    opacity: 1;
+  }
+  /* tighter page padding on phones */
+  .ax-main > :not(.ax-footer) {
+    padding-inline: var(--ax-space-4);
+    padding-block: var(--ax-space-4);
+  }
+  /* footer stacks */
+  .ax-footer {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--ax-space-2);
+  }
+}
+
+/* ── BACKDROP (drawer + offcanvas scrim) ── */
+.ax-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: var(--ax-z-overlay-backdrop);
+  background: var(--ax-backdrop);
+  -webkit-backdrop-filter: blur(2px);
+  backdrop-filter: blur(2px);
+  border: 0;
+}
+
+/* body scroll-lock while a full overlay is open (drawer/modal/customizer) */
+[data-ax-scroll-lock] body,
+body.is-locked {
+  overflow: hidden;
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   11 · IN-CONTENT PAGE HEADER  (.ax-page-head — breadcrumb + title + actions)
+   ════════════════════════════════════════════════════════════════════════ */
+.ax-page-head {
+  margin-block-end: var(--ax-space-6);
+}
+/* Breathing room between the breadcrumb trail and the page title below it. */
+.ax-page-head .ax-breadcrumb {
+  margin-block-end: var(--ax-space-3);
+}
+.ax-page-head__row {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: var(--ax-space-4);
+}
+.ax-page-head__title {
+  font-family: var(--ax-font-display);
+  font-size: var(--ax-text-2xl);
+  line-height: var(--ax-leading-2xl);
+  font-weight: var(--ax-weight-bold);
+  letter-spacing: -0.015em;
+  color: var(--ax-text-strong);
+}
+.ax-page-head__subtitle {
+  margin-block-start: var(--ax-space-1);
+  font-size: var(--ax-text-md);
+  color: var(--ax-text-muted);
+}
+.ax-page-head__actions {
+  margin-inline-start: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--ax-space-2);
+  flex-wrap: wrap;
+}
+/* shared flex spacer used in header + page-head rows */
+.ax-header__spacer {
+  flex: 1 1 auto;
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   12 · PAGE STYLE  [data-ax-page="regular|classic|compact"]
+   Regular = glass canvas (default). Classic = solid surface canvas.
+   Compact = tighter gutters + smaller page-head spacing (denser layout).
+   ════════════════════════════════════════════════════════════════════════ */
+[data-ax-page='classic'] {
+  --ax-canvas: var(--ax-surface-subtle);
+}
+/* classic = flat/opaque cards (kill the glass): the actual "classic" tell, so it
+   reads distinct from regular beyond the one-step canvas shift. */
+[data-ax-page='classic'] .ax-card {
+  background: var(--ax-surface-solid);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  box-shadow: var(--ax-shadow-sm);
+}
+[data-ax-page='classic'] .ax-page-head {
+  border-block-end: 1px solid var(--ax-border);
+  padding-block-end: var(--ax-space-4);
+}
+[data-ax-page='compact'] .ax-main > :not(.ax-footer) {
+  padding-inline: var(--ax-space-4);
+  padding-block: var(--ax-space-4);
+}
+[data-ax-page='compact'] .ax-page-head {
+  margin-block-end: var(--ax-space-4);
+}
+/* …and tighten the gutter between cards on the page grid (space-6 → space-4). */
+[data-ax-page='compact'] .ax-dash-grid {
+  gap: var(--ax-space-4);
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   13 · STANDALONE / NO-SHELL pages (auth, error, coming-soon, lock)
+   Center their content on the canvas; the shell partials are simply absent.
+   ════════════════════════════════════════════════════════════════════════ */
+.ax-standalone {
+  position: relative;
+  z-index: 1;
+  min-block-size: 100vh;
+  display: grid;
+  place-items: center;
+  padding: var(--ax-space-6);
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   14 · PAGE LOADER  [data-ax-loader] (visual owned by components; base hides
+   it on load and respects the off setting + reduced motion)
+   ════════════════════════════════════════════════════════════════════════ */
+.ax-loader {
+  position: fixed;
+  inset: 0;
+  z-index: var(--ax-z-customizer);
+  display: grid;
+  place-items: center;
+  background: var(--ax-canvas);
+  transition: opacity var(--ax-motion-slow) var(--ax-ease-exit);
+}
+.ax-loader.is-hidden {
+  opacity: 0;
+  pointer-events: none;
+  visibility: hidden;
+}
+[data-ax-loader='off'] .ax-loader {
+  display: none;
+}
