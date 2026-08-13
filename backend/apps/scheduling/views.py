@@ -100,17 +100,30 @@ class CenterAppointmentListCreateView(
         params = self.request.query_params
         raw_date = params.get("date")
         if raw_date:
-            day = parse_date(raw_date)
+            # parse_date returns None on a malformed string but RAISES
+            # ValueError on a well-formed impossible date (« 2026-02-30 »)
+            # — both are the caller's typo, both answer the same 400
+            # (revue adversariale vague 1: the ValueError was a 500).
+            try:
+                day = parse_date(raw_date)
+            except ValueError:
+                day = None
             if day is None:
                 raise ValidationError({"date": ["Format attendu : AAAA-MM-JJ."]})
         else:
             day = timezone.localdate()
         day_start = timezone.make_aware(datetime.combine(day, time.min))
+        try:
+            day_end = day_start + timedelta(days=1)
+        except OverflowError:
+            # « 9999-12-31 » : la borne haute du jour n'existe pas dans le
+            # calendrier Python — journée vide, jamais un 500.
+            raise ValidationError({"date": ["Date hors limites."]})
         qs = (
             Appointment.objects.for_center(self.center)
             .filter(
                 scheduled_at__gte=day_start,
-                scheduled_at__lt=day_start + timedelta(days=1),
+                scheduled_at__lt=day_end,
             )
             .select_related("patient", "practitioner__user")
         )

@@ -24,3 +24,10 @@ Nouvelle app `apps.scheduling`, un seul modèle `Appointment` :
 - La file du jour n'est PAS un endpoint séparé : `GET ?date=` (défaut aujourd'hui) triée `scheduled_at` EST la file.
 - Phase 2 (« optimisation d'activité ») pourra s'appuyer sur `manque`/`honore` pour les relances et les taux d'affluence sans migration : les statuts finaux sont déjà là.
 - Un RDV créé pour « demain » APRÈS le passage de 18h n'est pas rappelé (assumé, simple d'abord).
+
+## Durcissements (revue adversariale vague 1, 2026-08-13)
+
+- **Transitions et déplacement sérialisés sur la ligne** : `_transition` et `move_appointment` relisent le RDV sous `select_for_update` — deux actions concurrentes (annuler vs honorer, déplacer vs check-in) ne passent plus toutes les deux la vérification de légalité ; le perdant relit l'état du vainqueur et reçoit le 400 propre.
+- **Fenêtre de réservation bornée** (`MAX_BOOKING_HORIZON` = 2 ans) : au-delà c'est une coquille, et la borne éloigne `end_at`/fenêtres de chevauchement de `datetime.max` (un créneau fin 9999 provoquait des 500 `OverflowError`). `?date=` absorbe aussi les dates calendaires impossibles (« 2026-02-30 ») et hors limites (« 9999-12-31 ») en 400.
+- **Fusion de doublons** : `merge_profiles` ré-ancre désormais les RDV sur le profil canonique (comme les encounters) — un RDV laissé sur le tombstone enverrait le rappel J-1 au téléphone déclaratif du doublon et deviendrait inhonorable via la création d'encounter.
+- Campagne de régression : `tests/test_adversarial_scheduling_wave1.py`.

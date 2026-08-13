@@ -42,15 +42,24 @@ def _is_last_active_director(membership):
 
     Shared guard: losing the last director (by deactivation OR by demotion
     to another role) would lock the tenant out of its own space.
+
+    The active director rows are locked ``FOR UPDATE`` in pk order (revue
+    adversariale vague 1): two concurrent demotions/deactivations each saw
+    « the other director is still there » and BOTH passed, leaving the
+    center with zero directors. Ordered row locks serialise the guards —
+    the second transaction re-reads after the first commits (Postgres
+    re-evaluates the WHERE on locked rows) and correctly refuses. Callers
+    are all ``transaction.atomic``.
     """
     if membership.role != StaffMembership.Role.DIRECTOR:
         return False
-    return not (
+    directors = list(
         StaffMembership.objects.for_center(membership.center)
         .filter(role=StaffMembership.Role.DIRECTOR, is_active=True)
-        .exclude(pk=membership.pk)
-        .exists()
+        .order_by("pk")
+        .select_for_update()
     )
+    return all(director.pk == membership.pk for director in directors)
 
 
 @transaction.atomic

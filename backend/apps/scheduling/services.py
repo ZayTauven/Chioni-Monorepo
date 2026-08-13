@@ -48,15 +48,27 @@ TRANSITIONS = {
 #: Booking « maintenant » at the desk must not race the clock.
 PAST_TOLERANCE = timedelta(minutes=5)
 
+#: Upper bound of the booking window (revue adversariale vague 1). Beyond
+#: two years a slot is a typo, and the bound keeps every datetime
+#: computation derived from ``scheduled_at`` (``end_at``, overlap windows,
+#: day filters) far away from ``datetime.max`` — an un-bounded year-9999
+#: slot turned those additions into OverflowError 500s.
+MAX_BOOKING_HORIZON = timedelta(days=730)
+
 #: Sentinel for move_appointment: distinguishes « not provided » from None
 #: (None is a meaningful value for ``practitioner`` — detach it).
 UNCHANGED = object()
 
 
-def _check_not_in_past(scheduled_at):
-    if scheduled_at < timezone.now() - PAST_TOLERANCE:
+def _check_bookable_window(scheduled_at):
+    now = timezone.now()
+    if scheduled_at < now - PAST_TOLERANCE:
         raise ValidationError(
             "Impossible de programmer un rendez-vous dans le passé."
+        )
+    if scheduled_at > now + MAX_BOOKING_HORIZON:
+        raise ValidationError(
+            "Impossible de programmer un rendez-vous à plus de deux ans."
         )
 
 
@@ -118,7 +130,7 @@ def create_appointment(
     center's perimeter and ``practitioner`` among the center's active
     memberships (400 explicite otherwise) — re-checked here for direct
     service callers."""
-    _check_not_in_past(scheduled_at)
+    _check_bookable_window(scheduled_at)
     _check_practitioner(practitioner, center)
     return Appointment.objects.create(
         center=center,
@@ -147,14 +159,20 @@ def move_appointment(
     exists, so the appointment becomes re-eligible for the J-1 reminder if
     its new slot is « tomorrow » at the next 18:00 run (documented on the
     model field).
+
+    The row is re-read under ``select_for_update`` (revue adversariale
+    vague 1): the « still ``prevu`` » check must hold at COMMIT time, not
+    at read time — otherwise a move racing a check-in/cancel would edit an
+    appointment that is no longer editable.
     """
+    appointment = Appointment.objects.select_for_update().get(pk=appointment.pk)
     if appointment.status != Status.SCHEDULED:
         raise ValidationError(
             "Seul un rendez-vous encore prévu peut être modifié."
         )
     update_fields = {"updated_at"}
     if scheduled_at is not UNCHANGED and scheduled_at != appointment.scheduled_at:
-        _check_not_in_past(scheduled_at)
+        _check_bookable_window(scheduled_at)
         appointment.scheduled_at = scheduled_at
         appointment.reminder_sent_at = None
         update_fields.update({"scheduled_at", "reminder_sent_at"})
@@ -173,13 +191,23 @@ def move_appointment(
 
 
 def _transition(appointment, target):
-    if target not in TRANSITIONS[appointment.status]:
+    """One state-machine step, serialised on the ROW (revue adversariale
+    vague 1): the status is re-read under ``select_for_update`` so two
+    concurrent actions (cancel vs honor, check-in vs cancel…) can never
+    both pass the legality check — the loser re-reads the winner's state
+    and gets the clean French 400. Every caller is ``transaction.atomic``.
+    """
+    locked = Appointment.objects.select_for_update().get(pk=appointment.pk)
+    if target not in TRANSITIONS[locked.status]:
         raise ValidationError(
             f"Transition impossible : ce rendez-vous est "
-            f"« {appointment.get_status_display()} »."
+            f"« {locked.get_status_display()} »."
         )
-    appointment.status = target
-    appointment.save(update_fields=["status", "updated_at"])
+    locked.status = target
+    locked.save(update_fields=["status", "updated_at"])
+    # Keep the caller's instance coherent (views serialise it).
+    appointment.status = locked.status
+    appointment.updated_at = locked.updated_at
     return appointment
 
 

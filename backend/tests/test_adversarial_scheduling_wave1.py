@@ -1,8 +1,34 @@
-"""PROBES EXPLORATOIRES (revue adversariale vague 1) — fichier TEMPORAIRE.
+"""Campagne adversariale — lot « Gâter les centres » vague 1 (scheduling,
+uploads, rôles). Conservée en RÉGRESSION, comme test_hardening.py et
+test_adversarial_api_recheck.py.
 
-Chaque test encode le comportement ATTENDU (sûr). Un échec ici = faille
-confirmée à corriger. Les probes retenues seront déplacées dans une
-campagne de régression pérenne, ce fichier sera supprimé.
+Failles CONFIRMÉES puis corrigées, verrouillées ici :
+
+1. **Fusion de doublons ↛ rendez-vous** : `merge_profiles` laissait les RDV
+   sur le tombstone absorbé — rappel J-1 envoyé au téléphone déclaratif du
+   doublon (potentiellement un tiers), RDV inhonorable via la création
+   d'encounter. Correctif : ré-ancrage sur le profil canonique (étape 2 bis).
+2. **500 sur les bornes temporelles** : `?date=2026-02-30` (ValueError de
+   parse_date), `?date=9999-12-31` (OverflowError sur la borne du jour),
+   créneau fin-9999 (OverflowError sur `end_at`/fenêtre d'overlap).
+   Correctifs : parsing défensif dans la vue + `MAX_BOOKING_HORIZON` (2 ans)
+   dans le service.
+3. **Machine à états non sérialisée** : deux transitions concurrentes
+   (annuler vs honorer) passaient toutes deux la vérification de légalité
+   sur leur instance mémoire. Correctif : relecture `select_for_update`
+   dans `_transition` et `move_appointment`.
+4. **Garde « dernier directeur » contournable par la course** : deux
+   rétrogradations croisées simultanées voyaient chacune « l'autre
+   directeur est encore là » → centre sans directeur. Correctif : verrous
+   FOR UPDATE ordonnés sur les lignes directeur dans
+   `_is_last_active_director` (couvre aussi la désactivation).
+
+Attaques ÉCARTÉES par preuve d'exécution, épinglées ici contre toute
+régression : IDOR 404 sur les 4 actions de transition, filtre
+`?practitioner=` étranger sans fuite, id géant sur le paramètre
+`appointment` du POST encounters (pas de 500), payload traînant derrière
+un JPEG éliminé par le ré-encodage, bombe de décompression PNG (en-tête
+forgé 60000²) refusée sur l'en-tête.
 """
 
 import struct
@@ -21,13 +47,12 @@ from PIL import Image
 from apps.centers.models import StaffMembership
 from apps.centers.services import update_staff_member
 from apps.common.uploads import process_image_upload
-from apps.medical.models import Encounter
 from apps.patients.services import merge_profiles
 from apps.scheduling.models import Appointment
 from apps.scheduling.services import cancel_appointment, honor_appointment
 
 from .api_helpers import Role, client_for, make_center_with_director, make_staff_user
-from .factories import make_appointment, make_patient, make_staff, make_user
+from .factories import make_appointment, make_patient, make_staff
 
 pytestmark = pytest.mark.django_db
 
@@ -65,7 +90,7 @@ class TestMergeMovesAppointments:
 
 
 # ---------------------------------------------------------------------------
-# 2-4. Robustesse des bornes temporelles (500 attendus aujourd'hui ?)
+# 2. Bornes temporelles — jamais un 500 sur une date adverse
 # ---------------------------------------------------------------------------
 
 
@@ -93,6 +118,35 @@ class TestTemporalBounds:
         )
         assert response.status_code == 400
 
+    def test_booking_beyond_the_horizon_is_an_explicit_400(self):
+        patient = make_patient(created_by_center=self.center)
+        in_three_years = (timezone.now() + timedelta(days=1095)).isoformat()
+        response = self.client.post(
+            self.url,
+            {"patient": patient.pk, "scheduled_at": in_three_years},
+            format="json",
+        )
+        assert response.status_code == 400
+        assert "plus de deux ans" in str(response.data)
+
+    def test_booking_late_9999_with_long_duration_is_not_500(self):
+        # Pré-correctif : l'entrée passait la conversion DRF (année 9999
+        # valide) puis `end_at`/la fenêtre d'overlap débordaient datetime.max
+        # → OverflowError 500 au rendu de la réponse.
+        practitioner = make_staff(center=self.center)
+        patient = make_patient(created_by_center=self.center)
+        response = self.client.post(
+            self.url,
+            {
+                "patient": patient.pk,
+                "practitioner": practitioner.pk,
+                "scheduled_at": "9999-12-31T18:00:00Z",
+                "duration_minutes": 480,
+            },
+            format="json",
+        )
+        assert response.status_code == 400
+
     def test_huge_appointment_id_on_encounter_is_not_500(self):
         doctor = make_staff_user(self.center, role=Role.DOCTOR)
         patient = make_patient(created_by_center=self.center)
@@ -109,7 +163,7 @@ class TestTemporalBounds:
 
 
 # ---------------------------------------------------------------------------
-# 5. IDOR sur les actions de transition + filtre practitioner étranger
+# 3. IDOR épinglés — actions de transition et filtre practitioner
 # ---------------------------------------------------------------------------
 
 
@@ -146,7 +200,7 @@ class TestIdorPins:
 
 
 # ---------------------------------------------------------------------------
-# 6. Concurrence — machine à états et garde dernier directeur
+# 4. Concurrence — machine à états et garde dernier directeur
 # ---------------------------------------------------------------------------
 
 
@@ -156,12 +210,17 @@ class TestConcurrency:
         appointment = make_appointment(status=Status.ARRIVED)
         barrier = threading.Barrier(2, timeout=10)
         outcomes = []
+        # Chaque thread part d'une instance DÉJÀ chargée (état « arrive »
+        # des deux côtés) : la légalité doit être re-vérifiée sous verrou à
+        # l'écriture, jamais sur l'instance mémoire.
+        instances = [
+            Appointment.objects.get(pk=appointment.pk) for _ in range(2)
+        ]
 
-        def attempt(service):
+        def attempt(service, instance):
             try:
                 barrier.wait()
-                fresh = Appointment.objects.get(pk=appointment.pk)
-                service(appointment=fresh)
+                service(appointment=instance)
                 outcomes.append("ok")
             except ValidationError:
                 outcomes.append("refused")
@@ -169,8 +228,10 @@ class TestConcurrency:
                 connections.close_all()
 
         threads = [
-            threading.Thread(target=attempt, args=(service,))
-            for service in (cancel_appointment, honor_appointment)
+            threading.Thread(target=attempt, args=(service, instance))
+            for service, instance in zip(
+                (cancel_appointment, honor_appointment), instances
+            )
         ]
         for thread in threads:
             thread.start()
@@ -180,6 +241,8 @@ class TestConcurrency:
             "Deux transitions concurrentes depuis « arrive » doivent être "
             "sérialisées : un seul vainqueur, l'autre voit l'état terminal."
         )
+        appointment.refresh_from_db()
+        assert appointment.status in (Status.HONORED, Status.CANCELLED)
 
     @pytest.mark.django_db(transaction=True)
     def test_concurrent_mutual_demotion_keeps_one_director(self):
@@ -200,7 +263,7 @@ class TestConcurrency:
                     role=StaffMembership.Role.SECRETARY,
                 )
                 outcomes.append("ok")
-            except Exception:
+            except ValidationError:
                 outcomes.append("refused")
             finally:
                 connections.close_all()
@@ -213,19 +276,23 @@ class TestConcurrency:
             thread.start()
         for thread in threads:
             thread.join(timeout=15)
+        assert sorted(outcomes) == ["ok", "refused"], (
+            f"outcomes={outcomes} : les deux rétrogradations croisées doivent "
+            "être sérialisées par la garde (un seul vainqueur)."
+        )
         remaining = StaffMembership.objects.filter(
             center=center,
             role=StaffMembership.Role.DIRECTOR,
             is_active=True,
         ).count()
-        assert remaining >= 1, (
+        assert remaining == 1, (
             f"outcomes={outcomes} : deux rétrogradations croisées simultanées "
             "ne doivent JAMAIS laisser le centre sans directeur actif."
         )
 
 
 # ---------------------------------------------------------------------------
-# 7. Pipeline upload — payload traînant et bombe déclarée
+# 5. Pipeline upload — payload traînant et bombe déclarée
 # ---------------------------------------------------------------------------
 
 
@@ -260,22 +327,3 @@ class TestUploadHardening:
         upload = SimpleUploadedFile("bomb.png", png, content_type="image/png")
         with pytest.raises(ValidationError):
             process_image_upload(upload)
-
-
-class TestEndOfTimeOverflow:
-    def test_booking_late_9999_with_long_duration_is_not_500(self):
-        center, _ = make_center_with_director()
-        secretary = make_staff_user(center, role=Role.SECRETARY)
-        practitioner = make_staff(center=center)
-        patient = make_patient(created_by_center=center)
-        response = client_for(secretary).post(
-            f"/api/v1/centers/{center.pk}/appointments/",
-            {
-                "patient": patient.pk,
-                "practitioner": practitioner.pk,
-                "scheduled_at": "9999-12-31T18:00:00Z",
-                "duration_minutes": 480,
-            },
-            format="json",
-        )
-        assert response.status_code == 400
