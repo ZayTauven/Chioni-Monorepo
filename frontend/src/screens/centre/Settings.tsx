@@ -2,15 +2,19 @@
 /*
  * Chioni — /centre/parametres : le centre lui-même.
  *
- * Infos du centre (édition directeur seul, PATCH /centers/{pk}/), badge KYC
- * expliqué (vérification par l'équipe Chioni, statut read-only), et rappel du
+ * Infos du centre (édition directeur seul, PATCH /centers/{pk}/), logo du
+ * centre (directeur seul — multipart `file`, JPEG/PNG/WebP ≤ 2 Mo, jamais via
+ * le PATCH JSON), badge KYC expliqué (statut read-only), et rappel du
  * sélecteur de centre pour les comptes multi-centres (déjà dans l'en-tête).
+ * Après upload/suppression du logo, /auth/me/ est rafraîchi pour que la
+ * sidebar l'affiche sans rechargement.
  */
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { PageHead } from '@/components/shell/PageHead';
+import { useAuth } from '@/context/AuthContext';
 import { useCenter } from '@/context/CenterContext';
 import type { ApiError } from '@/lib/api';
-import { getCenter, updateCenter } from '@/lib/endpoints/centers';
+import { deleteCenterLogo, getCenter, updateCenter, uploadCenterLogo } from '@/lib/endpoints/centers';
 import {
   CENTER_TYPE_LABELS,
   ISLAND_LABELS,
@@ -30,6 +34,131 @@ import {
   toApiError,
   useAsync,
 } from './shared';
+
+/* ── logo du centre (directeur seul) ── */
+
+function LogoCard({
+  center,
+  isDirector,
+  onLogoChanged,
+}: {
+  center: HealthCenter;
+  isDirector: boolean;
+  onLogoChanged: (logo: string | null) => void;
+}) {
+  const { refreshMe } = useAuth();
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<ApiError | null>(null);
+
+  const afterChange = async (logo: string | null) => {
+    onLogoChanged(logo);
+    try {
+      await refreshMe(); // la sidebar lit le logo depuis /auth/me/
+    } catch {
+      /* la session est gérée par le garde d'auth */
+    }
+  };
+
+  const onFile = async (file: File | null) => {
+    if (!file) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await uploadCenterLogo(center.id, file);
+      await afterChange(res.logo);
+    } catch (err) {
+      setError(toApiError(err));
+    } finally {
+      setBusy(false);
+      if (inputRef.current) inputRef.current.value = '';
+    }
+  };
+
+  const onDelete = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await deleteCenterLogo(center.id);
+      await afterChange(null);
+    } catch (err) {
+      setError(toApiError(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section className="ax-card" role="region" aria-label="Logo du centre">
+      <div className="ax-card__header">
+        <div className="ax-card__titles">
+          <h2 className="ax-card__title">Logo</h2>
+          <p className="ax-card__subtitle">
+            {isDirector
+              ? 'Affiché dans la barre latérale et sur les documents du centre.'
+              : 'Modification réservée au directeur.'}
+          </p>
+        </div>
+      </div>
+      <div className="ax-card__body" style={{ paddingTop: 0, display: 'flex', flexDirection: 'column', gap: 'var(--ax-space-4)' }}>
+        {error && <ErrorAlert error={error} />}
+
+        <div className="ax-cluster" style={{ gap: 'var(--ax-space-4)', flexWrap: 'wrap', alignItems: 'center' }}>
+          {center.logo ? (
+            // eslint-disable-next-line @next/next/no-img-element -- API media URL, no Next loader configured
+            <img
+              src={center.logo}
+              alt={`Logo de ${center.name}`}
+              width={72}
+              height={72}
+              style={{ width: 72, height: 72, borderRadius: 'var(--ax-radius-md)', objectFit: 'cover', border: '1px solid var(--ax-border)' }}
+            />
+          ) : (
+            <span
+              aria-hidden="true"
+              style={{ width: 72, height: 72, borderRadius: 'var(--ax-radius-md)', border: '1px dashed var(--ax-border-strong)', display: 'inline-grid', placeItems: 'center', color: 'var(--ax-text-subtle)', fontSize: 'var(--ax-text-2xs)' }}
+            >
+              Aucun logo
+            </span>
+          )}
+
+          {isDirector && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--ax-space-2)' }}>
+              <input
+                ref={inputRef}
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                style={{ display: 'none' }}
+                onChange={(e) => void onFile(e.target.files?.[0] ?? null)}
+                aria-label="Choisir un fichier de logo"
+              />
+              <div className="ax-cluster" style={{ gap: 'var(--ax-space-2)' }}>
+                <button
+                  type="button"
+                  className="ax-btn ax-btn--secondary ax-btn--sm"
+                  onClick={() => inputRef.current?.click()}
+                  disabled={busy}
+                >
+                  <span className="ax-btn__label">
+                    {busy ? 'Envoi…' : center.logo ? 'Remplacer le logo' : 'Ajouter un logo'}
+                  </span>
+                </button>
+                {center.logo && (
+                  <button type="button" className="ax-btn ax-btn--ghost ax-btn--sm" onClick={() => void onDelete()} disabled={busy}>
+                    <span className="ax-btn__label">Supprimer</span>
+                  </button>
+                )}
+              </div>
+              <span style={{ fontSize: 'var(--ax-text-xs)', color: 'var(--ax-text-subtle)' }}>
+                JPEG, PNG ou WebP — 2 Mo maximum.
+              </span>
+            </div>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}
 
 function CenterForm({
   center,
@@ -231,6 +360,14 @@ export function Settings() {
         </section>
 
         <div className="ax-col--5" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--ax-space-6)' }}>
+          {center && (
+            <LogoCard
+              center={center}
+              isDirector={isDirector}
+              onLogoChanged={(logo) => setPatched({ ...center, logo })}
+            />
+          )}
+
           <section className="ax-card" role="region" aria-label="Vérification du centre">
             <div className="ax-card__header">
               <div className="ax-card__titles">

@@ -7,6 +7,7 @@ Chioni numérise la gestion des centres de santé comoriens (hôpitaux, clinique
 **Document de référence : [docs/etude-des-besoins.md](docs/etude-des-besoins.md)** (v1.1, validé) — contexte, personas, les 3 portes d'onboarding, conception du Pont de Confiance, périmètre MVP, risques. Le lire avant toute décision produit ou d'architecture.
 
 Deux lignes produit à garder en tête en permanence :
+
 1. **« Aider mieux », jamais surveiller** — la dignité de tous les acteurs est une contrainte de conception.
 2. **Les centres de santé sont le fond de commerce** (modèle retenu : abonnement SaaS par centre ; gratuit pour patients et tuteurs). Les gâter en fonctionnalités : gestion d'activité complète, optimisation, tableaux de bord. Le SaaS socle doit être si bon qu'un centre le garderait même sans le Pont de Confiance.
 
@@ -35,9 +36,9 @@ Chioni/
   - **683 tests verts** (`pytest` depuis `backend/`, ~55 s), dont 4 campagnes adversariales conservées en régression (`test_hardening.py`, `test_adversarial_api_recheck.py`, `test_adversarial_scheduling_wave1.py`). ADR 0001→0014 dans `docs/adr/`.
   - **Garde anti-double-débit** (revue guardian) : `create_payment_intent` refuse un nouvel intent tant qu'un intent `cree`/`en_cours` < `PSP_INTENT_GUARD_MINUTES` (défaut 15, borne basse refusée au boot) existe sur la même demande ; `pay/` concurrents sérialisés par le verrou de ligne (test 2 threads réels) ; admin des intents append-only. Exigences du futur `psp/stripe.py` actées dans l'addendum ADR 0009 (annuler l'intent périmé côté PSP, appel HTTP hors transaction, purge Celery des intents zombies).
   - **Chantier « Gâter les centres » vague 1 (backend)** — ADR 0013 & 0014 :
-    - *Rendez-vous & file du jour* (`apps/scheduling`) : `Appointment` (praticien nullable = RDV « avec le centre », invariant praticien-du-centre dans `save()`), machine à états `prevu → arrive → honore` / `manque` / `annule` pilotée par services (transitions sérialisées `select_for_update`), file du jour = `GET /centers/{c}/appointments/?date=` en heure locale `Indian/Comoro`, chevauchements signalés `overlaps` NON bloquants, passé refusé (5 min), horizon de réservation borné 2 ans, honor auto via `create_encounter(appointment=…)` (même centre + même patient, jamais de saut d'état, rollback complet). `reason` = champ OPÉRATIONNEL visible de tout le staff (distinct du clinique role-gaté — frontière documentée ADR 0013) ; pas d'AuditLog (RDV = exploitation non sensible). Rappels J-1 : beat `scheduling.send_appointment_reminders` (crontab 18h00 `CELERY_TIMEZONE`), SMS conforme ADR 0012 (ni motif, ni praticien, ni nom de centre), anti-doublon `reminder_sent_at` remis à NULL au déplacement. La fusion de doublons ré-ancre les RDV sur la cible (correctif guardian — sinon rappel vers le téléphone du doublon).
-    - *Uploads durcis* (`apps/common/uploads.py`, ADR 0014) : JPEG/PNG/WebP SEULS (jamais SVG), taille ≤ 2 Mo avant parsing, dimensions ≤ 2048² lues dans l'en-tête (anti-bombe), format RÉEL décodé par Pillow (extension/Content-Type client ignorés), ré-encodage complet strippant EXIF/GPS/ICC/XMP, nom stocké = uuid. Logo centre `POST|DELETE /centers/{pk}/logo/` (directeur seul, audité `center.updated`) exposé dans `HealthCenterSerializer` + `_CenterLabelSerializer` de `/auth/me/` ; avatar `POST|DELETE /auth/me/avatar/` (soi-même seul) exposé dans `MeSerializer` + annuaire staff UNIQUEMENT — jamais dans les vues croisées patient/tuteur. Remplacement sans orphelin (fichier précédent effacé du disque). Media servis par Django en DEBUG seulement.
-    - *Rôles enrichis* : `PATCH /centers/{c}/staff/{pk}/` (directeur seul, audité `staff.membership_updated`) — rôle d'un membership actif + identité SEULEMENT si compte « jamais revendiqué » (téléphone non vérifié ET mot de passe inutilisable) ; garde « dernier directeur » partagée rétrogradation/désactivation, verrouillée contre la course (`FOR UPDATE` ordonné — correctif guardian). `PATCH /auth/me/` : first/last name SEULS (phone/username ignorés, testé).
+    - _Rendez-vous & file du jour_ (`apps/scheduling`) : `Appointment` (praticien nullable = RDV « avec le centre », invariant praticien-du-centre dans `save()`), machine à états `prevu → arrive → honore` / `manque` / `annule` pilotée par services (transitions sérialisées `select_for_update`), file du jour = `GET /centers/{c}/appointments/?date=` en heure locale `Indian/Comoro`, chevauchements signalés `overlaps` NON bloquants, passé refusé (5 min), horizon de réservation borné 2 ans, honor auto via `create_encounter(appointment=…)` (même centre + même patient, jamais de saut d'état, rollback complet). `reason` = champ OPÉRATIONNEL visible de tout le staff (distinct du clinique role-gaté — frontière documentée ADR 0013) ; pas d'AuditLog (RDV = exploitation non sensible). Rappels J-1 : beat `scheduling.send_appointment_reminders` (crontab 18h00 `CELERY_TIMEZONE`), SMS conforme ADR 0012 (ni motif, ni praticien, ni nom de centre), anti-doublon `reminder_sent_at` remis à NULL au déplacement. La fusion de doublons ré-ancre les RDV sur la cible (correctif guardian — sinon rappel vers le téléphone du doublon).
+    - _Uploads durcis_ (`apps/common/uploads.py`, ADR 0014) : JPEG/PNG/WebP SEULS (jamais SVG), taille ≤ 2 Mo avant parsing, dimensions ≤ 2048² lues dans l'en-tête (anti-bombe), format RÉEL décodé par Pillow (extension/Content-Type client ignorés), ré-encodage complet strippant EXIF/GPS/ICC/XMP, nom stocké = uuid. Logo centre `POST|DELETE /centers/{pk}/logo/` (directeur seul, audité `center.updated`) exposé dans `HealthCenterSerializer` + `_CenterLabelSerializer` de `/auth/me/` ; avatar `POST|DELETE /auth/me/avatar/` (soi-même seul) exposé dans `MeSerializer` + annuaire staff UNIQUEMENT — jamais dans les vues croisées patient/tuteur. Remplacement sans orphelin (fichier précédent effacé du disque). Media servis par Django en DEBUG seulement.
+    - _Rôles enrichis_ : `PATCH /centers/{c}/staff/{pk}/` (directeur seul, audité `staff.membership_updated`) — rôle d'un membership actif + identité SEULEMENT si compte « jamais revendiqué » (téléphone non vérifié ET mot de passe inutilisable) ; garde « dernier directeur » partagée rétrogradation/désactivation, verrouillée contre la course (`FOR UPDATE` ordonné — correctif guardian). `PATCH /auth/me/` : first/last name SEULS (phone/username ignorés, testé).
   - **Outils dev** (DEBUG obligatoire) : `python manage.py simulate_psp_payment [--latest] [--fail]` rejoue le webhook PSP signé ; `python manage.py seed_demo` (idempotent, services uniquement) peuple la base de démo — Clinique Ylang KYC actif + staff (`directeur.demo`, `medecin.demo`, `secretaire.demo`, `caissier.demo`), patiente revendiquée `patient.demo` (+2693440001), `tuteur.demo` (lien actif + demande 20 000 KMF « à payer »), `tuteur2.demo` (lien en attente de confirmation du titulaire, obtenu par le VRAI flux porte A → revendication), mot de passe commun `ChioniDemo!2026`. En dev le code OTP s'affiche dans la console du runserver (logger `chioni.sms`, config LOGGING dans les settings).
 - **Frontend construit et branché — les 3 espaces sont démontrables** (`npm run build` vert, 35 routes, First Load ~101–118 kB). Élagage Vireo fait (~49 % supprimé ; tout reste repêchable dans `vireo template/`). Architecture : ADR 0011 ; contrat API condensé pour le frontend : `docs/frontend/api-contract.md`.
   - **Socle** : client API `src/lib/api.ts` (Bearer, refresh single-flight — le refresh SimpleJWT est à usage unique, normalisation des 3 formats d'erreurs DRF, `Retry-After`), types/endpoints par domaine (`src/lib/types.ts`, `src/lib/endpoints/`), libellés FR centralisés `src/lib/labels.ts` (enums, `formatKmf/Eur`, `formatWait`, `maskPhone` — point d'extraction i18n unique), `AuthContext` (+ déconnexion propagée entre onglets) et `CenterContext` (centre actif multi-centres), gardes client `RequireSpace` par layout d'espace.
@@ -51,6 +52,7 @@ Chioni/
 ## Stack et conventions
 
 ### Backend (Django)
+
 - Django 5 + Django REST Framework ; PostgreSQL ; Redis + Celery pour les tâches asynchrones (SMS, notifications, relances).
 - Base de dev locale (déjà créée) — à consommer via `.env` (jamais de secrets en dur dans le code ; ces valeurs sont locales uniquement, les environnements déployés auront les leurs) :
   ```env
@@ -67,11 +69,14 @@ Chioni/
 - Tests obligatoires sur : permissions/cloisonnement tenant, ledger, consentements.
 
 ### Frontend (Next.js / Vireo)
-- Toujours réutiliser les composants et tokens `--ax-*` de Vireo avant d'écrire du neuf. Écrans utiles déjà présents : dashboard `healthcare`, auth (`sign-in`, `two-step` → OTP), apps `calendar`/`contacts`/`chat`, tables, formulaires.
+
+- **Politique front-web design (actée par le product owner)** : exploiter les assets du template Vireo **en les adaptant aux besoins de Chioni, jamais coder en dur** ce qui existe dans le template (icônes, écrans, apps, widgets, patterns). Avant tout composant neuf : repêcher dans `vireo template/` (lecture seule — on copie vers `frontend/`). Le module web app **Calendar** de Vireo est la base attendue du module rendez-vous.
+- Toujours réutiliser les composants et tokens `--ax-*` de Vireo avant d'écrire du neuf. Écrans utiles déjà présents : dashboard `healthcare`, auth (`sign-in`, `two-step` → OTP), apps `calendar`/`contacts`/`chat`, tables, formulaires, profile, HRM etc.
 - Trois espaces : centre/médical (dashboard riche), patient & tuteur (parcours simplifiés, mobile-first, littératie numérique faible), site vitrine (landing).
 - Exigences UX non négociables : mobile-first sur Android d'entrée de gamme, pages légères (faible connectivité aux Comores), vocabulaire simple sans jargon, accessibilité (contrastes, tailles de touche).
 
 ### Principes transverses
+
 - Secret médical : le tuteur qui paie ne voit PAS le dossier médical par défaut — uniquement demandes de paiement, montants, nature générique de l'acte, reçus. Tout accès élargi = consentement explicite, tracé, révocable.
 - RGPD dès la conception (les tuteurs sont résidents UE) : minimisation, consentements, droit d'effacement.
 - Le module paiement est une abstraction PSP (**Stripe retenu** côté diaspora) ; le ledger interne en double entrée fait foi. Conversion EUR→KMF transparente : taux affiché avant paiement, figé à la transaction, reçu en double devise, chaque écriture du ledger porte sa devise et le taux appliqué.
@@ -80,18 +85,20 @@ Chioni/
 ## Stack Claude du projet
 
 ### Agents projet (`.claude/agents/`)
+
 - **chioni-django-architect** — conception et implémentation backend (modèles, DRF, multi-tenant, ledger, permissions).
 - **chioni-vireo-frontend** — construction du frontend en exploitant le template Vireo.
 - **chioni-health-data-guardian** — revue adversariale de tout code touchant l'argent, les données médicales ou les consentements. À lancer après chaque feature sensible.
 - **chioni-ux-care** — revue « soin et attention » des parcours utilisateurs (simplicité, mobile-first, accessibilité, ton).
 
 ### Skills globaux à utiliser selon la tâche
-| Tâche | Skill(s) |
-|---|---|
-| Backend Django / DRF / ORM | `django-expert`, `django-patterns` |
-| Sécurité Django (auth, permissions, déploiement) | `django-security` |
-| Next.js App Router, RSC, server actions | `nextjs-developer` |
-| Design UI/UX, palettes, typographie, guidelines | `ui-ux-pro-max`, `frontend-design` |
-| Audit d'accessibilité / bonnes pratiques web | `web-design-guidelines` |
-| Graphiques et dashboards | `dataviz` |
-| Revue de code / sécurité avant merge | `code-review`, `security-review`, `simplify` |
+
+| Tâche                                            | Skill(s)                                     |
+| ------------------------------------------------ | -------------------------------------------- |
+| Backend Django / DRF / ORM                       | `django-expert`, `django-patterns`           |
+| Sécurité Django (auth, permissions, déploiement) | `django-security`                            |
+| Next.js App Router, RSC, server actions          | `nextjs-developer`                           |
+| Design UI/UX, palettes, typographie, guidelines  | `ui-ux-pro-max`, `frontend-design`           |
+| Audit d'accessibilité / bonnes pratiques web     | `web-design-guidelines`                      |
+| Graphiques et dashboards                         | `dataviz`                                    |
+| Revue de code / sécurité avant merge             | `code-review`, `security-review`, `simplify` |

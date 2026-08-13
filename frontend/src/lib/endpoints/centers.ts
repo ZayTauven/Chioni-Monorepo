@@ -6,13 +6,22 @@
 
 import { apiFetch } from '../api';
 import type {
+  ActivityStats,
+  Appointment,
+  AppointmentStatus,
+  AppointmentWithOverlaps,
+  CashJournal,
+  CashMethod,
+  CashPayment,
   Dispute,
   EncounterAct,
   EncounterStatus,
+  FinanceStats,
   GenericCategory,
   GuardianLinkCenter,
   HealthCenter,
   Invoice,
+  MobileMoneyOperator,
   Paginated,
   Patient,
   PaymentRequestStaff,
@@ -25,6 +34,8 @@ import type {
   StaffMember,
   StaffRole,
   TariffItem,
+  UnpaidInvoice,
+  UnpaidOrdering,
 } from '../types';
 
 /**
@@ -64,6 +75,20 @@ export function updateCenter(
   payload: Partial<Pick<HealthCenter, 'name' | 'type' | 'island' | 'city' | 'address' | 'phone' | 'email'>>,
 ): Promise<HealthCenter> {
   return apiFetch(`/centers/${centerId}/`, { method: 'PATCH', body: payload });
+}
+
+/* ── center logo (director only — multipart, never via the JSON PATCH) ── */
+
+/** JPEG/PNG/WebP réels, 2 Mo max, 2048×2048 max — the backend re-validates. */
+export function uploadCenterLogo(centerId: number, file: File): Promise<{ logo: string }> {
+  const form = new FormData();
+  form.append('file', file);
+  return apiFetch(`/centers/${centerId}/logo/`, { method: 'POST', body: form });
+}
+
+/** 400 when there is no logo; the old file is physically deleted. */
+export function deleteCenterLogo(centerId: number): Promise<{ logo: null }> {
+  return apiFetch(`/centers/${centerId}/logo/`, { method: 'DELETE' });
 }
 
 /* ── patients ── */
@@ -195,6 +220,91 @@ export function createRecordEntry(
   });
 }
 
+/* ── appointments (day queue — every active staff member) ── */
+
+export interface AppointmentFilters {
+  /** "YYYY-MM-DD" — defaults to TODAY (Comoros local day) server-side. */
+  date?: string;
+  /** StaffMembership id. */
+  practitioner?: number;
+  status?: AppointmentStatus;
+  page?: number;
+}
+
+export function listAppointments(
+  centerId: number,
+  { date, practitioner, status, page = 1 }: AppointmentFilters = {},
+): Promise<Paginated<Appointment>> {
+  const query = new URLSearchParams({ page: String(page) });
+  if (date) query.set('date', date);
+  if (practitioner !== undefined) query.set('practitioner', String(practitioner));
+  if (status) query.set('status', status);
+  return apiFetch(`/centers/${centerId}/appointments/?${query.toString()}`);
+}
+
+export interface AppointmentCreatePayload {
+  patient: number;
+  scheduled_at: string;
+  /** 5–480, defaults to 20 server-side. */
+  duration_minutes?: number;
+  /** Null/absent = « rendez-vous avec le centre ». */
+  practitioner?: number | null;
+  reason?: string;
+}
+
+/** 201 — `overlaps` non-empty is a NON-blocking warning (the desk decides). */
+export function createAppointment(
+  centerId: number,
+  payload: AppointmentCreatePayload,
+): Promise<AppointmentWithOverlaps> {
+  return apiFetch(`/centers/${centerId}/appointments/`, { method: 'POST', body: payload });
+}
+
+export function getAppointment(centerId: number, id: number): Promise<Appointment> {
+  return apiFetch(`/centers/${centerId}/appointments/${id}/`);
+}
+
+export interface AppointmentUpdatePayload {
+  scheduled_at?: string;
+  duration_minutes?: number;
+  /** `null` explicitly detaches the practitioner. */
+  practitioner?: number | null;
+  reason?: string;
+}
+
+/** Move/edit — `prevu` only (400 otherwise). Re-arms the J-1 reminder. */
+export function updateAppointment(
+  centerId: number,
+  id: number,
+  payload: AppointmentUpdatePayload,
+): Promise<AppointmentWithOverlaps> {
+  return apiFetch(`/centers/${centerId}/appointments/${id}/`, { method: 'PATCH', body: payload });
+}
+
+function appointmentAction(centerId: number, id: number, action: string): Promise<Appointment> {
+  return apiFetch(`/centers/${centerId}/appointments/${id}/${action}/`, { method: 'POST' });
+}
+
+/** → `arrive`. */
+export function checkInAppointment(centerId: number, id: number): Promise<Appointment> {
+  return appointmentAction(centerId, id, 'check-in');
+}
+
+/** → `annule` (from `prevu` or `arrive`). */
+export function cancelAppointment(centerId: number, id: number): Promise<Appointment> {
+  return appointmentAction(centerId, id, 'cancel');
+}
+
+/** → `manque` (from `prevu`). */
+export function noShowAppointment(centerId: number, id: number): Promise<Appointment> {
+  return appointmentAction(centerId, id, 'no-show');
+}
+
+/** → `honore` (requires `arrive`). */
+export function honorAppointment(centerId: number, id: number): Promise<Appointment> {
+  return appointmentAction(centerId, id, 'honor');
+}
+
 /* ── invoices ── */
 
 export function listInvoices(centerId: number, page = 1): Promise<Paginated<Invoice>> {
@@ -214,6 +324,95 @@ export function createInvoice(
 
 export function issueInvoice(centerId: number, invoiceId: number): Promise<Invoice> {
   return apiFetch(`/centers/${centerId}/invoices/${invoiceId}/issue/`, { method: 'POST' });
+}
+
+/* ── caisse (ADR 0015 — BILLING roles) ── */
+
+export function listInvoicePayments(
+  centerId: number,
+  invoiceId: number,
+  page = 1,
+): Promise<Paginated<CashPayment>> {
+  return apiFetch(`/centers/${centerId}/invoices/${invoiceId}/payments/?page=${page}`);
+}
+
+export interface CashPaymentPayload {
+  /** `pont_confiance` is REFUSED at the desk (webhook only). */
+  method: Exclude<CashMethod, 'pont_confiance'>;
+  /** WHOLE KMF (decimals → 400). Sent as a string. */
+  amount_kmf: string;
+  /** Required by the backend when method is mobile money. */
+  operator?: MobileMoneyOperator;
+  reference?: string;
+}
+
+/** 201 with the counter receipt embedded. Never exceeds the remaining balance. */
+export function createInvoicePayment(
+  centerId: number,
+  invoiceId: number,
+  payload: CashPaymentPayload,
+): Promise<CashPayment> {
+  return apiFetch(`/centers/${centerId}/invoices/${invoiceId}/payments/`, {
+    method: 'POST',
+    body: payload,
+  });
+}
+
+/**
+ * Corrective entry — NEVER a deletion: one reversal max per cash-in, reason
+ * mandatory, `pont_confiance` never reversible at the desk (→ dispute).
+ */
+export function reverseInvoicePayment(
+  centerId: number,
+  invoiceId: number,
+  paymentId: number,
+  reason: string,
+): Promise<CashPayment> {
+  return apiFetch(`/centers/${centerId}/invoices/${invoiceId}/payments/${paymentId}/reverse/`, {
+    method: 'POST',
+    body: { reason },
+  });
+}
+
+/** Day journal — `date` defaults to today (Comoros local day) server-side. */
+export function getCashJournal(centerId: number, date?: string): Promise<CashJournal> {
+  const query = date ? `?date=${encodeURIComponent(date)}` : '';
+  return apiFetch(`/centers/${centerId}/cash-journal/${query}`);
+}
+
+/** Issued invoices with balance > 0 — the raw material of future reminders. */
+export function listUnpaidInvoices(
+  centerId: number,
+  { ordering = '-balance', page = 1 }: { ordering?: UnpaidOrdering; page?: number } = {},
+): Promise<Paginated<UnpaidInvoice>> {
+  const query = new URLSearchParams({ page: String(page), ordering });
+  return apiFetch(`/centers/${centerId}/invoices/unpaid/?${query.toString()}`);
+}
+
+/* ── pilotage (vague 2b — read-only stats) ── */
+
+export interface StatsWindow {
+  /** "YYYY-MM-DD" — defaults: to = today, from = to − 29 j (max 366 j). */
+  from?: string;
+  to?: string;
+}
+
+function statsQuery({ from, to }: StatsWindow): string {
+  const query = new URLSearchParams();
+  if (from) query.set('from', from);
+  if (to) query.set('to', to);
+  const s = query.toString();
+  return s ? `?${s}` : '';
+}
+
+/** Every active staff member. */
+export function getActivityStats(centerId: number, window: StatsWindow = {}): Promise<ActivityStats> {
+  return apiFetch(`/centers/${centerId}/stats/activity/${statsQuery(window)}`);
+}
+
+/** BILLING roles only — clinical roles get a 403 (exploitation view). */
+export function getFinanceStats(centerId: number, window: StatsWindow = {}): Promise<FinanceStats> {
+  return apiFetch(`/centers/${centerId}/stats/finances/${statsQuery(window)}`);
 }
 
 /* ── payment requests ── */
@@ -311,6 +510,26 @@ export function createStaff(centerId: number, payload: StaffPayload): Promise<St
 
 export function deactivateStaff(centerId: number, staffId: number): Promise<StaffMember> {
   return apiFetch(`/centers/${centerId}/staff/${staffId}/deactivate/`, { method: 'POST' });
+}
+
+export interface StaffUpdatePayload {
+  role?: StaffRole;
+  /** Writable ONLY while the account is a never-claimed shadow account. */
+  first_name?: string;
+  last_name?: string;
+}
+
+/**
+ * Director only. Explicit 400s: inactive membership, role already held,
+ * demotion of the last active director, activated account (identity is then
+ * the person's own via PATCH /auth/me/).
+ */
+export function updateStaff(
+  centerId: number,
+  staffId: number,
+  payload: StaffUpdatePayload,
+): Promise<StaffMember> {
+  return apiFetch(`/centers/${centerId}/staff/${staffId}/`, { method: 'PATCH', body: payload });
 }
 
 /* ── tariffs (director, cashier) ── */

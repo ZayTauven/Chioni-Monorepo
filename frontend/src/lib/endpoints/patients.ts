@@ -8,6 +8,7 @@ import type {
   Encounter,
   GuardianLinkPatient,
   Paginated,
+  PatientCashReceipt,
   PatientMe,
   PaymentRequestPatient,
   Prescription,
@@ -145,4 +146,12 @@ export function disputePaymentRequest(id: number, reason: string): Promise<Payme
 
 export function listReceipts(page = 1): Promise<Paginated<Receipt>> {
   return apiFetch(`/patients/me/receipts/?page=${page}`);
+}
+
+/**
+ * The patient's counter receipts (pure KMF, all centers). Guardians NEVER see
+ * these — their `paiements` scope covers shared payment requests only.
+ */
+export function listCashReceipts(page = 1): Promise<Paginated<PatientCashReceipt>> {
+  return apiFetch(`/patients/me/cash-receipts/?page=${page}`);
 }

@@ -21,6 +21,7 @@ import {
   type NavNode,
 } from '../../lib/manifest';
 import { Icon } from '../ui/Icon';
+import { useCenter } from '@/context/CenterContext';
 
 function Badge({ badge }: { badge: NavNode['badge'] }) {
   if (!badge) return null;
@@ -71,7 +72,6 @@ function TopLeaf({ node, activeSlug, filter }: { node: NavNode; activeSlug: stri
       aria-level={1}
       aria-current={isActive ? 'page' : undefined}
       href={hrefForSlug(resolved.slug)}
-      tabIndex={isActive ? 0 : -1}
     >
       <Icon name={node.icon} className="ax-nav__icon" />
       <span className="ax-nav__label">{node.title}</span>
@@ -94,7 +94,6 @@ function Leaf({ node, level, activeSlug, filter }: LeafProps) {
       aria-level={level}
       aria-current={isActive ? 'page' : undefined}
       href={hrefForSlug(resolved.slug)}
-      tabIndex={isActive ? 0 : -1}
     >
       <span className="ax-nav__bar" aria-hidden="true"></span>
       <span className="ax-nav__label">{node.title}</span>
@@ -137,7 +136,6 @@ function Group({ node, level, activeSlug, filter }: GroupProps) {
         aria-expanded={isOpen}
         data-ax-group={node.id}
         onClick={() => setOpen((o) => !o)}
-        tabIndex={containsActive ? 0 : -1}
       >
         {level === 1 && <Icon name={node.icon} className="ax-nav__icon" />}
         <span className="ax-nav__label">{node.title}</span>
@@ -174,6 +172,46 @@ function Group({ node, level, activeSlug, filter }: GroupProps) {
   );
 }
 
+/** Center identity under the brand — its logo when it has one (from /auth/me/). */
+function CenterIdentity() {
+  const { center } = useCenter();
+  return (
+    <div
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 'var(--ax-space-2)',
+        padding: 'var(--ax-space-2) var(--ax-space-4)',
+        minWidth: 0,
+      }}
+    >
+      {center.logo ? (
+        // eslint-disable-next-line @next/next/no-img-element -- API media URL, no Next loader configured
+        <img
+          src={center.logo}
+          alt=""
+          width={28}
+          height={28}
+          style={{ width: 28, height: 28, borderRadius: 'var(--ax-radius-sm)', objectFit: 'cover', flex: '0 0 auto' }}
+        />
+      ) : (
+        <Icon name="building-hospital" className="ax-icon" style={{ inlineSize: 20, blockSize: 20, color: 'var(--ax-text-subtle)', flex: '0 0 auto' }} />
+      )}
+      <span
+        style={{
+          fontSize: 'var(--ax-text-xs)',
+          color: 'var(--ax-text-muted)',
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap',
+        }}
+      >
+        {center.name}
+      </span>
+    </div>
+  );
+}
+
 export function Sidebar() {
   const activeSlug = slugFromPath(usePathname() || '/');
   const [filter, setFilter] = useState('');
@@ -189,6 +227,9 @@ export function Sidebar() {
           <span className="ax-sidebar__wordmark">CHIONI</span>
         </Link>
       </div>
+
+      {/* ===== ACTIVE CENTER (logo + name) ===== */}
+      <CenterIdentity />
 
       {/* ===== MENU FILTER ===== */}
       <div className="ax-sidebar__search">
@@ -221,7 +262,7 @@ export function Sidebar() {
             type="button"
             className="ax-sidebar__filter-clear"
             onClick={() => setFilter('')}
-            aria-label="Clear filter"
+            aria-label="Effacer le filtre"
           >
             <svg
               className="ax-icon"
@@ -282,6 +323,7 @@ function sectionLabel(s: string): string {
   const map: Record<string, string> = {
     'TABLEAU DE BORD': 'Tableau de bord',
     'ACTIVITÉ': 'Activité',
+    'CAISSE': 'Caisse',
     'PONT DE CONFIANCE': 'Pont de Confiance',
     'GESTION': 'Gestion',
   };

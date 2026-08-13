@@ -7,6 +7,8 @@
  */
 
 import type {
+  AppointmentStatus,
+  CashMethod,
   CenterType,
   ClaimStatus,
   ConsentScope,
@@ -18,6 +20,7 @@ import type {
   InvoiceStatus,
   Island,
   KycStatus,
+  MobileMoneyOperator,
   PaymentIntentStatus,
   PaymentRequestStatus,
   PrescriptionStatus,
@@ -25,6 +28,7 @@ import type {
   Relationship,
   Sex,
   StaffRole,
+  UnpaidOrdering,
 } from './types';
 
 /* ── enum labels ── */
@@ -116,6 +120,50 @@ export const PAYMENT_INTENT_STATUS_LABELS: Record<PaymentIntentStatus, string> =
 export const DISPUTE_STATUS_LABELS: Record<DisputeStatus, string> = {
   ouvert: 'Ouvert',
   resolu: 'Résolu',
+};
+
+export const APPOINTMENT_STATUS_LABELS: Record<AppointmentStatus, string> = {
+  prevu: 'Prévu',
+  arrive: 'Arrivé',
+  honore: 'Honoré',
+  manque: 'Manqué',
+  annule: 'Annulé',
+};
+
+export const CASH_METHOD_LABELS: Record<CashMethod, string> = {
+  especes: 'Espèces',
+  mobile_money: 'Mobile money',
+  pont_confiance: 'Pont de Confiance',
+};
+
+/** Cash methods as the PATIENT reads them (counter receipts). */
+export const CASH_METHOD_PATIENT: Record<CashMethod, string> = {
+  especes: 'Payé en espèces',
+  mobile_money: 'Payé par mobile money',
+  pont_confiance: 'Payé par un proche',
+};
+
+/** Cash-in state as the CENTRE reads it (cash journal + invoice caisse). */
+export const CASH_PAYMENT_STATE_LABELS = {
+  encaisse: 'Encaissé',
+  contre_passe: 'Contre-passé',
+} as const;
+
+/** Reversed counter receipt as the PATIENT reads it — plain words, no
+    accounting jargon (« contre-passation » never reaches the patient). */
+export const CASH_RECEIPT_REVERSED_PATIENT = 'Annulé';
+
+export const MOBILE_OPERATOR_LABELS: Record<MobileMoneyOperator, string> = {
+  huri: 'Huri Money',
+  mvola: 'MVola',
+  autre: 'Autre opérateur',
+};
+
+export const UNPAID_ORDERING_LABELS: Record<UnpaidOrdering, string> = {
+  '-balance': 'Solde le plus élevé d’abord',
+  balance: 'Solde le plus faible d’abord',
+  '-age': 'Les plus anciennes d’abord',
+  age: 'Les plus récentes d’abord',
 };
 
 export const STAFF_ROLE_LABELS: Record<StaffRole, string> = {
@@ -255,6 +303,69 @@ export function formatDateTime(iso: string): string {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return iso;
   return DATE_TIME_FORMAT.format(date);
+}
+
+const TIME_FORMAT = new Intl.DateTimeFormat('fr-FR', { hour: '2-digit', minute: '2-digit' });
+const WEEKDAY_DATE_FORMAT = new Intl.DateTimeFormat('fr-FR', {
+  weekday: 'long',
+  day: 'numeric',
+  month: 'long',
+  year: 'numeric',
+});
+const SHORT_DATE_FORMAT = new Intl.DateTimeFormat('fr-FR', { day: '2-digit', month: '2-digit' });
+
+/** ISO datetime → "14:05" (the agenda's column). */
+export function formatTime(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return iso;
+  return TIME_FORMAT.format(date);
+}
+
+/** "2026-08-13" → "jeudi 13 août 2026" (day-navigation headers). */
+export function formatWeekdayDate(isoDate: string): string {
+  const date = new Date(`${isoDate}T12:00:00`);
+  if (Number.isNaN(date.getTime())) return isoDate;
+  return WEEKDAY_DATE_FORMAT.format(date);
+}
+
+/** "2026-08-13" → "13/08" (chart axis categories). */
+export function formatShortDate(isoDate: string): string {
+  const date = new Date(`${isoDate}T12:00:00`);
+  if (Number.isNaN(date.getTime())) return isoDate;
+  return SHORT_DATE_FORMAT.format(date);
+}
+
+/** Percentage string from the API ("66.7") → "66,7 %" ; null → "—". */
+export function formatPct(pct: string | null): string {
+  if (pct === null) return '—';
+  const value = Number.parseFloat(pct);
+  if (!Number.isFinite(value)) return '—';
+  return `${RATE_FORMAT_1.format(value)} %`;
+}
+
+const RATE_FORMAT_1 = new Intl.NumberFormat('fr-FR', {
+  minimumFractionDigits: 0,
+  maximumFractionDigits: 1,
+});
+
+/** Today's LOCAL calendar date as "YYYY-MM-DD" (feeds `?date=` params). */
+export function todayIsoDate(): string {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, '0');
+  const d = String(now.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+/** Shift a "YYYY-MM-DD" date by ±n days (local calendar, DST-safe at noon). */
+export function shiftIsoDate(isoDate: string, days: number): string {
+  const date = new Date(`${isoDate}T12:00:00`);
+  if (Number.isNaN(date.getTime())) return isoDate;
+  date.setDate(date.getDate() + days);
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
 }
 
 /**

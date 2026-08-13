@@ -2,20 +2,24 @@
   "$schema": "vireo-nav-manifest/v1",
   "meta": {
     "comment": "Chioni — navigation manifest of the CENTRE space only (patient and tuteur spaces use the lite tab bar, not this manifest). Same node contract as Vireo: {id,title,slug,icon,parent,section,order,badge,keywords,inMenu,alias}. Slugs include the 'centre/' prefix so hrefForSlug maps 1:1 to routes.",
-    "sections": ["TABLEAU DE BORD", "ACTIVITÉ", "PONT DE CONFIANCE", "GESTION"]
+    "sections": ["TABLEAU DE BORD", "ACTIVITÉ", "CAISSE", "PONT DE CONFIANCE", "GESTION"]
   },
   "nodes": [
-    { "id": "centre.overview", "title": "Vue d'ensemble", "slug": "centre", "icon": "layout-dashboard", "parent": null, "section": "TABLEAU DE BORD", "order": 1, "badge": null, "keywords": ["tableau de bord", "accueil", "vue d'ensemble", "activité", "kpi"], "inMenu": true, "alias": null },
+    { "id": "centre.overview", "title": "Vue d'ensemble", "slug": "centre", "icon": "layout-dashboard", "parent": null, "section": "TABLEAU DE BORD", "order": 1, "badge": null, "keywords": ["tableau de bord", "accueil", "vue d'ensemble", "activité", "kpi", "pilotage"], "inMenu": true, "alias": null },
 
-    { "id": "centre.patients", "title": "Patients", "slug": "centre/patients", "icon": "users", "parent": null, "section": "ACTIVITÉ", "order": 2, "badge": null, "keywords": ["patients", "registre", "dossiers", "recherche"], "inMenu": true, "alias": null },
-    { "id": "centre.consultations", "title": "Consultations", "slug": "centre/consultations", "icon": "stethoscope", "parent": null, "section": "ACTIVITÉ", "order": 3, "badge": null, "keywords": ["consultations", "soins", "diagnostic", "ordonnances", "actes"], "inMenu": true, "alias": null },
+    { "id": "centre.rendezvous", "title": "Rendez-vous", "slug": "centre/rendez-vous", "icon": "calendar", "parent": null, "section": "ACTIVITÉ", "order": 2, "badge": null, "keywords": ["rendez-vous", "agenda", "file du jour", "rdv", "arrivées", "planning"], "inMenu": true, "alias": null },
+    { "id": "centre.patients", "title": "Patients", "slug": "centre/patients", "icon": "users", "parent": null, "section": "ACTIVITÉ", "order": 3, "badge": null, "keywords": ["patients", "registre", "dossiers", "recherche"], "inMenu": true, "alias": null },
+    { "id": "centre.consultations", "title": "Consultations", "slug": "centre/consultations", "icon": "stethoscope", "parent": null, "section": "ACTIVITÉ", "order": 4, "badge": null, "keywords": ["consultations", "soins", "diagnostic", "ordonnances", "actes"], "inMenu": true, "alias": null },
 
-    { "id": "centre.factures", "title": "Factures", "slug": "centre/factures", "icon": "file-invoice", "parent": null, "section": "PONT DE CONFIANCE", "order": 4, "badge": null, "keywords": ["factures", "facturation", "lignes", "actes", "montants"], "inMenu": true, "alias": null },
-    { "id": "centre.demandes", "title": "Demandes de paiement", "slug": "centre/demandes", "icon": "heart-handshake", "parent": null, "section": "PONT DE CONFIANCE", "order": 5, "badge": null, "keywords": ["demandes de paiement", "pont de confiance", "diaspora", "partage", "tuteurs"], "inMenu": true, "alias": null },
-    { "id": "centre.litiges", "title": "Litiges", "slug": "centre/litiges", "icon": "scale", "parent": null, "section": "PONT DE CONFIANCE", "order": 6, "badge": null, "keywords": ["litiges", "contestations", "résolution"], "inMenu": true, "alias": null },
+    { "id": "centre.factures", "title": "Factures", "slug": "centre/factures", "icon": "file-invoice", "parent": null, "section": "CAISSE", "order": 5, "badge": null, "keywords": ["factures", "facturation", "lignes", "actes", "montants"], "inMenu": true, "alias": null },
+    { "id": "centre.caisse", "title": "Caisse du jour", "slug": "centre/caisse", "icon": "cash-banknote", "parent": null, "section": "CAISSE", "order": 6, "badge": null, "keywords": ["caisse", "journal", "encaissements", "espèces", "mobile money", "contre-passation"], "inMenu": true, "alias": null },
+    { "id": "centre.impayes", "title": "Impayés", "slug": "centre/impayes", "icon": "file-alert", "parent": null, "section": "CAISSE", "order": 7, "badge": null, "keywords": ["impayés", "solde", "relances", "dettes", "restant dû"], "inMenu": true, "alias": null },
 
-    { "id": "centre.tarifs", "title": "Tarifs", "slug": "centre/tarifs", "icon": "cash", "parent": null, "section": "GESTION", "order": 7, "badge": null, "keywords": ["tarifs", "prix", "actes", "catalogue", "kmf"], "inMenu": true, "alias": null },
-    { "id": "centre.personnel", "title": "Personnel", "slug": "centre/personnel", "icon": "users-group", "parent": null, "section": "GESTION", "order": 8, "badge": null, "keywords": ["personnel", "équipe", "rôles", "comptes", "staff"], "inMenu": true, "alias": null },
-    { "id": "centre.parametres", "title": "Mon centre", "slug": "centre/parametres", "icon": "building-hospital", "parent": null, "section": "GESTION", "order": 9, "badge": null, "keywords": ["mon centre", "paramètres", "coordonnées", "kyc", "établissement"], "inMenu": true, "alias": null }
+    { "id": "centre.demandes", "title": "Demandes de paiement", "slug": "centre/demandes", "icon": "heart-handshake", "parent": null, "section": "PONT DE CONFIANCE", "order": 8, "badge": null, "keywords": ["demandes de paiement", "pont de confiance", "diaspora", "partage", "tuteurs"], "inMenu": true, "alias": null },
+    { "id": "centre.litiges", "title": "Litiges", "slug": "centre/litiges", "icon": "scale", "parent": null, "section": "PONT DE CONFIANCE", "order": 9, "badge": null, "keywords": ["litiges", "contestations", "résolution"], "inMenu": true, "alias": null },
+
+    { "id": "centre.tarifs", "title": "Tarifs", "slug": "centre/tarifs", "icon": "cash", "parent": null, "section": "GESTION", "order": 10, "badge": null, "keywords": ["tarifs", "prix", "actes", "catalogue", "kmf"], "inMenu": true, "alias": null },
+    { "id": "centre.personnel", "title": "Personnel", "slug": "centre/personnel", "icon": "users-group", "parent": null, "section": "GESTION", "order": 11, "badge": null, "keywords": ["personnel", "équipe", "rôles", "comptes", "staff"], "inMenu": true, "alias": null },
+    { "id": "centre.parametres", "title": "Mon centre", "slug": "centre/parametres", "icon": "building-hospital", "parent": null, "section": "GESTION", "order": 12, "badge": null, "keywords": ["mon centre", "paramètres", "coordonnées", "kyc", "établissement", "logo"], "inMenu": true, "alias": null }
   ]
 }

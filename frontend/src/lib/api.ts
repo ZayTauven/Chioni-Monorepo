@@ -148,7 +148,10 @@ function redirectToSignIn(): void {
 async function rawFetch(path: string, options: ApiFetchOptions): Promise<Response> {
   const { method = 'GET', body, auth = true } = options;
   const headers: Record<string, string> = { Accept: 'application/json' };
-  if (body !== undefined) headers['Content-Type'] = 'application/json';
+  // Multipart uploads (avatar, center logo): pass the FormData through and let
+  // the browser set the Content-Type WITH its boundary.
+  const isForm = typeof FormData !== 'undefined' && body instanceof FormData;
+  if (body !== undefined && !isForm) headers['Content-Type'] = 'application/json';
   if (auth) {
     const access = getAccessToken();
     if (access) headers.Authorization = `Bearer ${access}`;
@@ -156,7 +159,7 @@ async function rawFetch(path: string, options: ApiFetchOptions): Promise<Respons
   return fetch(`${BASE_URL}${path}`, {
     method,
     headers,
-    body: body !== undefined ? JSON.stringify(body) : undefined,
+    body: body === undefined ? undefined : isForm ? (body as FormData) : JSON.stringify(body),
   });
 }
 

@@ -15,6 +15,7 @@ import { useCustomizer } from '../../context/CustomizerContext';
 import { spacesOf, useAuth } from '@/context/AuthContext';
 import { useCenter } from '@/context/CenterContext';
 import { Icon } from '../ui/Icon';
+import { ProfileDialog } from '@/screens/centre/ProfileDialog';
 
 const ICON = {
   burger: (
@@ -62,6 +63,24 @@ function InitialsAvatar({ name, size = 32 }: { name: string; size?: number }) {
   );
 }
 
+/** Real profile photo when the user has one, initials otherwise. */
+function ProfileAvatar({ name, src, size = 32 }: { name: string; src: string | null; size?: number }) {
+  if (src) {
+    return (
+      // eslint-disable-next-line @next/next/no-img-element -- API media URL, no Next loader configured
+      <img
+        src={src}
+        alt=""
+        aria-hidden="true"
+        width={size}
+        height={size}
+        style={{ inlineSize: size, blockSize: size, borderRadius: '50%', objectFit: 'cover', display: 'inline-block' }}
+      />
+    );
+  }
+  return <InitialsAvatar name={name} size={size} />;
+}
+
 export function Header({
   onCommand,
   onCustomizer,
@@ -73,6 +92,7 @@ export function Header({
   const { me, signOut } = useAuth();
   const { center, memberships, switchCenter } = useCenter();
   const [full, setFull] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(false);
 
   useEffect(() => {
     const onFs = () => setFull(!!document.fullscreenElement);
@@ -225,17 +245,20 @@ export function Header({
         panelClassName="ax-dropdown ax-profile__menu"
         trigger={({ open, triggerProps }) => (
           <button type="button" className="ax-profile__trigger" aria-label="Menu du compte" {...triggerProps} aria-expanded={open}>
-            <InitialsAvatar name={displayName} />
+            <ProfileAvatar name={displayName} src={me?.avatar ?? null} />
           </button>
         )}
       >
         <div className="ax-profile__card">
-          <InitialsAvatar name={displayName} size={40} />
+          <ProfileAvatar name={displayName} src={me?.avatar ?? null} size={40} />
           <span className="ax-profile__card-meta">
             <b>{displayName || 'Mon compte'}</b>
             <small>{me?.phone}</small>
           </span>
         </div>
+        <button type="button" className="ax-dropdown__item" onClick={() => setProfileOpen(true)}>
+          Mon profil
+        </button>
         {multiSpace && (
           <Link className="ax-dropdown__item" href="/espaces">
             Changer d&rsquo;espace
@@ -250,6 +273,8 @@ export function Header({
           Se déconnecter
         </button>
       </Dropdown>
+
+      {profileOpen && <ProfileDialog onClose={() => setProfileOpen(false)} />}
 
       {/* 8 · CUSTOMIZER TRIGGER */}
       <button

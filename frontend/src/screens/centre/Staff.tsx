@@ -13,7 +13,7 @@ import { useEffect, useState } from 'react';
 import { PageHead } from '@/components/shell/PageHead';
 import { useCenter } from '@/context/CenterContext';
 import type { ApiError } from '@/lib/api';
-import { createStaff, deactivateStaff, listStaff, type StaffPayload } from '@/lib/endpoints/centers';
+import { createStaff, deactivateStaff, listStaff, updateStaff, type StaffPayload, type StaffUpdatePayload } from '@/lib/endpoints/centers';
 import { STAFF_ROLE_LABELS, formatDate } from '@/lib/labels';
 import type { StaffMember, StaffRole } from '@/lib/types';
 import {
@@ -21,6 +21,7 @@ import {
   EmptyState,
   ErrorAlert,
   FieldError,
+  IconEdit,
   IconPlus,
   IconUserOff,
   Modal,
@@ -33,6 +34,23 @@ import {
 
 function memberName(m: StaffMember): string {
   return `${m.user.first_name} ${m.user.last_name}`.trim() || m.user.phone;
+}
+
+/** Photo réelle si le membre en a une, sinon la pastille d'initiales. */
+function MemberAvatar({ member }: { member: StaffMember }) {
+  if (member.user.avatar) {
+    return (
+      // eslint-disable-next-line @next/next/no-img-element -- API media URL, no Next loader configured
+      <img
+        src={member.user.avatar}
+        alt=""
+        width={32}
+        height={32}
+        style={{ width: 32, height: 32, borderRadius: 'var(--ax-radius-sm)', objectFit: 'cover', flex: '0 0 auto' }}
+      />
+    );
+  }
+  return <AvatarChip name={memberName(member)} seed={member.user.id} />;
 }
 
 /* ── add modal ── */
@@ -106,6 +124,7 @@ function AddStaffModal({ onClose, onCreated }: { onClose: () => void; onCreated:
               onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))}
               placeholder="+269…"
               required
+              data-autofocus=""
             />
             <FieldError error={error} field="phone" />
           </div>
@@ -153,6 +172,121 @@ function AddStaffModal({ onClose, onCreated }: { onClose: () => void; onCreated:
             <FieldError error={error} field="last_name" />
           </div>
         </div>
+      </form>
+    </Modal>
+  );
+}
+
+/* ── edit modal (directeur : rôle, et nom tant que le compte est un compte ombre) ── */
+
+function EditStaffModal({
+  member,
+  onClose,
+  onSaved,
+}: {
+  member: StaffMember;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const { centerId } = useCenter();
+  const [role, setRole] = useState<StaffRole>(member.role);
+  const [firstName, setFirstName] = useState(member.user.first_name);
+  const [lastName, setLastName] = useState(member.user.last_name);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<ApiError | null>(null);
+
+  const submit = async () => {
+    const payload: StaffUpdatePayload = {};
+    if (role !== member.role) payload.role = role;
+    if (firstName !== member.user.first_name) payload.first_name = firstName.trim();
+    if (lastName !== member.user.last_name) payload.last_name = lastName.trim();
+    if (Object.keys(payload).length === 0) {
+      onClose();
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      await updateStaff(centerId, member.id, payload);
+      onSaved();
+    } catch (err) {
+      setError(toApiError(err));
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Modal
+      title={`Modifier ${memberName(member)}`}
+      onClose={onClose}
+      footer={
+        <>
+          <button type="button" className="ax-btn ax-btn--ghost" onClick={onClose} disabled={saving}>
+            Annuler
+          </button>
+          <button type="submit" form="staff-edit-form" className="ax-btn ax-btn--primary" disabled={saving}>
+            {saving ? 'Enregistrement…' : 'Enregistrer'}
+          </button>
+        </>
+      }
+    >
+      <form
+        id="staff-edit-form"
+        onSubmit={(e) => {
+          e.preventDefault();
+          void submit();
+        }}
+        style={{ display: 'flex', flexDirection: 'column', gap: 'var(--ax-space-4)' }}
+      >
+        {error && error.messages.length > 0 && <ErrorAlert error={error} />}
+
+        <div className="ax-field">
+          <label className="ax-label" htmlFor="ste-role">Rôle dans ce centre</label>
+          <select
+            id="ste-role"
+            className={`ax-select${error?.fieldErrors.role ? ' is-invalid' : ''}`}
+            value={role}
+            onChange={(e) => setRole(e.target.value as StaffRole)}
+            data-autofocus=""
+          >
+            {(Object.keys(STAFF_ROLE_LABELS) as StaffRole[]).map((r) => (
+              <option key={r} value={r}>
+                {STAFF_ROLE_LABELS[r]}
+              </option>
+            ))}
+          </select>
+          <FieldError error={error} field="role" />
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--ax-space-4)' }}>
+          <div className="ax-field">
+            <label className="ax-label" htmlFor="ste-first">Prénom</label>
+            <input
+              id="ste-first"
+              type="text"
+              className={`ax-input${error?.fieldErrors.first_name ? ' is-invalid' : ''}`}
+              value={firstName}
+              onChange={(e) => setFirstName(e.target.value)}
+            />
+            <FieldError error={error} field="first_name" />
+          </div>
+          <div className="ax-field">
+            <label className="ax-label" htmlFor="ste-last">Nom</label>
+            <input
+              id="ste-last"
+              type="text"
+              className={`ax-input${error?.fieldErrors.last_name ? ' is-invalid' : ''}`}
+              value={lastName}
+              onChange={(e) => setLastName(e.target.value)}
+            />
+            <FieldError error={error} field="last_name" />
+          </div>
+        </div>
+
+        <p style={{ margin: 0, fontSize: 'var(--ax-text-xs)', color: 'var(--ax-text-muted)' }}>
+          Le nom n&apos;est modifiable que tant que la personne n&apos;a pas activé son compte. Une fois le compte
+          activé, seule la personne concernée peut modifier son identité, depuis son profil.
+        </p>
       </form>
     </Modal>
   );
@@ -217,6 +351,7 @@ export function Staff() {
   const isDirector = role === 'directeur';
   const [page, setPage] = useState(1);
   const [addOpen, setAddOpen] = useState(false);
+  const [editing, setEditing] = useState<StaffMember | null>(null);
   const [deactivating, setDeactivating] = useState<StaffMember | null>(null);
 
   const staff = useAsync(
@@ -287,7 +422,7 @@ export function Staff() {
                       <tr key={m.id} className="ax-table__row" style={m.is_active ? undefined : { opacity: 0.6 }}>
                         <td className="ax-table__td">
                           <div className="ax-cluster" style={{ gap: 'var(--ax-space-3)', flexWrap: 'nowrap' }}>
-                            <AvatarChip name={memberName(m)} seed={m.user.id} />
+                            <MemberAvatar member={m} />
                             <span style={{ fontWeight: 500, color: 'var(--ax-text-strong)' }}>{memberName(m)}</span>
                           </div>
                         </td>
@@ -309,14 +444,24 @@ export function Staff() {
                         </td>
                         <td className="ax-table__td" style={{ textAlign: 'end' }}>
                           {m.is_active && (
-                            <button
-                              type="button"
-                              className="ax-btn ax-btn--ghost ax-btn--sm"
-                              onClick={() => setDeactivating(m)}
-                            >
-                              <IconUserOff />
-                              <span className="ax-btn__label">Désactiver</span>
-                            </button>
+                            <div className="ax-cluster" style={{ gap: 'var(--ax-space-1)', justifyContent: 'flex-end', flexWrap: 'nowrap' }}>
+                              <button
+                                type="button"
+                                className="ax-btn ax-btn--ghost ax-btn--sm"
+                                onClick={() => setEditing(m)}
+                              >
+                                <IconEdit />
+                                <span className="ax-btn__label">Modifier</span>
+                              </button>
+                              <button
+                                type="button"
+                                className="ax-btn ax-btn--ghost ax-btn--sm"
+                                onClick={() => setDeactivating(m)}
+                              >
+                                <IconUserOff />
+                                <span className="ax-btn__label">Désactiver</span>
+                              </button>
+                            </div>
                           )}
                         </td>
                       </tr>
@@ -335,6 +480,16 @@ export function Staff() {
           onClose={() => setAddOpen(false)}
           onCreated={() => {
             setAddOpen(false);
+            staff.reload();
+          }}
+        />
+      )}
+      {editing && (
+        <EditStaffModal
+          member={editing}
+          onClose={() => setEditing(null)}
+          onSaved={() => {
+            setEditing(null);
             staff.reload();
           }}
         />

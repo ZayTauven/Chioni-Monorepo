@@ -15,11 +15,13 @@ import {
   type ReactNode,
 } from 'react';
 import { useRouter } from 'next/navigation';
+import { useFocusTrap } from '@/hooks/useFocusTrap';
 import { useAuth } from '@/context/AuthContext';
 import { useCenter } from '@/context/CenterContext';
 import { ApiError } from '@/lib/api';
 import { getPatient } from '@/lib/endpoints/centers';
 import type {
+  AppointmentStatus,
   ClaimStatus,
   DisputeStatus,
   EncounterStatus,
@@ -204,6 +206,14 @@ export const KYC_TONES: Record<KycStatus, BadgeTone> = {
 export const DISPUTE_TONES: Record<DisputeStatus, BadgeTone> = {
   ouvert: 'danger',
   resolu: 'success',
+};
+
+export const APPOINTMENT_TONES: Record<AppointmentStatus, BadgeTone> = {
+  prevu: 'info',
+  arrive: 'accent',
+  honore: 'success',
+  manque: 'danger',
+  annule: 'neutral',
 };
 
 export function StatusBadge({ tone, label }: { tone: BadgeTone; label: string }) {
@@ -484,6 +494,8 @@ export function Modal({
   width?: number;
   labelledById?: string;
 }) {
+  const cardRef = useRef<HTMLDivElement>(null);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose();
@@ -491,6 +503,14 @@ export function Modal({
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
+
+  // Keyboard care: focus enters the dialog on open (a [data-autofocus]
+  // element wins over the first focusable) and returns to the trigger on
+  // close — the trap itself mirrors core/focus-trap.js.
+  useFocusTrap(cardRef, true);
+  useEffect(() => {
+    cardRef.current?.querySelector<HTMLElement>('[data-autofocus]')?.focus();
+  }, []);
 
   return (
     <div>
@@ -507,6 +527,7 @@ export function Modal({
         style={{ position: 'fixed', inset: 0, zIndex: 51, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 'var(--ax-space-4)', pointerEvents: 'none' }}
       >
         <div
+          ref={cardRef}
           className="ax-card"
           onClick={(e) => e.stopPropagation()}
           style={{ width: `min(${width}px,100%)`, maxHeight: '90vh', overflow: 'auto', pointerEvents: 'auto' }}

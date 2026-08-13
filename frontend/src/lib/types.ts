@@ -92,6 +92,16 @@ export type DisputeStatus = 'ouvert' | 'resolu';
 
 export type Currency = 'EUR' | 'KMF';
 
+export type AppointmentStatus = 'prevu' | 'arrive' | 'honore' | 'manque' | 'annule';
+
+/** Cash-in rail. `pont_confiance` NEVER comes from the desk (webhook only). */
+export type CashMethod = 'especes' | 'mobile_money' | 'pont_confiance';
+
+export type MobileMoneyOperator = 'huri' | 'mvola' | 'autre';
+
+/** `?ordering=` of GET /centers/{c}/invoices/unpaid/ — any other value is a 400. */
+export type UnpaidOrdering = '-balance' | 'balance' | '-age' | 'age';
+
 /* ── /auth/me/ — router of the 3 spaces ── */
 
 export interface CenterSummary {
@@ -100,6 +110,8 @@ export interface CenterSummary {
   type: CenterType;
   island: Island;
   city: string;
+  /** Absolute URL or null — feeds the sidebar and on-screen documents. */
+  logo: string | null;
 }
 
 export interface StaffMembership {
@@ -128,6 +140,8 @@ export interface Me {
   first_name: string;
   last_name: string;
   phone: string;
+  /** Absolute URL of the profile photo, or null. */
+  avatar: string | null;
   staff_memberships: StaffMembership[];
   patient_profile: MePatientProfile | null;
   guardian_profile: GuardianProfile | null;
@@ -318,6 +332,8 @@ export interface HealthCenter {
   phone: string;
   email: string;
   kyc_status: KycStatus;
+  /** Read-only here — written via POST|DELETE /centers/{pk}/logo/ (multipart). */
+  logo: string | null;
   created_at: string;
 }
 
@@ -346,6 +362,10 @@ export interface Invoice {
   encounter: number;
   patient: number;
   total_kmf: string;
+  /** Collected so far (all rails, reversals excluded) — the caisse view (ADR 0015). */
+  paid_kmf: string;
+  /** Still owed. The invoice flips `payee` when this reaches zero. */
+  balance_kmf: string;
   status: InvoiceStatus;
   lines: InvoiceLine[];
   created_at: string;
@@ -401,6 +421,8 @@ export interface StaffUser {
   first_name: string;
   last_name: string;
   phone: string;
+  /** Absolute URL of the member's profile photo, or null. */
+  avatar: string | null;
 }
 
 export interface StaffMember {
@@ -419,4 +441,171 @@ export interface TariffItem {
   price_kmf: string;
   is_active: boolean;
   created_at: string;
+}
+
+/* ── appointments (day queue — every active staff member) ── */
+
+export interface Appointment {
+  id: number;
+  patient: number;
+  patient_name: string;
+  /** StaffMembership id, or null — « rendez-vous avec le centre ». */
+  practitioner: number | null;
+  practitioner_name: string | null;
+  scheduled_at: string;
+  duration_minutes: number;
+  end_at: string;
+  /** Operational desk note — NEVER clinical content. */
+  reason: string;
+  status: AppointmentStatus;
+  reminder_sent_at: string | null;
+  created_at: string;
+}
+
+/** Creation/move responses append the same-practitioner overlap ids — a
+ *  NON-blocking warning: the desk decides. */
+export interface AppointmentWithOverlaps extends Appointment {
+  overlaps: number[];
+}
+
+/* ── caisse (ADR 0015 — BILLING roles) ── */
+
+/** Counter receipt (« G- » series, pure KMF) embedded in a cash payment. */
+export interface CashReceipt {
+  id: number;
+  receipt_number: string;
+  sequence_number: number;
+  center: number;
+  center_name: string;
+  amount_kmf: string;
+  method: CashMethod;
+  issued_at: string;
+}
+
+/** A reversal — visible and signed, never an erasure. */
+export interface CashReversal {
+  id: number;
+  cash_payment: number;
+  method: CashMethod;
+  amount_kmf: string;
+  reason: string;
+  reversed_by: number;
+  ledger_transaction: number;
+  created_at: string;
+}
+
+export interface CashPayment {
+  id: number;
+  invoice: number;
+  method: CashMethod;
+  operator: MobileMoneyOperator | '';
+  reference: string;
+  amount_kmf: string;
+  received_by: number;
+  /** Null except for `pont_confiance` cash-ins (webhook-driven). */
+  payment_intent: number | null;
+  ledger_transaction: number;
+  /** Null for `pont_confiance` (its receipt is the diaspora one at closure). */
+  receipt: CashReceipt | null;
+  reversal: CashReversal | null;
+  created_at: string;
+}
+
+export interface CashJournalTotals {
+  encaisse_kmf: string;
+  contre_passe_kmf: string;
+  net_kmf: string;
+}
+
+export interface CashJournal {
+  date: string;
+  payments: CashPayment[];
+  /** Reversals MADE that day, even if the reversed cash-in is older. */
+  reversals: CashReversal[];
+  totals: Record<'especes' | 'mobile_money' | 'pont_confiance' | 'total', CashJournalTotals>;
+}
+
+/** GET /centers/{c}/invoices/unpaid/ item — issued invoices with balance > 0. */
+export interface UnpaidInvoice {
+  id: number;
+  patient: number;
+  patient_name: string;
+  /** Masked AS-IS by the backend (« +336••••••78 », "" if no phone). */
+  patient_phone_masked: string;
+  total_kmf: string;
+  paid_kmf: string;
+  balance_kmf: string;
+  age_days: number;
+  created_at: string;
+}
+
+/** The patient's own counter receipts (all centers). */
+export interface PatientCashReceipt {
+  id: number;
+  receipt_number: string;
+  center_name: string;
+  amount_kmf: string;
+  method: CashMethod;
+  /** True when the cash-in was reversed — the receipt no longer proves payment. */
+  reversed: boolean;
+  issued_at: string;
+}
+
+/* ── pilotage (vague 2b — read-only stats) ── */
+
+export interface ActivityStatsDay {
+  date: string;
+  appointments: Record<AppointmentStatus, number>;
+  encounters: number;
+  new_patients: number;
+}
+
+export interface PractitionerActivity {
+  practitioner: number;
+  practitioner_name: string;
+  role: StaffRole;
+  encounters: number;
+}
+
+export interface ActivityStats {
+  from: string;
+  to: string;
+  /** Complete, zero-filled series — plug straight into a chart. */
+  days: ActivityStatsDay[];
+  totals: {
+    appointments: Record<AppointmentStatus, number> & { total: number };
+    encounters: number;
+    new_patients: number;
+    /** Percentage string (« 66.7 ») or null when nothing is measurable. */
+    attendance_rate_pct: string | null;
+  };
+  /** Sorted by volume — doubles as the center's internal directory. */
+  encounters_by_practitioner: PractitionerActivity[];
+}
+
+export interface FinanceStatsDay {
+  date: string;
+  especes_kmf: string;
+  mobile_money_kmf: string;
+  pont_confiance_kmf: string;
+  total_kmf: string;
+}
+
+export interface FinanceStats {
+  from: string;
+  to: string;
+  days: FinanceStatsDay[];
+  totals: {
+    especes_kmf: string;
+    mobile_money_kmf: string;
+    pont_confiance_kmf: string;
+    total_kmf: string;
+  };
+  /** Reversals made in the window — a dedicated field, never silently subtracted. */
+  reversals: { count: number; total_kmf: string };
+  /** Invoices issued in the window vs `collected_kmf` — the #1 steering gap. */
+  invoiced: { count: number; total_kmf: string };
+  collected_kmf: string;
+  /** Snapshot at query time (window-independent): issued invoices, balance > 0. */
+  unpaid: { count: number; total_kmf: string };
 }
