@@ -10,6 +10,7 @@ from django.conf import settings
 from django.db import models
 
 from apps.common.models import ActCategory, TimeStampedModel
+from apps.common.money import validate_kmf_integral
 
 
 class CenterScopedQuerySet(models.QuerySet):
@@ -163,7 +164,10 @@ class TariffItem(TimeStampedModel):
         ),
     )
     price_kmf = models.DecimalField(
-        "prix (KMF)", max_digits=12, decimal_places=2
+        "prix (KMF)",
+        max_digits=12,
+        decimal_places=2,
+        validators=[validate_kmf_integral],
     )
     is_active = models.BooleanField("actif", default=True)
 
@@ -184,3 +188,11 @@ class TariffItem(TimeStampedModel):
 
     def __str__(self) -> str:
         return f"[{self.code}] {self.label} — {self.price_kmf} KMF"
+
+    def save(self, *args, **kwargs):
+        # KMF has no sub-unit: a fractional tariff would flow into invoice
+        # snapshots and create a balance the cash desk can never settle
+        # (payments are whole francs only) — enforced here, not just at the
+        # serializer, so no write path can slip through.
+        validate_kmf_integral(self.price_kmf)
+        super().save(*args, **kwargs)

@@ -11,9 +11,15 @@ Refusal semantics (phase A contract): anonymous → 401 ; foreign center →
 cross-guardian probes → 404.
 """
 
+from datetime import datetime, time, timedelta
+from decimal import Decimal
+
 from django.shortcuts import get_object_or_404
+from django.utils import timezone
+from django.utils.dateparse import parse_date
 from drf_spectacular.utils import extend_schema
 from rest_framework import generics, status
+from rest_framework.exceptions import ValidationError as DrfValidationError
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -30,8 +36,21 @@ from apps.common.permissions import (
 )
 from apps.medical.models import Consent, Encounter
 from apps.patients.models import GuardianLink
-from apps.trustbridge.models import Dispute, Invoice, PaymentRequest, Receipt
+from apps.trustbridge.models import (
+    CashPayment,
+    CashPaymentReversal,
+    CashReceipt,
+    Dispute,
+    Invoice,
+    PaymentRequest,
+    Receipt,
+)
 from apps.trustbridge.serializers import (
+    CashPaymentCreateSerializer,
+    CashPaymentReversalSerializer,
+    CashPaymentStaffSerializer,
+    CashReceiptPatientSerializer,
+    CashReversalCreateSerializer,
     DisputeCreateSerializer,
     DisputeResolveSerializer,
     DisputeStaffSerializer,
@@ -44,6 +63,7 @@ from apps.trustbridge.serializers import (
     QuoteSerializer,
     ReceiptSerializer,
     ShareTargetSerializer,
+    UnpaidInvoiceStaffSerializer,
 )
 from apps.trustbridge.services import (
     acknowledge_care_received,
@@ -56,9 +76,12 @@ from apps.trustbridge.services import (
     issue_invoice,
     open_dispute,
     quote_payment_request,
+    record_cash_payment,
     resolve_dispute,
+    reverse_cash_payment,
     send_payment_request,
     share_payment_request,
+    unpaid_invoices_qs,
     unshare_payment_request,
 )
 
@@ -126,6 +149,47 @@ class CenterInvoiceDetailView(CenterScopedViewMixin, generics.RetrieveAPIView):
 
     def get_queryset(self):
         return Invoice.objects.for_center(self.center).prefetch_related("lines")
+
+
+class CenterUnpaidInvoiceListView(CenterScopedViewMixin, generics.ListAPIView):
+    """GET /centers/{c}/invoices/unpaid/?ordering= — the actionable unpaid
+    list (vague 2b « pilotage ») : factures ``emise`` à solde > 0, photo à
+    l'instant T. La matière première des futures relances (chantier
+    ultérieur — aucune écriture ici).
+
+    BILLING roles only: this is a money view (patient names, balances) —
+    same hat as the cash journal, the doctor has no business here (mirror
+    of the R-API-1 clinical segmentation, applied to money).
+
+    Balances come from the SQL annotations of ``unpaid_invoices_qs`` (one
+    query for the whole page, mirror of ``invoice_balance_kmf``); the
+    patient's phone is masked in the serializer. Ordering: ``-balance``
+    (default, biggest debt first), ``balance``, ``-age`` (oldest first),
+    ``age`` (newest first) — anything else answers a 400 per field.
+    """
+
+    permission_classes = [IsStaffOfCenter(*BILLING_ROLES)]
+    serializer_class = UnpaidInvoiceStaffSerializer
+
+    #: ``age`` is the ancienneté: descending age = oldest created first.
+    _ORDERINGS = {
+        "-balance": ("-balance_kmf_agg", "id"),
+        "balance": ("balance_kmf_agg", "id"),
+        "-age": ("created_at", "id"),
+        "age": ("-created_at", "id"),
+    }
+
+    def get_queryset(self):
+        ordering = self.request.query_params.get("ordering", "-balance")
+        if ordering not in self._ORDERINGS:
+            raise DrfValidationError(
+                {"ordering": ["Tri inconnu : -balance, balance, -age ou age."]}
+            )
+        return (
+            unpaid_invoices_qs(self.center)
+            .select_related("patient")
+            .order_by(*self._ORDERINGS[ordering])
+        )
 
 
 class _CenterInvoiceActionView(CenterScopedViewMixin, APIView):
@@ -335,6 +399,184 @@ class CenterDisputeResolveView(CenterScopedViewMixin, APIView):
 
 
 # ---------------------------------------------------------------------------
+# Audience: STAFF — caisse du centre (ADR 0015, BILLING roles)
+# ---------------------------------------------------------------------------
+
+
+class CenterInvoicePaymentListCreateView(CenterScopedViewMixin, APIView):
+    """GET/POST /centers/{c}/invoices/{pk}/payments/ — the invoice's
+    cash-ins (all methods). POST records a COUNTER payment (espèces /
+    mobile money — the Pont de Confiance only arrives through the signed
+    PSP webhook) and answers 201 WITH the counter receipt embedded."""
+
+    permission_classes = [IsStaffOfCenter(*BILLING_ROLES)]
+
+    def get_invoice(self):
+        return get_object_or_404(
+            Invoice.objects.for_center(self.center), pk=self.kwargs["pk"]
+        )
+
+    @extend_schema(responses=CashPaymentStaffSerializer(many=True))
+    def get(self, request, *args, **kwargs):
+        invoice = self.get_invoice()
+        payments = (
+            invoice.cash_payments.select_related(
+                "cash_receipt__center", "reversal", "received_by"
+            )
+            .order_by("created_at", "id")
+        )
+        return Response(CashPaymentStaffSerializer(payments, many=True).data)
+
+    @extend_schema(
+        request=CashPaymentCreateSerializer, responses=CashPaymentStaffSerializer
+    )
+    def post(self, request, *args, **kwargs):
+        invoice = self.get_invoice()
+        serializer = CashPaymentCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        payment = record_cash_payment(
+            actor=request.user,
+            center=self.center,
+            invoice=invoice,
+            method=serializer.validated_data["method"],
+            amount_kmf=serializer.validated_data["amount_kmf"],
+            operator=serializer.validated_data.get("operator", ""),
+            reference=serializer.validated_data.get("reference", ""),
+        )
+        return Response(
+            CashPaymentStaffSerializer(payment).data,
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class CenterCashPaymentReverseView(CenterScopedViewMixin, APIView):
+    """POST /centers/{c}/invoices/{invoice_pk}/payments/{pk}/reverse/ —
+    the ONLY correction of a cash-in: mandatory reason, one reversal per
+    payment, never on a Pont de Confiance cash-in (dispute instead)."""
+
+    permission_classes = [IsStaffOfCenter(*BILLING_ROLES)]
+
+    @extend_schema(
+        request=CashReversalCreateSerializer, responses=CashPaymentStaffSerializer
+    )
+    def post(self, request, *args, **kwargs):
+        payment = get_object_or_404(
+            CashPayment.objects.filter(
+                center=self.center, invoice_id=self.kwargs["invoice_pk"]
+            ),
+            pk=self.kwargs["pk"],
+        )
+        serializer = CashReversalCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        reverse_cash_payment(
+            actor=request.user,
+            cash_payment=payment,
+            reason=serializer.validated_data["reason"],
+        )
+        payment = CashPayment.objects.select_related(
+            "cash_receipt__center", "reversal", "received_by"
+        ).get(pk=payment.pk)
+        return Response(
+            CashPaymentStaffSerializer(payment).data,
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class CenterCashJournalView(CenterScopedViewMixin, APIView):
+    """GET /centers/{c}/cash-journal/?date=YYYY-MM-DD — le journal de caisse.
+
+    Default: TODAY in Comoros local time — day boundaries computed in
+    ``TIME_ZONE`` (same pattern as the appointment day queue, ADR 0013).
+    All methods together (espèces, mobile money, Pont de Confiance);
+    reversals MADE that day are visible and signed even when they undo a
+    payment from another day; totals per method: collected / reversed /
+    net.
+    """
+
+    permission_classes = [IsStaffOfCenter(*BILLING_ROLES)]
+
+    @extend_schema(responses=None)
+    def get(self, request, *args, **kwargs):
+        day, day_start, day_end = self._day_bounds()
+        payments = list(
+            CashPayment.objects.filter(
+                center=self.center,
+                created_at__gte=day_start,
+                created_at__lt=day_end,
+            )
+            .select_related("cash_receipt__center", "reversal", "received_by")
+            .order_by("created_at", "id")
+        )
+        reversals = list(
+            CashPaymentReversal.objects.filter(
+                cash_payment__center=self.center,
+                created_at__gte=day_start,
+                created_at__lt=day_end,
+            )
+            .select_related("cash_payment")
+            .order_by("created_at", "id")
+        )
+        totals = {}
+        grand_in = grand_out = Decimal("0")
+        for method in CashPayment.Method:
+            method_in = sum(
+                (p.amount_kmf for p in payments if p.method == method),
+                Decimal("0"),
+            )
+            method_out = sum(
+                (
+                    r.cash_payment.amount_kmf
+                    for r in reversals
+                    if r.cash_payment.method == method
+                ),
+                Decimal("0"),
+            )
+            grand_in += method_in
+            grand_out += method_out
+            totals[str(method.value)] = {
+                "encaisse_kmf": str(method_in),
+                "contre_passe_kmf": str(method_out),
+                "net_kmf": str(method_in - method_out),
+            }
+        totals["total"] = {
+            "encaisse_kmf": str(grand_in),
+            "contre_passe_kmf": str(grand_out),
+            "net_kmf": str(grand_in - grand_out),
+        }
+        return Response(
+            {
+                "date": str(day),
+                "payments": CashPaymentStaffSerializer(payments, many=True).data,
+                "reversals": CashPaymentReversalSerializer(
+                    reversals, many=True
+                ).data,
+                "totals": totals,
+            }
+        )
+
+    def _day_bounds(self):
+        """Local-day bounds in ``TIME_ZONE`` (Indian/Comoro) — the exact
+        refusal semantics of the appointment day queue: malformed AND
+        well-formed-impossible dates both answer the same 400."""
+        raw_date = self.request.query_params.get("date")
+        if raw_date:
+            try:
+                day = parse_date(raw_date)
+            except ValueError:
+                day = None
+            if day is None:
+                raise DrfValidationError({"date": ["Format attendu : AAAA-MM-JJ."]})
+        else:
+            day = timezone.localdate()
+        day_start = timezone.make_aware(datetime.combine(day, time.min))
+        try:
+            day_end = day_start + timedelta(days=1)
+        except OverflowError:
+            raise DrfValidationError({"date": ["Date hors limites."]})
+        return day, day_start, day_end
+
+
+# ---------------------------------------------------------------------------
 # Audience: the PATIENT (owner of the invoiced care)
 # ---------------------------------------------------------------------------
 
@@ -454,6 +696,28 @@ class MyReceiptListView(generics.ListAPIView):
                 )
             )
             .select_related("center")
+            .order_by("-issued_at")
+        )
+
+
+class MyCashReceiptListView(generics.ListAPIView):
+    """GET /patients/me/cash-receipts/ — my counter receipts (pure KMF),
+    all centers. Guardians NEVER see these (ADR 0015): the « paiements »
+    scope only opens the requests explicitly shared with them — what the
+    patient pays with their own money at the counter is their business.
+    """
+
+    permission_classes = [IsPatientSelf]
+    serializer_class = CashReceiptPatientSerializer
+
+    def get_queryset(self):
+        return (
+            CashReceipt.objects.filter(
+                cash_payment__invoice__patient=claimed_patient_profile(
+                    self.request.user
+                )
+            )
+            .select_related("center", "cash_payment__reversal")
             .order_by("-issued_at")
         )
 

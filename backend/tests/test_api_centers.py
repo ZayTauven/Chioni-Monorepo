@@ -201,6 +201,29 @@ class TestTariffEndpoints:
         assert str(tariff.price_kmf) == "9000.00"
         assert AuditLog.objects.filter(action="tariff.updated").count() == 1
 
+    def test_fractional_kmf_price_is_refused(self):
+        """KMF has no sub-unit — a 1 000,50 tariff would flow into invoice
+        snapshots and create a balance the cash desk can never settle
+        (guardian review, wave 2a)."""
+        center, director = make_center_with_director()
+        client = client_for(director)
+
+        create = client.post(
+            f"/api/v1/centers/{center.pk}/tariffs/",
+            {"code": "CS1", "label": "Consultation", "price_kmf": "1000.50",
+             "generic_category": "autre"},
+        )
+        assert create.status_code == 400
+        assert "price_kmf" in create.data
+
+        tariff = make_tariff(center)
+        update = client.patch(
+            f"/api/v1/centers/{center.pk}/tariffs/{tariff.pk}/",
+            {"price_kmf": "9000.25"},
+        )
+        assert update.status_code == 400
+        assert "price_kmf" in update.data
+
     def test_duplicate_code_is_refused_with_a_french_message(self):
         center, director = make_center_with_director()
         make_tariff(center, code="CS1")

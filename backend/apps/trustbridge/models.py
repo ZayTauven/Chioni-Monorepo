@@ -602,6 +602,10 @@ class LedgerEntry(AppendOnlyModel):
         PSP_FEES = "frais_psp", "Frais PSP"
         CHIONI_FEES = "frais_chioni", "Frais Chioni"
         FX_CONVERSION = "conversion_change", "Conversion de change EUR↔KMF"
+        # Caisse du centre (ADR 0015) — encaissement guichet, tout en KMF.
+        CASH_ON_HAND = "caisse_especes", "Caisse espèces"
+        MOBILE_MONEY = "mobile_money", "Mobile money"
+        PATIENT_RECEIVABLES = "creances_patient", "Créances patient"
 
     class Direction(models.TextChoices):
         DEBIT = "debit", "Débit"
@@ -776,6 +780,322 @@ class Receipt(AppendOnlyModel):
             )
             receipt.save()
         return receipt
+
+
+# ---------------------------------------------------------------------------
+# Caisse du centre — encaissement généralisé (ADR 0015)
+# ---------------------------------------------------------------------------
+
+
+class MobileMoneyOperator(models.TextChoices):
+    """Comorian mobile money operators — deliberately a SIMPLE, extensible
+    enum (étude §4.6: the local rails are still being surveyed)."""
+
+    HURI = "huri", "Huri Money (Comores Télécom)"
+    MVOLA = "mvola", "MVola (Telma)"
+    AUTRE = "autre", "Autre opérateur"
+
+
+class CashPayment(AppendOnlyModel):
+    """One cash-in on an invoice — the GENERAL concept (ADR 0015).
+
+    Espèces and mobile money at the counter are first-class citizens; the
+    diaspora payment (Pont de Confiance) is a PARTICULAR CASE recorded on
+    this same model by ``register_payment_success`` — never typed at the
+    counter. Every payment is backed by ITS balanced ledger transaction
+    (for the Trust Bridge method: the existing diaspora cash-in
+    transaction), never exceeds the invoice's remaining balance
+    (serialised by a row lock on the invoice in the services), and is
+    append-only: a mistake is corrected by a :class:`CashPaymentReversal`,
+    never an edit or a delete.
+    """
+
+    class Method(models.TextChoices):
+        CASH = "especes", "Espèces"
+        MOBILE_MONEY = "mobile_money", "Mobile money"
+        TRUST_BRIDGE = "pont_confiance", "Pont de Confiance"
+
+    #: Ledger account debited by each COUNTER method (the credit side is
+    #: always ``creances_patient``). The Trust Bridge method has no entry
+    #: here on purpose: its ledger transaction is the diaspora cash-in
+    #: (fonds_tuteur → du_au_centre), recorded by the existing flow.
+    LEDGER_ACCOUNT_BY_METHOD = {
+        Method.CASH: LedgerEntry.Account.CASH_ON_HAND,
+        Method.MOBILE_MONEY: LedgerEntry.Account.MOBILE_MONEY,
+    }
+
+    invoice = models.ForeignKey(
+        Invoice,
+        verbose_name="facture",
+        on_delete=models.PROTECT,
+        related_name="cash_payments",
+    )
+    center = models.ForeignKey(
+        "centers.HealthCenter",
+        verbose_name="centre",
+        on_delete=models.PROTECT,
+        related_name="cash_payments",
+        help_text="Toujours dérivé de la facture par le service — jamais une entrée client.",
+    )
+    method = models.CharField(
+        "moyen de paiement", max_length=16, choices=Method.choices
+    )
+    operator = models.CharField(
+        "opérateur mobile money",
+        max_length=16,
+        choices=MobileMoneyOperator.choices,
+        blank=True,
+        help_text="Obligatoire pour mobile money, interdit sinon (contrainte DB).",
+    )
+    reference = models.CharField(
+        "référence externe",
+        max_length=64,
+        blank=True,
+        help_text="Ex. identifiant de transaction mobile money.",
+    )
+    amount_kmf = models.DecimalField("montant (KMF)", max_digits=12, decimal_places=2)
+    ledger_transaction = models.ForeignKey(
+        LedgerTransaction,
+        verbose_name="transaction du ledger",
+        on_delete=models.PROTECT,
+        related_name="cash_payments",
+        help_text=(
+            "SA transaction équilibrée — pour le Pont de Confiance, la "
+            "transaction d'encaissement diaspora existante (jamais de "
+            "double écriture pour le même franc)."
+        ),
+    )
+    payment_intent = models.ForeignKey(
+        PaymentIntent,
+        verbose_name="intention de paiement",
+        on_delete=models.PROTECT,
+        related_name="cash_payments",
+        null=True,
+        blank=True,
+        help_text="Renseigné UNIQUEMENT pour un encaissement Pont de Confiance.",
+    )
+    received_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        verbose_name="encaissé par",
+        on_delete=models.PROTECT,
+        related_name="cash_payments_received",
+        null=True,
+        blank=True,
+        help_text="Agent au guichet ; vide pour un encaissement Pont de Confiance (webhook).",
+    )
+
+    class Meta:
+        verbose_name = "encaissement"
+        verbose_name_plural = "encaissements"
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(amount_kmf__gt=0),
+                name="cash_payment_amount_kmf_positive",
+            ),
+            # Operator carried iff the method is mobile money.
+            models.CheckConstraint(
+                condition=(
+                    models.Q(method="mobile_money", operator__gt="")
+                    | (~models.Q(method="mobile_money") & models.Q(operator=""))
+                ),
+                name="cash_payment_operator_iff_mobile_money",
+            ),
+            # A payment intent iff the method is Pont de Confiance.
+            models.CheckConstraint(
+                condition=(
+                    models.Q(method="pont_confiance", payment_intent__isnull=False)
+                    | (
+                        ~models.Q(method="pont_confiance")
+                        & models.Q(payment_intent__isnull=True)
+                    )
+                ),
+                name="cash_payment_intent_iff_trust_bridge",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return (
+            f"Encaissement #{self.pk} — {self.amount_kmf} KMF "
+            f"({self.get_method_display()})"
+        )
+
+    def save(self, *args, **kwargs):
+        # The center is a denormalisation of invoice.center for tenant
+        # scoping and the cash journal: a mismatch is always a bug.
+        if self._state.adding and self.center_id != self.invoice.center_id:
+            raise ValidationError(
+                "Encaissement refusé : le centre ne correspond pas à celui "
+                "de la facture."
+            )
+        super().save(*args, **kwargs)
+
+
+class CashPaymentReversal(AppendOnlyModel):
+    """The ONLY correction of a cash payment (ADR 0015).
+
+    A reversal is a new, inverse, balanced ledger transaction plus this
+    immutable row — never a cancellation. One reversal per payment
+    (OneToOne, race-safe at the DB level) and never a reversal of a
+    reversal (structurally unrepresentable: reversals are not payments).
+
+    Confidentiality: ``reason`` is free text typed by the staff — visible
+    to the center handling its own caisse, NEVER pushed into the AuditLog
+    payload (ADR 0007: references only).
+    """
+
+    cash_payment = models.OneToOneField(
+        CashPayment,
+        verbose_name="encaissement",
+        on_delete=models.PROTECT,
+        related_name="reversal",
+    )
+    reason = models.TextField(
+        "motif",
+        help_text="Obligatoire — une contre-passation sans motif est irrecevable.",
+    )
+    ledger_transaction = models.ForeignKey(
+        LedgerTransaction,
+        verbose_name="transaction de contre-passation",
+        on_delete=models.PROTECT,
+        related_name="cash_payment_reversals",
+    )
+    reversed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        verbose_name="contre-passée par",
+        on_delete=models.PROTECT,
+        related_name="cash_payment_reversals_made",
+    )
+
+    class Meta:
+        verbose_name = "contre-passation d'encaissement"
+        verbose_name_plural = "contre-passations d'encaissement"
+
+    def __str__(self) -> str:
+        return f"Contre-passation de l'encaissement #{self.cash_payment_id}"
+
+
+class CashReceipt(AppendOnlyModel):
+    """The counter receipt — pure KMF, one per counter payment, immutable.
+
+    SEPARATE series from the diaspora :class:`Receipt` (own table, own
+    unique (center, sequence) constraint, « G- » prefix at display time —
+    ADR 0015): the two documents have different shapes (dual currency vs
+    KMF pur) and interleaving their numbering would make a gap in one rail
+    look like a hole in the other. A Trust Bridge cash-in has NO counter
+    receipt: its receipt is the dual-currency one issued at closure —
+    never two receipts for the same franc.
+
+    Issue through :meth:`issue` only: race-safe sequential numbering
+    (center row lock, same discipline as ``Receipt.issue``) and the amount
+    RECONCILED against the ledger transaction (M3), never merely asserted.
+    """
+
+    NUMBER_PREFIX = "G"
+
+    cash_payment = models.OneToOneField(
+        CashPayment,
+        verbose_name="encaissement",
+        on_delete=models.PROTECT,
+        related_name="cash_receipt",
+    )
+    center = models.ForeignKey(
+        "centers.HealthCenter",
+        verbose_name="centre",
+        on_delete=models.PROTECT,
+        related_name="cash_receipts",
+    )
+    ledger_transaction = models.ForeignKey(
+        LedgerTransaction,
+        verbose_name="transaction du ledger",
+        on_delete=models.PROTECT,
+        related_name="cash_receipts",
+        help_text=(
+            "M3 — la transaction de l'encaissement : le montant du reçu est "
+            "réconcilié avec le ledger, jamais seulement affirmé."
+        ),
+    )
+    sequence_number = models.PositiveIntegerField("numéro séquentiel")
+    amount_kmf = models.DecimalField("montant (KMF)", max_digits=12, decimal_places=2)
+    issued_at = models.DateTimeField("émis le", default=timezone.now)
+
+    class Meta:
+        verbose_name = "reçu guichet"
+        verbose_name_plural = "reçus guichet"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["center", "sequence_number"],
+                name="unique_cash_receipt_sequence_per_center",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(amount_kmf__gt=0),
+                name="cash_receipt_amount_kmf_positive",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"Reçu guichet {self.center_id}-{self.number}"
+
+    @property
+    def number(self) -> str:
+        """Display number, « G- » prefixed — never confusable with the
+        diaspora series of the same center."""
+        return f"{self.NUMBER_PREFIX}-{self.sequence_number:06d}"
+
+    @classmethod
+    def issue(cls, *, cash_payment):
+        """Issue the counter receipt for a COUNTER payment, race-safe.
+
+        The amount is read back from the payment's ledger transaction
+        (debit on the method's cash account, KMF) and must equal the
+        payment amount — a receipt the ledger does not corroborate is
+        refused (M3, même exigence que le reçu diaspora).
+        """
+        from apps.centers.models import HealthCenter
+
+        if cash_payment.method == CashPayment.Method.TRUST_BRIDGE:
+            raise ValidationError(
+                "Un encaissement Pont de Confiance n'a pas de reçu guichet : "
+                "son reçu est le reçu double devise émis à la clôture de la "
+                "demande de paiement."
+            )
+        account = cls._ledger_account_for(cash_payment)
+        ledger_kmf = Decimal("0")
+        for entry in cash_payment.ledger_transaction.entries.filter(
+            account=account,
+            direction=LedgerEntry.Direction.DEBIT,
+            currency=Currency.KMF,
+        ):
+            ledger_kmf += entry.amount
+        if ledger_kmf != cash_payment.amount_kmf:
+            raise ValidationError(
+                "Reçu guichet refusé : le montant de l'encaissement n'est pas "
+                "corroboré par le ledger (réconciliation impossible)."
+            )
+        with transaction.atomic():
+            # Lock the center row to serialise numbering per tenant (the
+            # diaspora series shares the same lock — correct, and the
+            # contention is negligible at MVP scale).
+            HealthCenter.objects.select_for_update().get(pk=cash_payment.center_id)
+            last = (
+                cls.objects.filter(center_id=cash_payment.center_id)
+                .aggregate(m=models.Max("sequence_number"))["m"]
+                or 0
+            )
+            receipt = cls(
+                cash_payment=cash_payment,
+                center_id=cash_payment.center_id,
+                ledger_transaction=cash_payment.ledger_transaction,
+                sequence_number=last + 1,
+                amount_kmf=cash_payment.amount_kmf,
+            )
+            receipt.save()
+        return receipt
+
+    @staticmethod
+    def _ledger_account_for(cash_payment):
+        return CashPayment.LEDGER_ACCOUNT_BY_METHOD[
+            CashPayment.Method(cash_payment.method)
+        ]
 
 
 class Dispute(TimeStampedModel):

@@ -33,6 +33,16 @@ from decimal import Decimal
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import transaction
+from django.db.models import (
+    DecimalField,
+    ExpressionWrapper,
+    F,
+    OuterRef,
+    Subquery,
+    Sum,
+    Value,
+)
+from django.db.models.functions import Coalesce
 from django.utils import timezone
 
 from apps.audit.services import AuditAction, audit
@@ -42,11 +52,15 @@ from apps.common.models import Currency
 from apps.patients.models import GuardianLink
 from apps.trustbridge.fx import net_eur_for_kmf, quote_eur_for_kmf
 from apps.trustbridge.models import (
+    CashPayment,
+    CashPaymentReversal,
+    CashReceipt,
     Dispute,
     Invoice,
     InvoiceLine,
     LedgerEntry,
     LedgerTransaction,
+    MobileMoneyOperator,
     PaymentIntent,
     PaymentRequest,
     PaymentRequestShare,
@@ -97,6 +111,22 @@ def _require_center_can_collect(center):
         raise ValidationError(
             "Ce centre ne peut pas encore encaisser de paiements : "
             "sa vérification (KYC) n'est pas active."
+        )
+
+
+def _refuse_cancelled_invoice(invoice):
+    """A CANCELLED invoice is dead money-side — on EVERY rail.
+
+    ``record_cash_payment`` always refused it at the counter; the diaspora
+    rail must too (revue adversariale vague 2a) : no service reaches the
+    state today, but the admin/shell can, and without this guard a
+    guardian could be quoted, charged, and the webhook would cash in a
+    cancelled invoice (annulee → payee silently).
+    """
+    if invoice.status == Invoice.Status.CANCELLED:
+        raise ValidationError(
+            "Cette facture a été annulée par le centre : "
+            "elle n'est plus payable."
         )
 
 
@@ -174,6 +204,297 @@ def issue_invoice(*, actor, invoice):
         total_kmf=invoice.total_kmf, currency=str(Currency.KMF),
     )
     return invoice
+
+
+# ---------------------------------------------------------------------------
+# Caisse du centre — encaissement généralisé (ADR 0015)
+#
+# The cash-in is the GENERAL concept; the diaspora payment is a particular
+# case recorded on the same CashPayment model by register_payment_success.
+# Partial payments are the Comorian reality: a payment NEVER exceeds the
+# invoice's remaining balance, and every mutation of that balance is
+# serialised by a row lock on the invoice (_locked_invoice) — two cashiers,
+# or a cashier racing the PSP webhook, can never overshoot together.
+# ---------------------------------------------------------------------------
+
+#: Methods a human can type at the counter — Trust Bridge is NEVER one of
+#: them (it only arrives through the signed PSP webhook).
+_COUNTER_METHODS = (CashPayment.Method.CASH, CashPayment.Method.MOBILE_MONEY)
+
+
+def invoice_paid_kmf(invoice):
+    """KMF already collected on the invoice — ALL methods (espèces, mobile
+    money, Pont de Confiance), reversed payments excluded."""
+    total = CashPayment.objects.filter(
+        invoice=invoice, reversal__isnull=True
+    ).aggregate(s=Sum("amount_kmf"))["s"]
+    return total or Decimal("0")
+
+
+def invoice_balance_kmf(invoice):
+    """Remaining balance of the invoice (KMF) — THE derivation of the
+    outstanding amount (ADR 0015): the issued invoice, frozen by trigger
+    R3, is the debit side of the receivable; the non-reversed payments are
+    its credits. No mutable « amount_due » field anywhere."""
+    return invoice.total_kmf - invoice_paid_kmf(invoice)
+
+
+#: Output field of the KMF aggregate annotations below.
+_KMF_FIELD = DecimalField(max_digits=12, decimal_places=2)
+
+
+def unpaid_invoices_qs(center):
+    """ISSUED invoices of ``center`` with a positive remaining balance.
+
+    READ-ONLY, set-based mirror of :func:`invoice_balance_kmf` (ADR 0015
+    vague 2b: « requête directe — factures ``emise`` dont
+    ``invoice_balance_kmf() > 0`` ») for lists and stats — one SQL query,
+    never one balance call per row. The agreement between the annotation
+    and the per-row derivation is locked by tests
+    (``tests/test_center_stats.py``).
+
+    Annotations carried by every row: ``paid_kmf_agg`` (non-reversed
+    payments, all methods) and ``balance_kmf_agg`` (``total_kmf`` − paid).
+    No ordering is imposed here — views choose theirs.
+    """
+    paid_per_invoice = (
+        CashPayment.objects.filter(invoice=OuterRef("pk"), reversal__isnull=True)
+        .order_by()
+        .values("invoice")
+        .annotate(s=Sum("amount_kmf"))
+        .values("s")
+    )
+    return (
+        Invoice.objects.for_center(center)
+        .filter(status=Invoice.Status.ISSUED)
+        .annotate(
+            paid_kmf_agg=Coalesce(
+                Subquery(paid_per_invoice, output_field=_KMF_FIELD),
+                Value(Decimal("0"), output_field=_KMF_FIELD),
+            )
+        )
+        .annotate(
+            balance_kmf_agg=ExpressionWrapper(
+                F("total_kmf") - F("paid_kmf_agg"), output_field=_KMF_FIELD
+            )
+        )
+        .filter(balance_kmf_agg__gt=0)
+    )
+
+
+def _locked_invoice(invoice):
+    """Re-read the invoice under row lock — THE serialisation point of the
+    caisse (two cashiers, cashier vs PSP webhook)."""
+    return Invoice.objects.select_for_update().get(pk=invoice.pk)
+
+
+def _refuse_if_pending_diaspora_intent(invoice):
+    """Counter-side mirror of the anti-double-débit guard (ADR 0015).
+
+    MVP has no refund flow: if a guardian is mid-3DS on this invoice's
+    payment request while the patient pays at the counter, the guardian's
+    card would be charged and the late webhook refused on a changed
+    balance. So a ``cree``/``en_cours`` intent more recent than
+    ``PSP_INTENT_GUARD_MINUTES`` blocks the counter for a few minutes.
+    The webhook's balance re-check remains the LAST line of defence for
+    the residual race (an intent committed between this check and our
+    commit — different lock rows, so not serialised).
+    """
+    threshold = timezone.now() - timedelta(
+        minutes=settings.PSP_INTENT_GUARD_MINUTES
+    )
+    pending = PaymentIntent.objects.filter(
+        payment_request__invoice=invoice,
+        status__in=(
+            PaymentIntent.Status.CREATED,
+            PaymentIntent.Status.PROCESSING,
+        ),
+        created_at__gte=threshold,
+    )
+    if pending.exists():
+        raise ValidationError(
+            "Un paiement diaspora est en cours sur cette facture. "
+            "Attendez quelques minutes avant d'encaisser au guichet."
+        )
+
+
+@transaction.atomic
+def record_cash_payment(
+    *, actor, center, invoice, method, amount_kmf, operator="", reference=""
+):
+    """THE counter cash-in path (espèces / mobile money) — ADR 0015.
+
+    In ONE atomic block, under the invoice row lock: balance check (a
+    payment never exceeds the remaining balance), balanced KMF ledger
+    transaction (debit caisse/mobile money, credit créances patient),
+    immutable ``CashPayment``, counter receipt reconciled against the
+    ledger, invoice → ``payee`` when the balance reaches zero, audit.
+
+    No KYC requirement here: the money never transits the platform — it
+    goes straight into the center's own till. No SMS either: the patient
+    is standing at the counter and leaves with the receipt (ADR 0015).
+    """
+    if method not in _COUNTER_METHODS:
+        raise ValidationError(
+            "L'encaissement « Pont de Confiance » n'est jamais saisi au "
+            "guichet : il arrive uniquement par le paiement du tuteur "
+            "(webhook PSP signé)."
+        )
+    operator = (operator or "").strip()
+    if method == CashPayment.Method.MOBILE_MONEY:
+        if operator not in MobileMoneyOperator.values:
+            raise ValidationError(
+                "Un encaissement mobile money exige un opérateur valide."
+            )
+    elif operator:
+        raise ValidationError(
+            "Un encaissement en espèces ne porte pas d'opérateur mobile money."
+        )
+    amount_kmf = Decimal(amount_kmf)
+    if amount_kmf <= 0:
+        raise ValidationError("Le montant encaissé doit être > 0 KMF.")
+    if amount_kmf != amount_kmf.to_integral_value():
+        raise ValidationError("Le franc comorien ne porte pas de décimales.")
+    if invoice.center_id != center.pk:
+        raise ValidationError(
+            "Cette facture n'appartient pas à ce centre : encaissement refusé."
+        )
+    invoice = _locked_invoice(invoice)
+    if invoice.status == Invoice.Status.DRAFT:
+        raise ValidationError(
+            "Une facture en brouillon ne s'encaisse pas : émettez-la d'abord."
+        )
+    if invoice.status == Invoice.Status.CANCELLED:
+        raise ValidationError("Une facture annulée ne s'encaisse pas.")
+    if invoice.status == Invoice.Status.PAID:
+        raise ValidationError("Cette facture est déjà entièrement réglée.")
+    _refuse_if_pending_diaspora_intent(invoice)
+    balance = invoice_balance_kmf(invoice)
+    if amount_kmf > balance:
+        raise ValidationError(
+            f"Encaissement refusé : le montant ({amount_kmf} KMF) dépasse "
+            f"le solde restant de la facture ({balance} KMF)."
+        )
+    account = CashPayment.LEDGER_ACCOUNT_BY_METHOD[CashPayment.Method(method)]
+    ledger_tx = LedgerTransaction.record(
+        description=(
+            f"Encaissement guichet {CashPayment.Method(method).label} — "
+            f"facture #{invoice.pk}"
+        ),
+        center=center,
+        entries=[
+            {
+                "account": account,
+                "direction": LedgerEntry.Direction.DEBIT,
+                "amount": amount_kmf,
+                "currency": Currency.KMF,
+            },
+            {
+                "account": LedgerEntry.Account.PATIENT_RECEIVABLES,
+                "direction": LedgerEntry.Direction.CREDIT,
+                "amount": amount_kmf,
+                "currency": Currency.KMF,
+            },
+        ],
+    )
+    payment = CashPayment(
+        invoice=invoice,
+        center=center,
+        method=method,
+        operator=operator,
+        reference=(reference or "").strip(),
+        amount_kmf=amount_kmf,
+        ledger_transaction=ledger_tx,
+        received_by=actor,
+    )
+    payment.save()
+    receipt = CashReceipt.issue(cash_payment=payment)
+    new_balance = balance - amount_kmf
+    if new_balance == 0:
+        invoice.status = Invoice.Status.PAID
+        invoice.save(update_fields=["status", "updated_at"])
+    audit(
+        actor=actor, action=AuditAction.CASH_PAYMENT_RECORDED, target=payment,
+        cash_payment_id=payment.pk, invoice_id=invoice.pk, center_id=center.pk,
+        method=str(method), operator=operator or None,
+        amount_kmf=amount_kmf, balance_after_kmf=new_balance,
+        ledger_transaction_id=ledger_tx.pk,
+        cash_receipt_id=receipt.pk, receipt_number=receipt.number,
+        invoice_status_after=invoice.status, currency=str(Currency.KMF),
+    )
+    # Pas de SMS pour un encaissement guichet : le patient est au comptoir
+    # et repart avec son reçu (ADR 0015). Les SMS diaspora ne changent pas.
+    return payment
+
+
+@transaction.atomic
+def reverse_cash_payment(*, actor, cash_payment, reason):
+    """The ONLY correction of a counter cash-in (ADR 0015) — never a
+    cancellation: an INVERSE balanced ledger transaction plus an immutable
+    reversal row, mandatory reason, audited (references only).
+
+    Effect on the invoice, documented honestly: if the invoice was
+    ``payee`` and the balance becomes > 0 again, it returns to ``emise`` —
+    the money is owed again and the caisse says so. A Trust Bridge cash-in
+    is NEVER reversed at the counter (open a dispute: the diaspora rail
+    has its own remedies and its own state machine).
+    """
+    if not (reason or "").strip():
+        raise ValidationError("Le motif de la contre-passation est obligatoire.")
+    if cash_payment.method == CashPayment.Method.TRUST_BRIDGE:
+        raise ValidationError(
+            "Un encaissement Pont de Confiance ne se contre-passe pas au "
+            "guichet : ouvrez un litige sur la demande de paiement."
+        )
+    # Same lock order as record_cash_payment: the invoice row serialises
+    # every balance mutation — a double reversal race resolves here.
+    invoice = _locked_invoice(cash_payment.invoice)
+    if CashPaymentReversal.objects.filter(cash_payment=cash_payment).exists():
+        raise ValidationError("Cet encaissement a déjà été contre-passé.")
+    account = CashPayment.LEDGER_ACCOUNT_BY_METHOD[
+        CashPayment.Method(cash_payment.method)
+    ]
+    ledger_tx = LedgerTransaction.record(
+        description=(
+            f"Contre-passation encaissement #{cash_payment.pk} — "
+            f"facture #{invoice.pk}"
+        ),
+        center=cash_payment.center,
+        entries=[
+            {
+                "account": LedgerEntry.Account.PATIENT_RECEIVABLES,
+                "direction": LedgerEntry.Direction.DEBIT,
+                "amount": cash_payment.amount_kmf,
+                "currency": Currency.KMF,
+            },
+            {
+                "account": account,
+                "direction": LedgerEntry.Direction.CREDIT,
+                "amount": cash_payment.amount_kmf,
+                "currency": Currency.KMF,
+            },
+        ],
+    )
+    reversal = CashPaymentReversal(
+        cash_payment=cash_payment,
+        reason=reason.strip(),
+        ledger_transaction=ledger_tx,
+        reversed_by=actor,
+    )
+    reversal.save()
+    new_balance = invoice_balance_kmf(invoice)
+    if invoice.status == Invoice.Status.PAID and new_balance > 0:
+        invoice.status = Invoice.Status.ISSUED
+        invoice.save(update_fields=["status", "updated_at"])
+    audit(
+        actor=actor, action=AuditAction.CASH_PAYMENT_REVERSED, target=reversal,
+        cash_payment_id=cash_payment.pk, reversal_id=reversal.pk,
+        invoice_id=invoice.pk, center_id=cash_payment.center_id,
+        method=str(cash_payment.method), amount_kmf=cash_payment.amount_kmf,
+        balance_after_kmf=new_balance, ledger_transaction_id=ledger_tx.pk,
+        invoice_status_after=invoice.status, currency=str(Currency.KMF),
+    )
+    return reversal
 
 
 # ---------------------------------------------------------------------------
@@ -278,6 +599,14 @@ def send_payment_request(*, actor, payment_request):
         raise ValidationError(
             "Impossible d'envoyer une demande qui n'est partagée avec aucun tuteur."
         )
+    # ADR 0015 — counter instalments may have settled the invoice between
+    # the request's creation and its sending: never SMS guardians about an
+    # invoice that owes nothing — nor about a cancelled one.
+    _refuse_cancelled_invoice(payment_request.invoice)
+    if invoice_balance_kmf(payment_request.invoice) <= 0:
+        raise ValidationError(
+            "Cette facture est déjà entièrement réglée : rien à demander."
+        )
     _set_status(payment_request, Status.SENT)
     audit(
         actor=actor, action=AuditAction.PAYMENT_REQUEST_SENT,
@@ -298,12 +627,24 @@ def send_payment_request(*, actor, payment_request):
 
 
 def quote_payment_request(payment_request):
-    """The transparent quote (rate + explicit fees) BEFORE any payment."""
+    """The transparent quote (rate + explicit fees) BEFORE any payment.
+
+    ADR 0015 — the quote covers the invoice's REMAINING BALANCE, not its
+    total: counter instalments (espèces, mobile money) may already have
+    settled part of it, and the guardian must never be asked one franc
+    more than what is still owed.
+    """
     if payment_request.status != Status.SENT:
         raise ValidationError(
             "Cette demande n'est pas ouverte au paiement : pas de devis."
         )
-    return quote_eur_for_kmf(payment_request.invoice.total_kmf)
+    _refuse_cancelled_invoice(payment_request.invoice)
+    balance = invoice_balance_kmf(payment_request.invoice)
+    if balance <= 0:
+        raise ValidationError(
+            "Cette facture est déjà entièrement réglée : plus rien à payer."
+        )
+    return quote_eur_for_kmf(balance)
 
 
 def _shared_active_link_for(payment_request, user):
@@ -376,7 +717,18 @@ def create_payment_intent(*, guardian_user, payment_request):
         )
     _refuse_if_recent_pending_intent(payment_request)
     _require_center_can_collect(payment_request.invoice.center)
-    quote = quote_eur_for_kmf(payment_request.invoice.total_kmf)
+    # A cancelled invoice must never charge a guardian (mirror of the
+    # counter refusal); the webhook re-checks under the invoice lock.
+    _refuse_cancelled_invoice(payment_request.invoice)
+    # ADR 0015 — the intent is frozen on the invoice's REMAINING balance
+    # (counter instalments may exist); the webhook re-checks that balance
+    # under the invoice lock before writing a single franc.
+    balance = invoice_balance_kmf(payment_request.invoice)
+    if balance <= 0:
+        raise ValidationError(
+            "Cette facture est déjà entièrement réglée : plus rien à payer."
+        )
+    quote = quote_eur_for_kmf(balance)
     intent = PaymentIntent.objects.create(
         payment_request=payment_request,
         guardian=link.guardian,
@@ -475,6 +827,39 @@ def _register_payment_success(*, intent, actor=None):
         )
     center = payment_request.invoice.center  # structural destination
     _require_center_can_collect(center)
+    # ADR 0015 — the intent was frozen on the invoice's remaining balance;
+    # counter instalments (or a reversal) may have moved it since. Locking
+    # the invoice row serialises this webhook against the cashiers, and a
+    # changed balance refuses the cash-in WITHOUT writing a franc — the
+    # provider may have debited the guardian: the refusal is audited
+    # (payment.webhook_refused) as reconciliation evidence.
+    invoice = Invoice.objects.select_for_update().get(pk=payment_request.invoice_id)
+    # Revue adversariale vague 2a — a cancelled invoice must never cash in
+    # (the counter always refused it; without this mirror the webhook flips
+    # annulee → payee silently). The provider may have debited the
+    # guardian: the refusal is audited as reconciliation evidence.
+    if invoice.status == Invoice.Status.CANCELLED:
+        raise _LateWebhookRefused(
+            "Encaissement refusé : cette facture a été annulée par le "
+            "centre.",
+            intent_id=intent.pk,
+            payment_request_id=payment_request.pk,
+            invoice_id=invoice.pk,
+            intent_kmf=str(intent.amount_kmf),
+            refusal="invoice_cancelled",
+        )
+    balance = invoice_balance_kmf(invoice)
+    if intent.amount_kmf != balance:
+        raise _LateWebhookRefused(
+            "Encaissement refusé : le solde de la facture a changé depuis "
+            "la création du paiement (encaissement au guichet entre-temps).",
+            intent_id=intent.pk,
+            payment_request_id=payment_request.pk,
+            invoice_id=invoice.pk,
+            intent_kmf=str(intent.amount_kmf),
+            balance_kmf=str(balance),
+            refusal="balance_changed",
+        )
 
     total_eur = intent.amount_eur
     net_eur = net_eur_for_kmf(intent.amount_kmf, intent.exchange_rate)
@@ -531,6 +916,21 @@ def _register_payment_success(*, intent, actor=None):
     intent.status = PaymentIntent.Status.SUCCEEDED
     intent.ledger_transaction = ledger_tx
     intent.save(update_fields=["status", "ledger_transaction", "updated_at"])
+    # ADR 0015 — the diaspora payment is a CashPayment like any other
+    # (the general concept covers it): same balance accounting, same cash
+    # journal. Its ledger transaction IS the diaspora cash-in above —
+    # never a second write for the same franc — and its receipt is the
+    # dual-currency one issued at closure (no counter receipt).
+    cash_payment = CashPayment(
+        invoice=invoice,
+        center=center,
+        method=CashPayment.Method.TRUST_BRIDGE,
+        amount_kmf=intent.amount_kmf,
+        ledger_transaction=ledger_tx,
+        payment_intent=intent,
+        received_by=None,
+    )
+    cash_payment.save()
     _set_status(payment_request, Status.PAID)
     # ``paid_at`` — the requestable payment timestamp (frontend constat B2:
     # « payée par un proche » must carry a date). Stamped HERE only, in the
@@ -540,12 +940,14 @@ def _register_payment_success(*, intent, actor=None):
     # cycle never clears it. Reading audience serializers expose it as-is.
     payment_request.paid_at = timezone.now()
     payment_request.save(update_fields=["paid_at", "updated_at"])
-    invoice = payment_request.invoice
+    # The intent covered the exact remaining balance (checked above), so
+    # the invoice is now settled in full — status set on the LOCKED row.
     invoice.status = Invoice.Status.PAID
     invoice.save(update_fields=["status", "updated_at"])
     audit(
         actor=actor, action=AuditAction.PAYMENT_RECORDED, target=payment_request,
         payment_request_id=payment_request.pk, intent_id=intent.pk,
+        cash_payment_id=cash_payment.pk,
         ledger_transaction_id=ledger_tx.pk, center_id=center.pk,
         guardian_id=intent.guardian_id,
         amount_eur=total_eur, fees_eur=fees_eur, amount_kmf=intent.amount_kmf,

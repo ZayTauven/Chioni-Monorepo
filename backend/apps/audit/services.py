@@ -93,6 +93,11 @@ class AuditAction:
     # transaction).
     PAYMENT_WEBHOOK_REFUSED = "payment.webhook_refused"
     PAYMENT_RECORDED = "payment.recorded"
+    # Caisse du centre (ADR 0015) — counter cash-ins and their reversals.
+    # Payload contract: references and amounts only — NEVER the reversal
+    # reason text (free text stays visible to the center, not in the log).
+    CASH_PAYMENT_RECORDED = "cash_payment.recorded"
+    CASH_PAYMENT_REVERSED = "cash_payment.reversed"
     CARE_CONFIRMED = "payment_request.care_confirmed"
     PATIENT_CARE_ACKNOWLEDGED = "payment_request.patient_acknowledged"
     PAYMENT_REQUEST_CLOSED = "payment_request.closed"

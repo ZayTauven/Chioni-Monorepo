@@ -55,3 +55,18 @@ class TestTariffs:
 
         with pytest.raises(IntegrityError):
             make_tariff(center_a, code="CS001")
+
+    def test_fractional_kmf_price_is_refused_even_in_direct_orm(self):
+        """The integrality guard lives in ``save()``, not only in the
+        serializer — no write path may create an unsettleable tariff."""
+        from decimal import Decimal
+
+        from django.core.exceptions import ValidationError
+
+        center = make_center()
+
+        with pytest.raises(ValidationError):
+            make_tariff(center, price_kmf=Decimal("1000.50"))
+
+        tariff = make_tariff(center, price_kmf=Decimal("1000"))
+        assert str(tariff.price_kmf) == "1000"

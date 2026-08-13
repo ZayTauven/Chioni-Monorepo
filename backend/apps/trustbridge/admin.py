@@ -1,6 +1,9 @@
 from django.contrib import admin
 
 from .models import (
+    CashPayment,
+    CashPaymentReversal,
+    CashReceipt,
     Dispute,
     Invoice,
     InvoiceLine,
@@ -142,6 +145,60 @@ class DisputeAdmin(admin.ModelAdmin):
 
     def has_delete_permission(self, request, obj=None):
         # Disputes are part of the money trail: resolved, never erased.
+        return False
+
+
+@admin.register(CashPayment)
+class CashPaymentAdmin(AppendOnlyAdminMixin, admin.ModelAdmin):
+    """Caisse (ADR 0015): cash-ins only exist through the services (counter
+    service or PSP webhook) — nothing here may be created, edited or
+    deleted; corrections are reversals."""
+
+    list_display = (
+        "id",
+        "center",
+        "invoice",
+        "method",
+        "operator",
+        "amount_kmf",
+        "received_by",
+        "created_at",
+    )
+    list_filter = ("method", "center")
+    search_fields = ("reference",)
+
+    def has_add_permission(self, request):
+        return False
+
+
+@admin.register(CashPaymentReversal)
+class CashPaymentReversalAdmin(AppendOnlyAdminMixin, admin.ModelAdmin):
+    list_display = (
+        "id",
+        "cash_payment",
+        "reversed_by",
+        "ledger_transaction",
+        "created_at",
+    )
+
+    def has_add_permission(self, request):
+        # Reversals must be created through reverse_cash_payment().
+        return False
+
+
+@admin.register(CashReceipt)
+class CashReceiptAdmin(AppendOnlyAdminMixin, admin.ModelAdmin):
+    list_display = (
+        "center",
+        "sequence_number",
+        "cash_payment",
+        "amount_kmf",
+        "issued_at",
+    )
+    list_filter = ("center",)
+
+    def has_add_permission(self, request):
+        # Counter receipts must be created through CashReceipt.issue().
         return False
 
 

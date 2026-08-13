@@ -10,11 +10,15 @@ Four URL families:
 from django.urls import path
 
 from apps.trustbridge.views import (
+    CenterCashJournalView,
+    CenterCashPaymentReverseView,
     CenterDisputeListView,
     CenterDisputeResolveView,
     CenterInvoiceDetailView,
     CenterInvoiceIssueView,
     CenterInvoiceListCreateView,
+    CenterUnpaidInvoiceListView,
+    CenterInvoicePaymentListCreateView,
     CenterInvoicePaymentRequestCreateView,
     CenterPaymentRequestCloseView,
     CenterPaymentRequestConfirmCareView,
@@ -29,6 +33,7 @@ from apps.trustbridge.views import (
     GuardianPaymentRequestPayView,
     GuardianPaymentRequestQuoteView,
     GuardianReceiptListView,
+    MyCashReceiptListView,
     MyPaymentRequestAcknowledgeView,
     MyPaymentRequestDetailView,
     MyPaymentRequestDisputeView,
@@ -47,6 +52,13 @@ urlpatterns = [
         CenterInvoiceListCreateView.as_view(),
         name="center-invoice-list",
     ),
+    # « unpaid » n'est pas un <int:pk> : les deux familles coexistent sans
+    # ambiguïté, mais on la déclare avant le détail pour la lisibilité.
+    path(
+        "centers/<int:center_pk>/invoices/unpaid/",
+        CenterUnpaidInvoiceListView.as_view(),
+        name="center-invoice-unpaid",
+    ),
     path(
         "centers/<int:center_pk>/invoices/<int:pk>/",
         CenterInvoiceDetailView.as_view(),
@@ -61,6 +73,22 @@ urlpatterns = [
         "centers/<int:center_pk>/invoices/<int:pk>/payment-requests/",
         CenterInvoicePaymentRequestCreateView.as_view(),
         name="center-invoice-payment-request",
+    ),
+    # Caisse du centre (ADR 0015)
+    path(
+        "centers/<int:center_pk>/invoices/<int:pk>/payments/",
+        CenterInvoicePaymentListCreateView.as_view(),
+        name="center-invoice-payments",
+    ),
+    path(
+        "centers/<int:center_pk>/invoices/<int:invoice_pk>/payments/<int:pk>/reverse/",
+        CenterCashPaymentReverseView.as_view(),
+        name="center-cash-payment-reverse",
+    ),
+    path(
+        "centers/<int:center_pk>/cash-journal/",
+        CenterCashJournalView.as_view(),
+        name="center-cash-journal",
     ),
     path(
         "centers/<int:center_pk>/payment-requests/",
@@ -134,6 +162,11 @@ urlpatterns = [
         name="my-payment-request-dispute",
     ),
     path("patients/me/receipts/", MyReceiptListView.as_view(), name="my-receipts"),
+    path(
+        "patients/me/cash-receipts/",
+        MyCashReceiptListView.as_view(),
+        name="my-cash-receipts",
+    ),
     # Audience: a guardian
     path(
         "guardian/payment-requests/",

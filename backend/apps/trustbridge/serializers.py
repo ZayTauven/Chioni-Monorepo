@@ -10,13 +10,20 @@ Explicit fields everywhere — never ``fields = "__all__"`` on money models.
 Every amount field name carries its currency (``_kmf``/``_eur``).
 """
 
+from decimal import Decimal
+
+from django.utils import timezone
 from rest_framework import serializers
 
-from apps.patients.serializers import PatientGuardianSerializer
+from apps.patients.serializers import PatientGuardianSerializer, _mask_phone
 from apps.trustbridge.models import (
+    CashPayment,
+    CashPaymentReversal,
+    CashReceipt,
     Dispute,
     Invoice,
     InvoiceLine,
+    MobileMoneyOperator,
     PaymentIntent,
     PaymentRequest,
     PaymentRequestShare,
@@ -39,14 +46,78 @@ class InvoiceLineStaffSerializer(serializers.ModelSerializer):
 
 class InvoiceStaffSerializer(serializers.ModelSerializer):
     lines = InvoiceLineStaffSerializer(many=True, read_only=True)
+    # ADR 0015 — the caisse view: what was collected (all methods,
+    # reversals excluded) and what is still owed. Derived from the
+    # payments, never a stored mutable field.
+    paid_kmf = serializers.SerializerMethodField()
+    balance_kmf = serializers.SerializerMethodField()
 
     class Meta:
         model = Invoice
         fields = [
-            "id", "encounter", "patient", "total_kmf", "status",
-            "lines", "created_at",
+            "id", "encounter", "patient", "total_kmf", "paid_kmf",
+            "balance_kmf", "status", "lines", "created_at",
         ]
         read_only_fields = fields
+
+    def get_paid_kmf(self, obj) -> str:
+        from apps.trustbridge.services import invoice_paid_kmf
+
+        return str(invoice_paid_kmf(obj))
+
+    def get_balance_kmf(self, obj) -> str:
+        from apps.trustbridge.services import invoice_balance_kmf
+
+        return str(invoice_balance_kmf(obj))
+
+
+class UnpaidInvoiceStaffSerializer(serializers.ModelSerializer):
+    """One row of the unpaid list (ADR 0015, vague 2b) — relance material.
+
+    ``paid_kmf``/``balance_kmf`` read the SQL annotations carried by
+    ``services.unpaid_invoices_qs`` (set-based mirror of
+    ``invoice_balance_kmf``, agreement locked by tests) — NEVER the per-row
+    helpers, which would re-query the payments for every row (N+1).
+
+    The patient's phone is MASKED (same helper as the guardian routing
+    list of the previous wave): the desk confirms an identity at a glance
+    (« le numéro finissant par 78 ? »), a bulk money view never hands out
+    a harvestable phone book. The full phone stays where it already is —
+    the patient registry, one profile at a time.
+    """
+
+    patient_name = serializers.SerializerMethodField()
+    patient_phone_masked = serializers.SerializerMethodField()
+    paid_kmf = serializers.SerializerMethodField()
+    balance_kmf = serializers.SerializerMethodField()
+    age_days = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Invoice
+        fields = [
+            "id", "patient", "patient_name", "patient_phone_masked",
+            "total_kmf", "paid_kmf", "balance_kmf", "age_days", "created_at",
+        ]
+        read_only_fields = fields
+
+    def get_patient_name(self, invoice) -> str:
+        patient = invoice.patient
+        return f"{patient.first_name} {patient.last_name}".strip()
+
+    def get_patient_phone_masked(self, invoice) -> str:
+        phone = invoice.patient.phone
+        return _mask_phone(phone) if phone else ""
+
+    def get_paid_kmf(self, invoice) -> str:
+        return str(invoice.paid_kmf_agg)
+
+    def get_balance_kmf(self, invoice) -> str:
+        return str(invoice.balance_kmf_agg)
+
+    def get_age_days(self, invoice) -> int:
+        """Whole LOCAL days since the invoice was created (ancienneté)."""
+        created_day = timezone.localtime(invoice.created_at).date()
+        return (timezone.localdate() - created_day).days
 
 
 class InvoiceCreateSerializer(serializers.Serializer):
@@ -240,3 +311,142 @@ class PaymentIntentGuardianSerializer(serializers.ModelSerializer):
             "created_at",
         ]
         read_only_fields = fields
+
+
+# ---------------------------------------------------------------------------
+# Caisse du centre — encaissements guichet (ADR 0015)
+# ---------------------------------------------------------------------------
+
+
+class CashReceiptSerializer(serializers.ModelSerializer):
+    """Counter receipt — pure KMF, « G- » series separate from diaspora."""
+
+    receipt_number = serializers.CharField(source="number", read_only=True)
+    center_name = serializers.CharField(source="center.name", read_only=True)
+    method = serializers.CharField(source="cash_payment.method", read_only=True)
+
+    class Meta:
+        model = CashReceipt
+        fields = [
+            "id", "receipt_number", "sequence_number", "center",
+            "center_name", "amount_kmf", "method", "issued_at",
+        ]
+        read_only_fields = fields
+
+
+class CashPaymentReversalSerializer(serializers.ModelSerializer):
+    """A reversal, visible and SIGNED in the cash journal: who, why, when,
+    which amount/method it undoes, and its own ledger transaction."""
+
+    amount_kmf = serializers.DecimalField(
+        source="cash_payment.amount_kmf",
+        max_digits=12, decimal_places=2, read_only=True,
+    )
+    method = serializers.CharField(source="cash_payment.method", read_only=True)
+
+    class Meta:
+        model = CashPaymentReversal
+        fields = [
+            "id", "cash_payment", "method", "amount_kmf", "reason",
+            "reversed_by", "ledger_transaction", "created_at",
+        ]
+        read_only_fields = fields
+
+
+class CashPaymentStaffSerializer(serializers.ModelSerializer):
+    """One cash-in as the center sees it — receipt and reversal embedded.
+
+    ``receipt`` is null for a Trust Bridge cash-in (its receipt is the
+    dual-currency one issued at closure) and ``reversal`` is null until
+    the payment is reversed.
+    """
+
+    receipt = serializers.SerializerMethodField()
+    reversal = serializers.SerializerMethodField()
+
+    class Meta:
+        model = CashPayment
+        fields = [
+            "id", "invoice", "method", "operator", "reference",
+            "amount_kmf", "received_by", "payment_intent",
+            "ledger_transaction", "receipt", "reversal", "created_at",
+        ]
+        read_only_fields = fields
+
+    @staticmethod
+    def get_receipt(obj):
+        receipt = getattr(obj, "cash_receipt", None)
+        return CashReceiptSerializer(receipt).data if receipt else None
+
+    @staticmethod
+    def get_reversal(obj):
+        reversal = getattr(obj, "reversal", None)
+        return CashPaymentReversalSerializer(reversal).data if reversal else None
+
+
+class CashPaymentCreateSerializer(serializers.Serializer):
+    """Counter cash-in input — the amount is in WHOLE KMF (the franc has
+    no subdivision in practice, ADR 0003); the balance rules live in the
+    service, never here."""
+
+    method = serializers.ChoiceField(
+        choices=CashPayment.Method.choices,
+        error_messages={
+            "required": "Le moyen de paiement est requis.",
+            "invalid_choice": "Moyen de paiement inconnu.",
+        },
+    )
+    amount_kmf = serializers.DecimalField(
+        max_digits=12,
+        decimal_places=0,
+        min_value=Decimal("1"),
+        error_messages={
+            "required": "Le montant encaissé (KMF) est requis.",
+            "invalid": "Montant invalide.",
+            "max_decimal_places": "Le franc comorien ne porte pas de décimales.",
+            "min_value": "Le montant encaissé doit être d'au moins 1 KMF.",
+        },
+    )
+    operator = serializers.ChoiceField(
+        choices=MobileMoneyOperator.choices,
+        required=False,
+        allow_blank=True,
+        error_messages={"invalid_choice": "Opérateur mobile money inconnu."},
+    )
+    reference = serializers.CharField(
+        required=False, allow_blank=True, max_length=64
+    )
+
+
+class CashReversalCreateSerializer(serializers.Serializer):
+    reason = serializers.CharField(
+        error_messages={
+            "required": "Le motif de la contre-passation est obligatoire.",
+            "blank": "Le motif de la contre-passation est obligatoire.",
+        }
+    )
+
+
+class CashReceiptPatientSerializer(serializers.ModelSerializer):
+    """The patient's counter receipts — their money trail, no staff refs.
+
+    ``reversed`` is honest bookkeeping: a reversed cash-in's receipt no
+    longer proves an acquitted amount.
+    """
+
+    receipt_number = serializers.CharField(source="number", read_only=True)
+    center_name = serializers.CharField(source="center.name", read_only=True)
+    method = serializers.CharField(source="cash_payment.method", read_only=True)
+    reversed = serializers.SerializerMethodField()
+
+    class Meta:
+        model = CashReceipt
+        fields = [
+            "id", "receipt_number", "center_name", "amount_kmf", "method",
+            "reversed", "issued_at",
+        ]
+        read_only_fields = fields
+
+    @staticmethod
+    def get_reversed(obj) -> bool:
+        return getattr(obj.cash_payment, "reversal", None) is not None
