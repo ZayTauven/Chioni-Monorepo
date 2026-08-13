@@ -33,7 +33,7 @@ export function Loader() {
       data-ax-loader-el
       role="status"
       aria-live="polite"
-      aria-label="Loading"
+      aria-label="Chargement"
       aria-hidden={hidden}
     >
       <span className="ax-spinner ax-spinner--lg" aria-hidden="true">

@@ -1,8 +1,0 @@
-[
-  { "id": "act_1", "actor": "Devon Okafor", "action": "closed task", "target": "TSK-241", "time": "8m ago", "iconTint": "#34D399" },
-  { "id": "act_2", "actor": "Lena Brandt", "action": "uploaded", "target": "empty-state illustrations", "time": "18m ago", "iconTint": "#A78BFA" },
-  { "id": "act_3", "actor": "Tomás Herrera", "action": "moved deal", "target": "Brightway Retail → Negotiation", "time": "12m ago", "iconTint": "#FBBF24" },
-  { "id": "act_4", "actor": "Priya Nair", "action": "exported", "target": "the weekly report", "time": "1h ago", "iconTint": "#38BDF8" },
-  { "id": "act_5", "actor": "Ava Sutton", "action": "created invoice", "target": "INV-2025-0118", "time": "1d ago", "iconTint": "#F472B6" },
-  { "id": "act_6", "actor": "Mei Lin", "action": "replied to", "target": "ticket #4471", "time": "1h ago", "iconTint": "#FB7185" }
-]

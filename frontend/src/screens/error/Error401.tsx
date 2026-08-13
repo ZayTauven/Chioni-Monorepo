@@ -20,23 +20,19 @@ export function Error401() {
         </svg>
       </StatusIllustration>
 
-      <StatusHeading code="401" title="Authentication required"
-        body="You need to sign in to view this page. Your session may have expired — sign back in to pick up where you left off." />
+      <StatusHeading code="401" title="Connexion requise"
+        body="Vous devez vous connecter pour voir cette page. Votre session a peut-être expiré — reconnectez-vous pour reprendre là où vous en étiez." />
 
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--ax-space-3)', justifyContent: 'center' }}>
-        <Link className="ax-btn ax-btn--primary" href="/auth/sign-in-basic">
+        <Link className="ax-btn ax-btn--primary" href="/auth/sign-in">
           <svg className="ax-btn__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.75} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M15 8v-2a2 2 0 0 0 -2 -2h-7a2 2 0 0 0 -2 2v12a2 2 0 0 0 2 2h7a2 2 0 0 0 2 -2v-2" /><path d="M21 12h-13l3 -3" /><path d="M11 15l-3 -3" /></svg>
-          <span className="ax-btn__label">Sign in</span>
+          <span className="ax-btn__label">Se connecter</span>
         </Link>
         <Link className="ax-btn ax-btn--secondary" href="/">
           <svg className="ax-btn__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.75} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M5 12l-2 0l9 -9l9 9l-2 0" /><path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2 -2v-7" /><path d="M9 21v-6a2 2 0 0 1 2 -2h2a2 2 0 0 1 2 2v6" /></svg>
-          <span className="ax-btn__label">Go home</span>
+          <span className="ax-btn__label">Retour à l&rsquo;accueil</span>
         </Link>
       </div>
-
-      <p style={{ margin: 0, fontSize: 'var(--ax-text-sm)', color: 'var(--ax-text-subtle)' }}>
-        Trouble signing in? <Link className="ax-link" href="/auth/reset-password-basic">Reset your password</Link>
-      </p>
     </StatusStandalone>
   );
 }

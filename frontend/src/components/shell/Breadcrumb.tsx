@@ -25,7 +25,7 @@ export function Breadcrumb({ slug }: { slug: string }) {
     <nav className="ax-breadcrumb" data-ax-breadcrumb aria-label="Breadcrumb">
       <ol className="ax-breadcrumb__list">
         <li className="ax-breadcrumb__item">
-          <Link href="/" aria-label="Home" className="ax-breadcrumb__home-link">
+          <Link href="/centre" aria-label="Accueil" className="ax-breadcrumb__home-link">
             <svg className="ax-breadcrumb__home ax-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.75} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <path d="M5 12l-2 0l9 -9l9 9l-2 0" />
               <path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2 -2v-7" />

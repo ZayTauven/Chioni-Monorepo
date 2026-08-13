@@ -19,7 +19,9 @@ function buildRows(): Row[] {
   const rows: Row[] = [];
   for (const n of manifest.nodes) {
     if (n.alias) continue; // canonical entries only
-    if (n.parent === null) continue; // skip pure group containers
+    // Skip pure group containers (nodes whose children carry the real pages);
+    // Chioni's flat manifest has none, so every top-level node is a page.
+    if (manifest.childrenOf(n.id).length > 0) continue;
     const trail = manifest.trail(n).slice(0, -1).map((t) => t.title);
     rows.push({ node: n, crumb: trail.join(' › ') });
   }
@@ -86,7 +88,7 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
       <button
         type="button"
         className="ax-command__backdrop"
-        aria-label="Close search"
+        aria-label="Fermer la recherche"
         onClick={onClose}
       />
       <div className="ax-command__panel" role="dialog" aria-modal="true" aria-label="Search" ref={panelRef}>
@@ -109,14 +111,14 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
           <input
             ref={inputRef}
             type="text"
-            placeholder="Search pages, jump to…"
-            aria-label="Search"
+            placeholder="Rechercher une page…"
+            aria-label="Rechercher"
             value={q}
             onChange={(e) => setQ(e.target.value)}
           />
         </div>
         <div className="ax-command__results" role="listbox">
-          {results.length === 0 && <p className="ax-command__empty">No results found.</p>}
+          {results.length === 0 && <p className="ax-command__empty">Aucun résultat.</p>}
           {results.map((row, i) => (
             <button
               key={row.node.id}

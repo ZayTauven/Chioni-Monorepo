@@ -21,9 +21,6 @@
 import { useEffect, useState, type CSSProperties, type ReactNode } from 'react';
 import Link from 'next/link';
 
-const GLOBE = (
-  <svg className="ax-btn__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.75} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 18 0a9 9 0 1 0 -18 0" /><path d="M3.6 9h16.8" /><path d="M3.6 15h16.8" /><path d="M11.5 3a17 17 0 0 0 0 18" /><path d="M12.5 3a17 17 0 0 1 0 18" /></svg>
-);
 const SUN = (
   <svg className="ax-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.75} strokeLinecap="round" strokeLinejoin="round" width={22} height={22} aria-hidden="true"><path d="M8 12a4 4 0 1 0 8 0a4 4 0 1 0 -8 0" /><path d="M3 12h1m8 -9v1m8 8h1m-9 8v1m-6.4 -15.4l.7 .7m12.1 -.7l-.7 .7m0 11.4l.7 .7m-12.1 -.7l-.7 .7" /></svg>
 );
@@ -33,8 +30,6 @@ const MOON = (
 const MOON_BTN = (
   <svg className="ax-btn__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.75} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 3c.132 0 .263 0 .393 0a7.5 7.5 0 0 0 7.92 12.446a9 9 0 1 1 -8.313 -12.454l0 .008" /></svg>
 );
-
-const LOCALES = ['EN', 'FR', 'DE', 'ES', 'AR'];
 
 function useTheme() {
   const [theme, setTheme] = useState<'light' | 'dark'>('light');
@@ -55,51 +50,25 @@ function useTheme() {
   return { theme, toggle };
 }
 
-function useLocale() {
-  const [locale, setLocale] = useState('EN');
-  useEffect(() => {
-    setLocale((localStorage.getItem('ax:lang') || 'EN').toUpperCase());
-  }, []);
-  const cycle = () => {
-    const next = LOCALES[(LOCALES.indexOf(locale) + 1) % LOCALES.length];
-    setLocale(next);
-    try {
-      localStorage.setItem('ax:lang', next);
-    } catch {
-      /* ignore */
-    }
-  };
-  return { locale, cycle };
-}
-
-/** Full off-app tools: language pill + theme icon-btn (sign-in/up, reset, two-step basic). */
+/** Off-app tools: theme toggle only (interface in French; shikomori = phase 2). */
 export function OffappTools({ style }: { style?: CSSProperties }) {
   const { theme, toggle } = useTheme();
-  const { locale, cycle } = useLocale();
   return (
     <div className="ax-cluster" style={{ gap: 'var(--ax-space-2)', ...style }}>
-      <button type="button" className="ax-btn ax-btn--ghost ax-btn--sm" onClick={cycle} aria-label="Change language">
-        {GLOBE}
-        <span className="ax-btn__label ax-num">{locale}</span>
-      </button>
-      <button type="button" className="ax-icon-btn" onClick={toggle} aria-pressed={theme === 'dark'} aria-label="Toggle dark mode">
+      <button type="button" className="ax-icon-btn" onClick={toggle} aria-pressed={theme === 'dark'} aria-label="Basculer le mode sombre">
         {theme === 'dark' ? SUN : MOON}
       </button>
     </div>
   );
 }
 
-/** Compact off-app tools: theme ghost icon-btn + static EN pill (create-password, lock, cover, etc.). */
+/** Compact off-app tools: theme ghost icon-btn (cover screens). */
 export function OffappToolsCompact({ style }: { style?: CSSProperties }) {
   const { toggle } = useTheme();
   return (
     <div className="ax-cluster" style={{ position: 'fixed', insetBlockStart: 'var(--ax-space-5)', insetInlineEnd: 'var(--ax-space-6)', zIndex: 5, gap: 'var(--ax-space-2)', ...style }}>
-      <button type="button" className="ax-btn ax-btn--ghost ax-btn--icon" aria-label="Toggle color theme" onClick={toggle}>
+      <button type="button" className="ax-btn ax-btn--ghost ax-btn--icon" aria-label="Basculer le mode sombre" onClick={toggle}>
         {MOON_BTN}
-      </button>
-      <button type="button" className="ax-btn ax-btn--ghost ax-btn--sm">
-        {GLOBE}
-        <span className="ax-btn__label">EN</span>
       </button>
     </div>
   );
@@ -109,14 +78,14 @@ const HEX_LOGO = (_size: number) => (
   <svg viewBox="0 0 32 32" width={24} height={24} fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><defs><linearGradient id="axmk0" x1={4} y1={4} x2={28} y2={28} gradientUnits="userSpaceOnUse"><stop stopColor="#2BC4B0" /><stop offset="0.55" stopColor="#1E9E96" /><stop offset="1" stopColor="#6D5CF0" /></linearGradient></defs><path d="M4 4 H16 A12 12 0 0 1 28 16 V28 A0 0 0 0 1 28 28 H16 A12 12 0 0 1 4 16 V4 Z" fill="url(#axmk0)" stroke="none" /><circle cx="20.5" cy="11.5" r="2.6" fill="#0A0C11" fillOpacity="0.92" stroke="none" /></svg>
 );
 
-/** Centered brand lockup (sign-in/up/reset/two-step basic). */
+/** Centered brand lockup (sign-in / verify / staff). */
 export function BrandCentered({ logoSize = 42, glyph = 24, textSize = 'var(--ax-text-xl)' }: { logoSize?: number; glyph?: number; textSize?: string }) {
   return (
-    <Link href="/" className="ax-center" aria-label="Vireo home" style={{ gap: 'var(--ax-space-3)', textDecoration: 'none', flexDirection: 'row', justifyContent: 'center' }}>
+    <Link href="/" className="ax-center" aria-label="Accueil Chioni" style={{ gap: 'var(--ax-space-3)', textDecoration: 'none', flexDirection: 'row', justifyContent: 'center' }}>
       <span className="ax-center" aria-hidden="true" style={{ inlineSize: logoSize, blockSize: logoSize, borderRadius: 'var(--ax-radius-md)', background: 'var(--ax-gradient-accent)', color: 'var(--ax-on-accent)', boxShadow: '0 8px 22px -8px rgba(var(--ax-accent-rgb),.7)' }}>
         {HEX_LOGO(glyph)}
       </span>
-      <span style={{ fontFamily: 'var(--ax-font-display)', fontWeight: 'var(--ax-weight-semibold)', fontSize: textSize, color: 'var(--ax-text-strong)', letterSpacing: '-.01em' }}>Vireo</span>
+      <span style={{ fontFamily: 'var(--ax-font-display)', fontWeight: 'var(--ax-weight-semibold)', fontSize: textSize, color: 'var(--ax-text-strong)', letterSpacing: '-.01em' }}>Chioni</span>
     </Link>
   );
 }
@@ -124,11 +93,11 @@ export function BrandCentered({ logoSize = 42, glyph = 24, textSize = 'var(--ax-
 /** Inline brand lockup (cover form pane). */
 export function BrandInline({ logoSize = 38, glyph = 22, textSize = 'var(--ax-text-lg)' }: { logoSize?: number; glyph?: number; textSize?: string }) {
   return (
-    <Link href="/" className="ax-cluster" aria-label="Vireo home" style={{ gap: 'var(--ax-space-3)', textDecoration: 'none' }}>
+    <Link href="/" className="ax-cluster" aria-label="Accueil Chioni" style={{ gap: 'var(--ax-space-3)', textDecoration: 'none' }}>
       <span className="ax-center" aria-hidden="true" style={{ inlineSize: logoSize, blockSize: logoSize, borderRadius: 'var(--ax-radius-md)', background: 'var(--ax-gradient-accent)', color: 'var(--ax-on-accent)', boxShadow: '0 8px 22px -8px rgba(var(--ax-accent-rgb),.7)' }}>
         {HEX_LOGO(glyph)}
       </span>
-      <span style={{ fontFamily: 'var(--ax-font-display)', fontWeight: 'var(--ax-weight-semibold)', fontSize: textSize, color: 'var(--ax-text-strong)' }}>Vireo</span>
+      <span style={{ fontFamily: 'var(--ax-font-display)', fontWeight: 'var(--ax-weight-semibold)', fontSize: textSize, color: 'var(--ax-text-strong)' }}>Chioni</span>
     </Link>
   );
 }

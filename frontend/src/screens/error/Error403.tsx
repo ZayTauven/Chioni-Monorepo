@@ -17,22 +17,22 @@ export function Error403() {
         </svg>
       </StatusIllustration>
 
-      <StatusHeading code="403" title="Access denied" bodyMaxCh={44}
-        body="You're signed in, but you don't have permission to view this page. If you think this is a mistake, ask a workspace admin to grant you access." />
+      <StatusHeading code="403" title="Accès refusé" bodyMaxCh={44}
+        body="Vous êtes connecté, mais vous n'avez pas l'autorisation de voir cette page. Si vous pensez qu'il s'agit d'une erreur, contactez le responsable de votre centre." />
 
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--ax-space-3)', justifyContent: 'center' }}>
-        <Link className="ax-btn ax-btn--primary" href="/">
+        <Link className="ax-btn ax-btn--primary" href="/espaces">
           <svg className="ax-btn__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.75} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 13a1 1 0 0 1 1 -1h7v-7a1 1 0 0 1 1 -1h7a1 1 0 0 1 1 1v16a1 1 0 0 1 -1 1h-16a1 1 0 0 1 -1 -1z" /></svg>
-          <span className="ax-btn__label">Go to dashboard</span>
+          <span className="ax-btn__label">Mes espaces</span>
         </Link>
-        <Link className="ax-btn ax-btn--secondary" href="/pages/support">
-          <svg className="ax-btn__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.75} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M5 7a4 4 0 1 0 8 0a4 4 0 1 0 -8 0" /><path d="M3 21v-2a4 4 0 0 1 4 -4h4a4 4 0 0 1 4 4v2" /><path d="M16 11h6m-3 -3v6" /></svg>
-          <span className="ax-btn__label">Request access</span>
+        <Link className="ax-btn ax-btn--secondary" href="/">
+          <svg className="ax-btn__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.75} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M5 12l-2 0l9 -9l9 9l-2 0" /><path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2 -2v-7" /><path d="M9 21v-6a2 2 0 0 1 2 -2h2a2 2 0 0 1 2 2v6" /></svg>
+          <span className="ax-btn__label">Retour à l&rsquo;accueil</span>
         </Link>
       </div>
 
       <p style={{ margin: 0, fontSize: 'var(--ax-text-sm)', color: 'var(--ax-text-subtle)' }}>
-        Signed in as the wrong account? <Link className="ax-link" href="/auth/sign-in-basic">Switch user</Link>
+        Mauvais compte ? <Link className="ax-link" href="/auth/sign-in">Changer de compte</Link>
       </p>
     </StatusStandalone>
   );

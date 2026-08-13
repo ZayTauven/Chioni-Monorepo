@@ -19,6 +19,10 @@
 @import './nav.css'; /* sidebar navigation tree (manifest-driven menu) */
 @import './shell.css'; /* shell-chrome: customizer drawer, header dropdowns, command palette, etc. */
 @import './utilities.css'; /* token-driven helpers */
+@import './shell-lite.css'; /* Chioni: light chrome of the patient & guardian spaces */
+@import './centre.css'; /* Chioni: centre-space screen styles */
+@import './patient.css'; /* Chioni: patient-space screen styles */
+@import './tuteur.css'; /* Chioni: guardian-space screen styles */
 
 /* ── Surface schemes (sidebar/header chrome) ── */
 @import './schemes.css';

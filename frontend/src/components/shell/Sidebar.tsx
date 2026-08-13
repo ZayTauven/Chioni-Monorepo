@@ -55,6 +55,31 @@ interface LeafProps {
   filter: string;
 }
 
+/** Top-level leaf: a childless L1 node rendered as a direct link (Chioni's
+ *  centre nav is flat — no collapsible groups). */
+function TopLeaf({ node, activeSlug, filter }: { node: NavNode; activeSlug: string; filter: string }) {
+  const resolved = manifest.resolve(node)!;
+  const isActive = resolved.slug === activeSlug;
+  const hidden = filter && !matches(node, filter);
+  const cls = ['ax-nav__item', 'ax-nav__item--parent'];
+  if (isActive) cls.push('ax-nav__item--active', 'is-active');
+  if (hidden) cls.push('is-hidden');
+  return (
+    <Link
+      className={cls.join(' ')}
+      role="treeitem"
+      aria-level={1}
+      aria-current={isActive ? 'page' : undefined}
+      href={hrefForSlug(resolved.slug)}
+      tabIndex={isActive ? 0 : -1}
+    >
+      <Icon name={node.icon} className="ax-nav__icon" />
+      <span className="ax-nav__label">{node.title}</span>
+      <Badge badge={node.badge} />
+    </Link>
+  );
+}
+
 function Leaf({ node, level, activeSlug, filter }: LeafProps) {
   const resolved = manifest.resolve(node)!;
   const isActive = resolved.slug === activeSlug;
@@ -157,11 +182,11 @@ export function Sidebar() {
     <aside className="ax-sidebar" role="navigation" aria-label="Primary">
       {/* ===== BRAND ===== */}
       <div className="ax-sidebar__brand">
-        <Link className="ax-sidebar__logo" href="/" aria-label="Vireo home">
+        <Link className="ax-sidebar__logo" href="/centre" aria-label="Accueil Chioni">
           <span className="ax-sidebar__mark" aria-hidden="true">
             <svg className="ax-icon" viewBox="0 0 32 32" width={24} height={24} fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><defs><linearGradient id="axmk0" x1={4} y1={4} x2={28} y2={28} gradientUnits="userSpaceOnUse"><stop stopColor="#2BC4B0" /><stop offset="0.55" stopColor="#1E9E96" /><stop offset="1" stopColor="#6D5CF0" /></linearGradient></defs><path d="M4 4 H16 A12 12 0 0 1 28 16 V28 A0 0 0 0 1 28 28 H16 A12 12 0 0 1 4 16 V4 Z" fill="url(#axmk0)" stroke="none" /><circle cx="20.5" cy="11.5" r="2.6" fill="#0A0C11" fillOpacity="0.92" stroke="none" /></svg>
           </span>
-          <span className="ax-sidebar__wordmark">VIREO</span>
+          <span className="ax-sidebar__wordmark">CHIONI</span>
         </Link>
       </div>
 
@@ -185,8 +210,8 @@ export function Sidebar() {
         <input
           type="search"
           className="ax-sidebar__filter"
-          placeholder="Filter menu…"
-          aria-label="Filter menu"
+          placeholder="Filtrer le menu…"
+          aria-label="Filtrer le menu"
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
           onKeyDown={(e) => e.key === 'Escape' && setFilter('')}
@@ -226,15 +251,24 @@ export function Sidebar() {
             </p>
             {groupsInSection(section)
               .filter((g) => g.inMenu)
-              .map((g) => (
-                <Group
-                  key={g.id}
-                  node={g}
-                  level={1}
-                  activeSlug={activeSlug}
-                  filter={filter.trim().toLowerCase()}
-                />
-              ))}
+              .map((g) =>
+                manifest.childrenOf(g.id).filter((c) => c.inMenu).length > 0 ? (
+                  <Group
+                    key={g.id}
+                    node={g}
+                    level={1}
+                    activeSlug={activeSlug}
+                    filter={filter.trim().toLowerCase()}
+                  />
+                ) : (
+                  <TopLeaf
+                    key={g.id}
+                    node={g}
+                    activeSlug={activeSlug}
+                    filter={filter.trim().toLowerCase()}
+                  />
+                ),
+              )}
           </div>
         ))}
       </nav>
@@ -244,14 +278,12 @@ export function Sidebar() {
 
 /* ── helpers ── */
 function sectionLabel(s: string): string {
-  // Manifest sections are upper-case; reference renders them title-ish.
+  // Manifest sections are upper-case; the sidebar renders them title-cased.
   const map: Record<string, string> = {
-    MAIN: 'Main',
-    APPLICATIONS: 'Applications',
-    MODULES: 'Modules',
-    PAGES: 'Pages',
-    'UI & FORMS': 'UI & Forms',
-    DOCS: 'Docs',
+    'TABLEAU DE BORD': 'Tableau de bord',
+    'ACTIVITÉ': 'Activité',
+    'PONT DE CONFIANCE': 'Pont de Confiance',
+    'GESTION': 'Gestion',
   };
   return map[s] || s;
 }

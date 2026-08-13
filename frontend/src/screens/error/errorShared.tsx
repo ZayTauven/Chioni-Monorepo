@@ -32,12 +32,12 @@ export function StatusTools() {
   };
   return (
     <div style={{ position: 'fixed', top: 'var(--ax-space-5)', right: 'var(--ax-space-6)', zIndex: 5, display: 'flex', gap: 'var(--ax-space-2)', alignItems: 'center' }}>
-      <button type="button" className="ax-btn ax-btn--ghost ax-btn--icon" aria-label="Toggle color theme" onClick={toggle}>
+      <button type="button" className="ax-btn ax-btn--ghost ax-btn--icon" aria-label="Basculer le mode sombre" onClick={toggle}>
         {MOON_BTN}
       </button>
       <Link className="ax-btn ax-btn--ghost ax-btn--sm" href="/">
         {ARROW_BACK}
-        <span className="ax-btn__label">Back to dashboard</span>
+        <span className="ax-btn__label">Retour à l&rsquo;accueil</span>
       </Link>
     </div>
   );
@@ -50,11 +50,11 @@ const HEX_LOGO = (
 /** Centered brand lockup (links home). */
 export function StatusBrand() {
   return (
-    <Link href="/" aria-label="Vireo home" style={{ display: 'inline-flex', alignItems: 'center', gap: 'var(--ax-space-3)', textDecoration: 'none' }}>
+    <Link href="/" aria-label="Accueil Chioni" style={{ display: 'inline-flex', alignItems: 'center', gap: 'var(--ax-space-3)', textDecoration: 'none' }}>
       <span aria-hidden="true" style={{ display: 'inline-grid', placeItems: 'center', width: 40, height: 40, borderRadius: 'var(--ax-radius-md)', background: 'var(--ax-gradient-accent)', color: 'var(--ax-on-accent)', boxShadow: '0 8px 22px -8px rgba(var(--ax-accent-rgb),.7)' }}>
         {HEX_LOGO}
       </span>
-      <span style={{ fontFamily: 'var(--ax-font-display)', fontWeight: 600, fontSize: 'var(--ax-text-lg)', color: 'var(--ax-text-strong)', letterSpacing: '.01em' }}>Vireo</span>
+      <span style={{ fontFamily: 'var(--ax-font-display)', fontWeight: 600, fontSize: 'var(--ax-text-lg)', color: 'var(--ax-text-strong)', letterSpacing: '.01em' }}>Chioni</span>
     </Link>
   );
 }
@@ -113,16 +113,16 @@ export function ReferenceId({ refId }: { refId: string }) {
   };
   return (
     <>
-      <span>Reference ID</span>
+      <span>Référence</span>
       <button type="button" onClick={copy} className="ax-num"
         style={{ display: 'inline-flex', alignItems: 'center', gap: 'var(--ax-space-2)', fontFamily: 'var(--ax-font-mono)', fontSize: 'var(--ax-text-sm)', color: 'var(--ax-text)', background: 'var(--ax-surface-subtle)', border: '1px solid var(--ax-border)', borderRadius: 'var(--ax-radius-sm)', padding: '4px var(--ax-space-3)', cursor: 'pointer' }}
-        aria-label={copied ? 'Reference ID copied' : `Copy reference ID ${refId}`}>
+        aria-label={copied ? 'Référence copiée' : `Copier la référence ${refId}`}>
         <span>{refId}</span>
         {!copied
           ? <svg viewBox="0 0 24 24" width={15} height={15} fill="none" stroke="currentColor" strokeWidth={1.75} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M7 9.667a2.667 2.667 0 0 1 2.667 -2.667h8.666a2.667 2.667 0 0 1 2.667 2.667v8.666a2.667 2.667 0 0 1 -2.667 2.667h-8.666a2.667 2.667 0 0 1 -2.667 -2.667l0 -8.666" /><path d="M4.012 16.737a2.005 2.005 0 0 1 -1.012 -1.737v-10c0 -1.1 .9 -2 2 -2h10c.75 0 1.158 .385 1.5 1" /></svg>
           : <svg viewBox="0 0 24 24" width={15} height={15} fill="none" stroke="var(--ax-success-500)" strokeWidth={1.75} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M5 12l5 5l10 -10" /></svg>}
       </button>
-      {copied && <span aria-live="polite" style={{ color: 'var(--ax-success-500)' }}>Copied</span>}
+      {copied && <span aria-live="polite" style={{ color: 'var(--ax-success-500)' }}>Copié</span>}
     </>
   );
 }

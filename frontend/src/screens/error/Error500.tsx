@@ -17,17 +17,17 @@ export function Error500() {
         </svg>
       </StatusIllustration>
 
-      <StatusHeading code="500" title="Something went wrong" bodyMaxCh={44}
-        body="An unexpected error occurred on our side — not yours. Our team has been notified. Try again in a moment, or head back home." />
+      <StatusHeading code="500" title="Une erreur est survenue" bodyMaxCh={44}
+        body="Un problème est survenu de notre côté — pas du vôtre. Réessayez dans un instant, ou revenez à l'accueil." />
 
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--ax-space-3)', justifyContent: 'center' }}>
         <button type="button" className="ax-btn ax-btn--primary" onClick={() => window.location.reload()}>
           <svg className="ax-btn__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.75} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M20 11a8.1 8.1 0 0 0 -15.5 -2m-.5 -4v4h4" /><path d="M4 13a8.1 8.1 0 0 0 15.5 2m.5 4v-4h-4" /></svg>
-          <span className="ax-btn__label">Retry</span>
+          <span className="ax-btn__label">Réessayer</span>
         </button>
         <Link className="ax-btn ax-btn--secondary" href="/">
           <svg className="ax-btn__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.75} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M5 12l-2 0l9 -9l9 9l-2 0" /><path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2 -2v-7" /><path d="M9 21v-6a2 2 0 0 1 2 -2h2a2 2 0 0 1 2 2v6" /></svg>
-          <span className="ax-btn__label">Go home</span>
+          <span className="ax-btn__label">Retour à l&rsquo;accueil</span>
         </Link>
       </div>
 

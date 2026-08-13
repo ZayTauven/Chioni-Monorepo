@@ -99,12 +99,13 @@ export function groupsInSection(section: string): NavNode[] {
 }
 
 /**
- * Normalise a router path to a manifest slug. The React edition routes by slug
- * (e.g. "/dashboards/sales"), and "/" maps to the Sales dashboard default.
+ * Normalise a router path to a manifest slug. Chioni routes by slug with the
+ * space prefix included (e.g. "/centre/patients" → "centre/patients"); the
+ * empty path resolves to the centre overview (the only manifest-driven space).
  */
 export function slugFromPath(pathname: string): string {
   let p = (pathname || '/').replace(/\/+$/, '').replace(/^\/+/, '');
-  if (!p || p === 'index') return 'dashboards/sales';
+  if (!p || p === 'index') return 'centre';
   return p;
 }
 

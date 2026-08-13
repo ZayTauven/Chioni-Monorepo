@@ -1,0 +1,136 @@
+/*
+ * Chioni — shell-lite : the light mobile-first chrome of the patient and
+ * guardian spaces (sober header + centred column + fixed bottom tab bar).
+ * The ONLY new chrome allowed outside Vireo (ADR 0011) — everything is built
+ * on the --ax-* tokens so themes and accents apply untouched.
+ */
+
+.ax-lite {
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── header ── */
+.ax-lite__header {
+  position: sticky;
+  inset-block-start: 0;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: var(--ax-space-3);
+  padding: var(--ax-space-2) var(--ax-space-4);
+  min-height: 56px;
+  background: var(--ax-surface);
+  border-block-end: 1px solid var(--ax-border);
+}
+
+.ax-lite__brand {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ax-space-2);
+  text-decoration: none;
+  flex-shrink: 0;
+}
+
+.ax-lite__brand-mark {
+  display: inline-grid;
+  place-items: center;
+  inline-size: 34px;
+  block-size: 34px;
+  border-radius: var(--ax-radius-md);
+  background: var(--ax-gradient-accent);
+  color: var(--ax-on-accent);
+}
+
+.ax-lite__brand-name {
+  font-family: var(--ax-font-display);
+  font-weight: var(--ax-weight-semibold);
+  font-size: var(--ax-text-md);
+  color: var(--ax-text-strong);
+}
+
+.ax-lite__title {
+  flex: 1 1 auto;
+  min-inline-size: 0;
+  margin: 0;
+  text-align: center;
+  font-family: var(--ax-font-display);
+  font-size: var(--ax-text-md);
+  font-weight: var(--ax-weight-semibold);
+  color: var(--ax-text-strong);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── main column ── */
+.ax-lite__main {
+  flex: 1 1 auto;
+  inline-size: 100%;
+  max-inline-size: 640px;
+  margin-inline: auto;
+  padding: var(--ax-space-4);
+  /* room for the fixed tab bar + safe area */
+  padding-block-end: calc(72px + var(--ax-space-4) + env(safe-area-inset-bottom));
+}
+
+/* ── bottom tab bar ── */
+.ax-lite__tabbar {
+  position: fixed;
+  inset-inline: 0;
+  inset-block-end: 0;
+  z-index: 30;
+  background: var(--ax-surface);
+  border-block-start: 1px solid var(--ax-border);
+  padding-block-end: env(safe-area-inset-bottom);
+}
+
+.ax-lite__tabbar-inner {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  max-inline-size: 640px;
+  margin-inline: auto;
+}
+
+.ax-lite__tab {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  min-height: 56px; /* ≥ 44px touch target */
+  padding: var(--ax-space-2) var(--ax-space-1);
+  color: var(--ax-text-muted);
+  text-decoration: none;
+  font-size: var(--ax-text-2xs);
+  font-weight: var(--ax-weight-medium);
+  -webkit-tap-highlight-color: transparent;
+}
+
+.ax-lite__tab .ax-icon {
+  inline-size: 22px;
+  block-size: 22px;
+}
+
+.ax-lite__tab:hover {
+  color: var(--ax-text);
+}
+
+.ax-lite__tab[aria-current='page'] {
+  color: var(--ax-accent);
+}
+
+.ax-lite__tab:focus-visible {
+  outline: 2px solid var(--ax-accent);
+  outline-offset: -2px;
+  border-radius: var(--ax-radius-sm);
+}
+
+.ax-lite__tab-label {
+  max-inline-size: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

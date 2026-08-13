@@ -20,6 +20,7 @@
 import type { Metadata, Viewport } from 'next';
 import type { ReactNode } from 'react';
 import { CustomizerProvider } from '../src/context/CustomizerContext';
+import { AuthProvider } from '../src/context/AuthContext';
 import '../src/styles/app.css';
 
 /* The anti-flash IIFE — verbatim from the HTML reference. MUST run before the
@@ -48,7 +49,7 @@ const ANTI_FLASH = `
   else D.setAttribute('data-ax-accent', accent);
 
   /* ---- LANG + DIR ---- */
-  var lang = (get('ax:lang') || 'EN').toUpperCase();
+  var lang = (get('ax:lang') || 'FR').toUpperCase();
   D.setAttribute('lang', lang.toLowerCase());
   var dirStored = get('ax:dir');
   var dir = dirStored ? dirStored : (lang === 'AR' ? 'rtl' : 'ltr');
@@ -93,9 +94,9 @@ const ANTI_FLASH = `
 `;
 
 export const metadata: Metadata = {
-  title: 'Vireo · Next.js',
+  title: 'Chioni',
   description:
-    'Vireo — premium multipurpose admin & dashboard template with an Aurora glass interface, 17 dashboards, 8 web apps and a full eCommerce suite.',
+    'Chioni — le lien de confiance entre la diaspora et les centres de santé comoriens : chaque franc est relié à un patient, un acte et un reçu.',
   icons: { icon: '/favicon.svg' },
 };
 
@@ -111,7 +112,7 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html lang="fr" suppressHydrationWarning>
       <head>
         {/* Anti-flash theme-restore — FIRST in <head>, before app.css. */}
         <script dangerouslySetInnerHTML={{ __html: ANTI_FLASH }} />
@@ -124,7 +125,9 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         />
       </head>
       <body>
-        <CustomizerProvider>{children}</CustomizerProvider>
+        <CustomizerProvider>
+          <AuthProvider>{children}</AuthProvider>
+        </CustomizerProvider>
       </body>
     </html>
   );
