@@ -24,10 +24,10 @@ Chioni/
 └── docs/             # cadrage, décisions (ADR), spécifications
 ```
 
-- **Backend initialisé** : venv `backend/.venv` (Python 3.13), settings via `backend/.env` (django-environ), User personnalisé `accounts.User` (champ `phone` unique, pivot OTP à venir), apps `accounts/centers/patients/medical/trustbridge/audit` enregistrées (seule `accounts` a un modèle), `/api/v1/health/` public, Swagger sur `/api/docs/`, DRF en deny-by-default (`IsAuthenticated`). Migrations appliquées sur `chioni_db` ; tests pytest verts (`pytest` depuis `backend/`).
+- **Backend initialisé + modèles métier durcis** : venv `backend/.venv` (Python 3.13), settings via `backend/.env` (django-environ), User personnalisé `accounts.User` (champ `phone` unique, pivot OTP à venir), `/api/v1/health/` public, Swagger sur `/api/docs/`, DRF en deny-by-default. Les 20+ modèles du §7.3 sont implémentés dans les cinq apps, passés en revue adversariale (chioni-health-data-guardian) puis durcis : append-only ORM + **triggers PostgreSQL** (ledger, reçus, audit — ADR 0006), triggers de validation (partage same-patient, lien révoqué définitif, facture gelée hors brouillon), `generic_category` distinct du libellé comptable (ADR 0005), `Consent.objects.active_scopes()` comme point de vérité des permissions. **101 tests verts** (`pytest` depuis `backend/`), dont `tests/test_hardening.py` (régression sécurité + probes résiduelles documentées). ADR 0001→0007 dans `docs/adr/`.
 - **Frontend initialisé** : copie fidèle de Vireo, paquet `chioni-frontend`, `.env.local` avec `NEXT_PUBLIC_API_URL=http://localhost:8000/api/v1`, `npm run build` OK (leaflet ajouté — manquait au template). Élagage des sections hors sujet (crypto, NFT, e-commerce…) PAS encore fait.
 - Git initialisé sur `main`, **aucun commit encore**.
-- Reste à faire (dans l'ordre) : modèles métier backend (+ ADR), auth téléphone+OTP, élagage/adaptation du frontend, maquettes des parcours, étude paiement (risque n° 1), étude du module IA de reprise du papier.
+- Reste à faire (dans l'ordre) : couche API/services backend (serializers, permissions combinant `active_scopes` + `shared_with`, machine à états PaymentRequest, câblage AuditLog — invariants obligatoires listés dans `tests/test_hardening.py`), auth téléphone+OTP, élagage/adaptation du frontend, maquettes des parcours, étude paiement (risque n° 1), étude du module IA de reprise du papier.
 
 ## Stack et conventions
 
@@ -43,6 +43,7 @@ Chioni/
   ```
 - Multi-tenant : les données d'exploitation (RDV, caisse, personnel) sont cloisonnées par centre (`HealthCenter`) ; le carnet de santé appartient au patient et est transversal, sous consentement ; l'argent vit dans un ledger en double entrée, append-only.
 - Toute action sensible (argent, données médicales, consentements) écrit dans `AuditLog` (immuable).
+- **Règle d'ingénierie (issue de la revue adversariale)** : les invariants de `GuardianLink`, `Invoice`, `PatientProfile` et `PaymentRequestShare` vivent dans `save()`/`clean()` — ne JAMAIS muter ces modèles par `update()`/`bulk_update()` bruts ; toute écriture passe par un service qui rejoue `save()`. Les transitions les plus sensibles ont en plus un trigger PostgreSQL (voir ADR 0006). Les probes résiduelles documentées dans `backend/tests/test_hardening.py` (machine à états PaymentRequest, cohérence intent↔ledger, `active_scopes` + `shared_with` à combiner dans les permissions) sont des invariants OBLIGATOIRES de la couche API/services.
 - Auth : téléphone + OTP SMS en priorité ; un même `User` peut cumuler des rôles (médecin ET tuteur).
 - Tests obligatoires sur : permissions/cloisonnement tenant, ledger, consentements.
 

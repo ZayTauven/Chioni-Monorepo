@@ -1,2 +1,294 @@
-# Business models for this app will be designed in a dedicated modelling session.
-# Do not add models here without the corresponding ADR in docs/.
+"""Patients: patient identity, diaspora guardians and guardianship links.
+
+Key design point (needs study §3): a ``PatientProfile`` can exist WITHOUT
+a ``User`` — created by a guardian (door A) or a health center (door C).
+It stays "unclaimed" (limited rights for its creator) until the patient
+activates the account via OTP on their phone. Identity fields therefore
+live on the profile itself, and ``phone`` is NOT unique here (only the
+verified ``User.phone`` is). Duplicate profiles are expected and resolved
+through the merge mechanism (``merged_into``).
+"""
+
+from django.conf import settings
+from django.core.exceptions import ValidationError
+from django.db import models, transaction
+from django.utils import timezone
+
+from apps.common.models import Currency, TimeStampedModel
+
+
+class PatientProfile(TimeStampedModel):
+    """A patient's identity on the platform — owner of the health record."""
+
+    class ClaimStatus(models.TextChoices):
+        UNCLAIMED = "non_revendique", "Non revendiqué"
+        INVITED = "invite", "Invité (SMS envoyé)"
+        ACTIVE = "actif", "Actif (compte revendiqué)"
+
+    class Sex(models.TextChoices):
+        FEMALE = "f", "Féminin"
+        MALE = "m", "Masculin"
+
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        verbose_name="compte utilisateur",
+        on_delete=models.PROTECT,
+        related_name="patient_profile",
+        null=True,
+        blank=True,
+        help_text="Vide tant que le profil n'est pas revendiqué par le patient (portes A et C).",
+    )
+    claim_status = models.CharField(
+        "statut de revendication",
+        max_length=16,
+        choices=ClaimStatus.choices,
+        default=ClaimStatus.UNCLAIMED,
+    )
+    last_name = models.CharField("nom", max_length=128)
+    first_name = models.CharField("prénom", max_length=128)
+    birth_date = models.DateField("date de naissance", null=True, blank=True)
+    sex = models.CharField("sexe", max_length=1, choices=Sex.choices, blank=True)
+    phone = models.CharField(
+        "téléphone",
+        max_length=32,
+        blank=True,
+        help_text=(
+            "Déclaratif, NON unique : seul le téléphone du compte User est vérifié par OTP. "
+            "Sert au rapprochement de doublons et à l'invitation SMS."
+        ),
+    )
+    city = models.CharField("ville / village", max_length=128, blank=True)
+
+    # Creator tracing (doors A/B/C) — dedicated fields, simpler than a GenericFK.
+    created_by_user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        verbose_name="créé par (utilisateur)",
+        on_delete=models.PROTECT,
+        related_name="patient_profiles_created",
+        null=True,
+        blank=True,
+        help_text="Tuteur (porte A), le patient lui-même (porte B) ou agent du centre (porte C).",
+    )
+    created_by_center = models.ForeignKey(
+        "centers.HealthCenter",
+        verbose_name="créé par (centre)",
+        on_delete=models.PROTECT,
+        related_name="patient_profiles_created",
+        null=True,
+        blank=True,
+        help_text="Renseigné quand le profil a été créé au guichet d'un centre (porte C).",
+    )
+
+    # Duplicate merge mechanism (needs study §3): the duplicate points to the
+    # canonical profile; its history is then re-attached by the merge flow.
+    merged_into = models.ForeignKey(
+        "self",
+        verbose_name="fusionné dans",
+        on_delete=models.PROTECT,
+        related_name="merged_duplicates",
+        null=True,
+        blank=True,
+        help_text="Si renseigné, ce profil est un doublon absorbé par le profil canonique pointé.",
+    )
+
+    class Meta:
+        verbose_name = "profil patient"
+        verbose_name_plural = "profils patients"
+        constraints = [
+            # A claimed (active) profile must have a user; unclaimed must not.
+            models.CheckConstraint(
+                condition=(
+                    models.Q(claim_status="actif", user__isnull=False)
+                    | ~models.Q(claim_status="actif")
+                ),
+                name="active_patient_profile_requires_user",
+            ),
+            # M6 — DB belt: a profile can never be merged into itself.
+            models.CheckConstraint(
+                condition=(
+                    models.Q(merged_into__isnull=True)
+                    | ~models.Q(merged_into=models.F("id"))
+                ),
+                name="patient_profile_no_self_merge",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.first_name} {self.last_name}".strip() or f"Patient #{self.pk}"
+
+    @property
+    def is_claimed(self) -> bool:
+        return self.claim_status == self.ClaimStatus.ACTIVE
+
+    def save(self, *args, **kwargs):
+        # M6 — merge guards: never into oneself, and ONLY into a canonical
+        # profile (a target that has itself been absorbed would create
+        # chains/cycles and make canonical resolution loop forever).
+        if self.merged_into_id is not None:
+            if self.pk is not None and self.merged_into_id == self.pk:
+                raise ValidationError(
+                    "Un profil patient ne peut pas être fusionné dans lui-même."
+                )
+            target = (
+                type(self)
+                .objects.filter(pk=self.merged_into_id)
+                .values("merged_into_id")
+                .first()
+            )
+            if target is not None and target["merged_into_id"] is not None:
+                raise ValidationError(
+                    "Fusion refusée : le profil cible est lui-même un doublon absorbé. "
+                    "Fusionnez vers le profil canonique."
+                )
+        super().save(*args, **kwargs)
+
+
+class GuardianProfile(TimeStampedModel):
+    """A diaspora guardian (tuteur) — pays care for their protected relatives."""
+
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        verbose_name="compte utilisateur",
+        on_delete=models.PROTECT,
+        related_name="guardian_profile",
+    )
+    country_of_residence = models.CharField(
+        "pays de résidence",
+        max_length=2,
+        default="FR",
+        help_text="Code ISO 3166-1 alpha-2 (FR, RE, YT, AE…).",
+    )
+    preferred_currency = models.CharField(
+        "devise préférée",
+        max_length=3,
+        choices=Currency.choices,
+        default=Currency.EUR,
+    )
+
+    class Meta:
+        verbose_name = "profil tuteur"
+        verbose_name_plural = "profils tuteurs"
+
+    def __str__(self) -> str:
+        return f"Tuteur {self.user}"
+
+
+class GuardianLink(TimeStampedModel):
+    """Guardianship link between a guardian and a patient.
+
+    Multi-guardians per patient and multi-protected per guardian. The link
+    only opens the MINIMAL visibility (payment requests, amounts, generic
+    act nature, receipts) — any clinical detail requires an explicit
+    ``medical.Consent`` from the patient.
+    """
+
+    class Status(models.TextChoices):
+        INVITATION_SENT = "invitation_envoyee", "Invitation envoyée"
+        ACTIVE = "actif", "Actif"
+        REVOKED = "revoque", "Révoqué"
+
+    class InitiatedBy(models.TextChoices):
+        GUARDIAN = "tuteur", "Le tuteur (porte A)"
+        PATIENT = "patient", "Le patient (porte B)"
+        CENTER = "centre", "Le centre de santé (porte C)"
+
+    class Relationship(models.TextChoices):
+        PARENT = "parent", "Parent (père / mère)"
+        CHILD = "enfant", "Enfant (fils / fille)"
+        SPOUSE = "conjoint", "Conjoint / Conjointe"
+        SIBLING = "frere_soeur", "Frère / Sœur"
+        EXTENDED_FAMILY = "famille_elargie", "Famille élargie (oncle, tante, cousin…)"
+        FRIEND = "ami", "Ami / Amie"
+        OTHER = "autre", "Autre"
+
+    guardian = models.ForeignKey(
+        GuardianProfile,
+        verbose_name="tuteur",
+        on_delete=models.PROTECT,
+        related_name="links",
+    )
+    patient = models.ForeignKey(
+        PatientProfile,
+        verbose_name="protégé",
+        on_delete=models.PROTECT,
+        related_name="guardian_links",
+    )
+    relationship = models.CharField(
+        "lien de parenté",
+        max_length=16,
+        choices=Relationship.choices,
+        help_text="Lien du tuteur envers le protégé.",
+    )
+    status = models.CharField(
+        "statut",
+        max_length=24,
+        choices=Status.choices,
+        default=Status.INVITATION_SENT,
+    )
+    initiated_by = models.CharField(
+        "initié par", max_length=8, choices=InitiatedBy.choices
+    )
+    accepted_at = models.DateTimeField("accepté le", null=True, blank=True)
+    revoked_at = models.DateTimeField("révoqué le", null=True, blank=True)
+
+    class Meta:
+        verbose_name = "lien de tutelle"
+        verbose_name_plural = "liens de tutelle"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["guardian", "patient"], name="unique_guardian_patient_link"
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.guardian} → {self.patient} ({self.get_status_display()})"
+
+    def clean(self):
+        # A guardian must never be their own protected patient's profile owner.
+        if (
+            self.patient.user_id is not None
+            and self.patient.user_id == self.guardian.user_id
+        ):
+            raise ValidationError(
+                "Un utilisateur ne peut pas être tuteur de son propre profil patient."
+            )
+
+    def save(self, *args, **kwargs):
+        # M7 — structural invariants are re-imposed here so that create()/
+        # save() paths (which never call clean()) cannot bypass them.
+        self.clean()
+        # M2 — a revoked link is FINAL: no transition out of REVOKED, ever.
+        # Guardianship is re-established by creating a NEW link (fresh
+        # consent baseline), never by resurrecting the old one.
+        if self.pk is not None:
+            previous_status = (
+                type(self)
+                .objects.filter(pk=self.pk)
+                .values_list("status", flat=True)
+                .first()
+            )
+            if (
+                previous_status == self.Status.REVOKED
+                and self.status != self.Status.REVOKED
+            ):
+                raise ValidationError(
+                    "Un lien de tutelle révoqué est définitif : créez un nouveau "
+                    "lien plutôt que de réactiver l'ancien."
+                )
+        super().save(*args, **kwargs)
+
+    def revoke(self):
+        """Revoke the link AND every active consent riding on it — atomically.
+
+        Without the cascade, a stale ``detail_clinique`` consent row would
+        survive the link's revocation and silently spring back to life if
+        the link were ever reactivated. Belt and braces: the cascade kills
+        the stale rows, and ``save()`` forbids reactivation anyway.
+        """
+        with transaction.atomic():
+            if self.status != self.Status.REVOKED:
+                self.status = self.Status.REVOKED
+                self.revoked_at = timezone.now()
+                self.save(update_fields=["status", "revoked_at", "updated_at"])
+            for consent in self.consents.active().select_for_update():
+                consent.revoke()
