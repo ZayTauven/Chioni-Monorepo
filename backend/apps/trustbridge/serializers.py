@@ -56,7 +56,15 @@ class InvoiceStaffSerializer(serializers.ModelSerializer):
         model = Invoice
         fields = [
             "id", "encounter", "patient", "total_kmf", "paid_kmf",
-            "balance_kmf", "status", "lines", "created_at",
+            "balance_kmf", "status", "lines",
+            # S1 — cancellation trail (null/empty until cancelled). The
+            # reason is BILLING-facing information (like the reversal
+            # reason on the cash journal and the dispute motive): this
+            # serializer is for BILLING readers — the any-staff invoice
+            # reads use InvoiceOperatingSerializer below, and patients or
+            # guardians never carry it (their serializers don't).
+            "cancelled_at", "cancel_reason",
+            "created_at",
         ]
         read_only_fields = fields
 
@@ -69,6 +77,25 @@ class InvoiceStaffSerializer(serializers.ModelSerializer):
         from apps.trustbridge.services import invoice_balance_kmf
 
         return str(invoice_balance_kmf(obj))
+
+
+class InvoiceOperatingSerializer(InvoiceStaffSerializer):
+    """Any-staff operating view of an invoice (S1, passe guardian).
+
+    Everything the floor needs — EXCEPT ``cancel_reason``: free text typed
+    at the caisse, the same class of narrative as a dispute motive or a
+    reversal reason, both already restricted to BILLING roles (arbitrage
+    C.3). The operational STATE (``status``, ``cancelled_at``) stays
+    visible to everyone; the narrative does not. Mirror of the R-API-1
+    role segmentation, applied to money texts.
+    """
+
+    class Meta(InvoiceStaffSerializer.Meta):
+        fields = [
+            f for f in InvoiceStaffSerializer.Meta.fields
+            if f != "cancel_reason"
+        ]
+        read_only_fields = fields
 
 
 class UnpaidInvoiceStaffSerializer(serializers.ModelSerializer):
@@ -128,6 +155,17 @@ class InvoiceCreateSerializer(serializers.Serializer):
     )
     act_ids = serializers.ListField(
         child=serializers.IntegerField(), required=False, allow_empty=False
+    )
+
+
+class InvoiceCancelSerializer(serializers.Serializer):
+    """Body of `POST /centers/{c}/invoices/{pk}/cancel/` (S1)."""
+
+    reason = serializers.CharField(
+        error_messages={
+            "required": "Le motif d'annulation est obligatoire.",
+            "blank": "Le motif d'annulation est obligatoire.",
+        }
     )
 
 
@@ -415,6 +453,17 @@ class CashPaymentCreateSerializer(serializers.Serializer):
     )
     reference = serializers.CharField(
         required=False, allow_blank=True, max_length=64
+    )
+    # S1 idempotence guichet (ADR 0015 addendum) : optionnelle ; rejouer la
+    # même clé renvoie l'encaissement déjà créé (200, même reçu) au lieu
+    # d'en créer un second. Unique par centre (contrainte DB).
+    idempotency_key = serializers.CharField(
+        required=False,
+        max_length=64,
+        error_messages={
+            "blank": "La clé d'idempotence ne peut pas être vide.",
+            "max_length": "La clé d'idempotence dépasse 64 caractères.",
+        },
     )
 
 

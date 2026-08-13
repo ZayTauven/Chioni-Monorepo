@@ -78,7 +78,11 @@ class TestEncounterCreation:
 
         assert response.status_code == 403
 
-    def test_encounter_for_a_foreign_patient_is_404(self):
+    def test_encounter_for_a_foreign_patient_is_an_explicit_400(self):
+        """S1 refusal semantics (ADR 0008 addendum): the patient id travels
+        in the BODY → 400 explicite (pattern scheduling), one message for
+        foreign and non-existent ids alike — nothing created, nothing
+        leaked."""
         center_a, _ = make_center_with_director()
         center_b, _ = make_center_with_director()
         doctor_a = make_staff_user(center_a, role=Role.DOCTOR)
@@ -90,11 +94,21 @@ class TestEncounterCreation:
             format="json",
         )
 
-        assert response.status_code == 404
+        assert response.status_code == 400
+        assert "n'est pas connu de ce centre" in str(response.data)
         assert Encounter.objects.count() == 0
 
-    def test_act_with_a_foreign_tariff_is_404(self):
-        """Cross-tenant tariff: never silently billed on my grid."""
+        unknown = client_for(doctor_a).post(
+            f"/api/v1/centers/{center_a.pk}/encounters/",
+            {"patient": 999999, "reason": "Intrusion"},
+            format="json",
+        )
+        assert unknown.status_code == 400
+        assert unknown.data == response.data  # même message : rien ne fuite
+
+    def test_act_with_a_foreign_tariff_is_an_explicit_400(self):
+        """Cross-tenant tariff: never silently billed on my grid — body
+        ref → 400 explicite (S1)."""
         center_a, _ = make_center_with_director()
         center_b, _ = make_center_with_director()
         doctor_a = make_staff_user(center_a, role=Role.DOCTOR)
@@ -108,7 +122,8 @@ class TestEncounterCreation:
             format="json",
         )
 
-        assert response.status_code == 404
+        assert response.status_code == 400
+        assert "grille de ce centre" in str(response.data)
         assert Encounter.objects.count() == 0
 
     def test_encounter_list_is_center_scoped(self):

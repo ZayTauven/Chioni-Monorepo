@@ -26,6 +26,23 @@ def import_settings(**overrides):
     )
 
 
+def read_setting(expression, **overrides):
+    """Print one settings expression from a fresh subprocess import —
+    settings conditionals on DEBUG can only be probed this way."""
+    env = {**os.environ, **overrides}
+    return subprocess.run(
+        [
+            sys.executable, "-c",
+            f"import config.settings as s; print({expression})",
+        ],
+        capture_output=True,
+        text=True,
+        cwd=BACKEND_DIR,
+        env=env,
+        timeout=60,
+    )
+
+
 class TestPspBootGuards:
     def test_fake_psp_with_debug_false_refuses_to_boot(self):
         result = import_settings(DEBUG="False", PSP_BACKEND="fake")
@@ -94,3 +111,24 @@ class TestSmsBootGuards:
     def test_console_sms_in_debug_boots(self):
         result = import_settings(DEBUG="True", SMS_BACKEND="console")
         assert result.returncode == 0, result.stderr
+
+
+class TestSwaggerServePermissions:
+    """S1 (audit C.5.5) — `/api/schema/` and `/api/docs/` are public in
+    DEV only: deployed, the OpenAPI schema is a reconnaissance map."""
+
+    def test_debug_serves_the_docs_publicly(self):
+        result = read_setting(
+            "s.SPECTACULAR_SETTINGS['SERVE_PERMISSIONS']", DEBUG="True"
+        )
+        assert result.returncode == 0, result.stderr
+        assert "AllowAny" in result.stdout
+
+    def test_production_restricts_the_docs_to_admins(self):
+        result = read_setting(
+            "s.SPECTACULAR_SETTINGS['SERVE_PERMISSIONS']",
+            DEBUG="False", PSP_BACKEND="stripe", SMS_BACKEND="stub",
+        )
+        assert result.returncode == 0, result.stderr
+        assert "IsAdminUser" in result.stdout
+        assert "AllowAny" not in result.stdout

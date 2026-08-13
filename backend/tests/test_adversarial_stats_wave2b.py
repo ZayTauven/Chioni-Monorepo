@@ -28,6 +28,7 @@ from decimal import Decimal
 
 import pytest
 from django.core.exceptions import ValidationError
+from django.db import IntegrityError, transaction
 from django.utils import timezone
 
 from apps.centers.models import TariffItem
@@ -455,29 +456,49 @@ class TestTariffIntegrality:
         with pytest.raises(ValidationError):
             tariff.save()
 
-    def test_pre_existing_fractional_tariff_degrades_honestly_not_500(self):
-        """Une ligne fractionnaire d'AVANT la migration 0003 (injectée par
-        ``bulk_create``, qui ne passe pas par ``save()`` — même angle mort
-        qu'une vieille ligne en base) : la facture qui en naît porte un
-        solde fractionnaire. Les trois endpoints répondent 200, le solde
-        0,50 reste VISIBLE dans les impayés (jamais une facture fantôme
-        « payée »), et le guichet refuse les décimales — la créance résiduelle
-        est assumée et affichée, pas cachée."""
+    def test_db_constraint_closes_the_bulk_create_and_update_bypasses(self):
+        """S1 (vigilance 2a SOLDÉE) : l'ancien angle mort de cette probe —
+        ``bulk_create``/``update()`` ne passent pas par ``save()`` — est
+        désormais fermé PAR LA BASE (contrainte ``tariff_price_kmf_integral``,
+        migration centers/0004, qui REFUSE de s'appliquer tant que des
+        lignes fractionnaires existent : plus aucune « vieille ligne en
+        base » possible)."""
+        center = make_center()
+        with pytest.raises(IntegrityError):
+            with transaction.atomic():
+                TariffItem.objects.bulk_create([
+                    TariffItem(center=center, code="OLD1", label="Ancien tarif",
+                               price_kmf=Decimal("100.50")),
+                ])
+        tariff = make_tariff(center, price_kmf="100")
+        with pytest.raises(IntegrityError):
+            with transaction.atomic():
+                TariffItem.objects.filter(pk=tariff.pk).update(
+                    price_kmf=Decimal("100.25")
+                )
+
+    def test_pre_existing_fractional_balance_degrades_honestly_not_500(self):
+        """Le RÉSIDU historique reste possible côté facture (une vieille
+        ``InvoiceLine`` fractionnaire d'avant les gardes — la ligne de
+        facture n'a pas de contrainte d'intégralité, c'est un instantané) :
+        la facture qui la porte affiche un solde fractionnaire. Les trois
+        endpoints répondent 200, le solde 0,50 reste VISIBLE dans les
+        impayés (jamais une facture fantôme « payée »), et le guichet
+        refuse les décimales — la créance résiduelle est assumée et
+        affichée, pas cachée."""
         center, director = make_center_with_director()
         cashier = make_staff_user(center, role=Role.CASHIER)
-        fractional = TariffItem.objects.bulk_create([
-            TariffItem(center=center, code="OLD1", label="Ancien tarif",
-                       price_kmf=Decimal("100.50")),
-        ])[0]
+        tariff = make_tariff(center, label="Ancien tarif", price_kmf="100")
         encounter = make_encounter(center=center)
-        act = ActPerformed.objects.create(
-            encounter=encounter, tariff_item=fractional
-        )
+        act = ActPerformed.objects.create(encounter=encounter, tariff_item=tariff)
         invoice = Invoice.objects.create(
             encounter=encounter, center=center, patient=encounter.patient,
             status=Invoice.Status.DRAFT,
         )
-        InvoiceLine.objects.create(invoice=invoice, act=act)
+        # La ligne fractionnaire héritée (montant explicite, pas de snapshot).
+        InvoiceLine.objects.create(
+            invoice=invoice, act=act, amount_kmf=Decimal("100.50")
+        )
         invoice.recompute_total()
         services.issue_invoice(actor=director, invoice=invoice)
         invoice.refresh_from_db()

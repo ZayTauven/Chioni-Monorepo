@@ -683,7 +683,10 @@ class TestMergeEndpoint:
         source.refresh_from_db()
         assert source.merged_into_id == target.pk
 
-    def test_merge_with_a_foreign_profile_is_404(self):
+    def test_merge_with_a_foreign_profile_is_an_explicit_400(self):
+        """S1 refusal semantics (ADR 0008 addendum): the ids travel in the
+        BODY → 400 explicite, same message for foreign and non-existent
+        profiles (no cross-tenant existence oracle) — nothing merged."""
         center_a, _ = make_center_with_director()
         center_b, _ = make_center_with_director()
         staff_a = make_staff_user(center_a, role=Role.SECRETARY)
@@ -695,9 +698,33 @@ class TestMergeEndpoint:
             {"source_id": mine.pk, "target_id": foreign.pk},
         )
 
-        assert response.status_code == 404
+        assert response.status_code == 400
+        assert "n'est pas connu de ce centre" in str(response.data)
         mine.refresh_from_db()
         assert mine.merged_into_id is None
+
+        unknown = client_for(staff_a).post(
+            f"/api/v1/centers/{center_a.pk}/patients/merge/",
+            {"source_id": mine.pk, "target_id": 999999},
+        )
+        assert unknown.status_code == 400
+        assert unknown.data == response.data  # rien ne distingue les deux
+
+    def test_merge_is_reserved_to_billing_roles(self):
+        """S1 (arbitrage C.3) : la fusion déplace des liens de tutelle —
+        opération d'administration du dossier, rôles BILLING seuls. Le
+        soignant garde la création/modification de patient, pas la fusion."""
+        center, _ = make_center_with_director()
+        p1 = make_patient(created_by_center=center)
+        p2 = make_patient(created_by_center=center)
+        for role in (Role.DOCTOR, Role.NURSE, Role.MIDWIFE, Role.PHARMACIST):
+            refused = client_for(make_staff_user(center, role=role)).post(
+                f"/api/v1/centers/{center.pk}/patients/merge/",
+                {"source_id": p1.pk, "target_id": p2.pk},
+            )
+            assert refused.status_code == 403, role
+        p1.refresh_from_db()
+        assert p1.merged_into_id is None
 
     def test_patient_or_guardian_hat_cannot_merge(self):
         center, _ = make_center_with_director()

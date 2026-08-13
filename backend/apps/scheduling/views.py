@@ -77,6 +77,24 @@ def _payload_with_overlaps(appointment):
     return data
 
 
+#: Longest ``?from=&to=`` range served (S1 — the two-month calendar grid).
+MAX_RANGE_DAYS = 62
+
+
+def _parse_day_or_400(raw, field):
+    """One day param or a 400 per field — parse_date returns None on a
+    malformed string but RAISES ValueError on a well-formed impossible
+    date (« 2026-02-30 »): both are the caller's typo, both answer the
+    same 400 (revue adversariale vague 1: the ValueError was a 500)."""
+    try:
+        day = parse_date(raw)
+    except ValueError:
+        day = None
+    if day is None:
+        raise ValidationError({field: ["Format attendu : AAAA-MM-JJ."]})
+    return day
+
+
 class CenterAppointmentListCreateView(
     CenterScopedViewMixin, generics.ListCreateAPIView
 ):
@@ -87,6 +105,11 @@ class CenterAppointmentListCreateView(
     slot stays on its local day), ``?practitioner=<id>``, ``?status=``.
     Sorted by ``scheduled_at`` then id, paginated: the default view IS the
     file du jour.
+
+    S1 range mode: ``?from=YYYY-MM-DD&to=YYYY-MM-DD`` (INCLUSIVE local
+    days, both bounds required together, max 62 days — the calendar grid
+    was stuck on one week). EXCLUSIVE with ``?date=``: mixing them is a
+    400, not a silent precedence.
     """
 
     permission_classes = [IsStaffOfCenter()]
@@ -96,29 +119,54 @@ class CenterAppointmentListCreateView(
             return AppointmentCreateSerializer
         return AppointmentSerializer
 
-    def get_queryset(self):
-        params = self.request.query_params
+    def _period_bounds(self, params):
+        """``(start, end)`` aware datetimes — day mode or range mode."""
         raw_date = params.get("date")
-        if raw_date:
-            # parse_date returns None on a malformed string but RAISES
-            # ValueError on a well-formed impossible date (« 2026-02-30 »)
-            # — both are the caller's typo, both answer the same 400
-            # (revue adversariale vague 1: the ValueError was a 500).
-            try:
-                day = parse_date(raw_date)
-            except ValueError:
-                day = None
-            if day is None:
-                raise ValidationError({"date": ["Format attendu : AAAA-MM-JJ."]})
+        raw_from = params.get("from")
+        raw_to = params.get("to")
+        if raw_date and (raw_from or raw_to):
+            raise ValidationError(
+                {"date": ["Le filtre date est exclusif des bornes from/to."]}
+            )
+        if raw_from or raw_to:
+            if not raw_from:
+                raise ValidationError(
+                    {"from": ["Les bornes from et to vont ensemble."]}
+                )
+            if not raw_to:
+                raise ValidationError(
+                    {"to": ["Les bornes from et to vont ensemble."]}
+                )
+            from_day = _parse_day_or_400(raw_from, "from")
+            to_day = _parse_day_or_400(raw_to, "to")
+            if from_day > to_day:
+                raise ValidationError(
+                    {"from": ["La date de début doit précéder la date de fin."]}
+                )
+            if (to_day - from_day).days + 1 > MAX_RANGE_DAYS:
+                raise ValidationError(
+                    {"from": [f"Période trop longue : {MAX_RANGE_DAYS} jours maximum."]}
+                )
         else:
-            day = timezone.localdate()
-        day_start = timezone.make_aware(datetime.combine(day, time.min))
+            from_day = to_day = (
+                _parse_day_or_400(raw_date, "date") if raw_date
+                else timezone.localdate()
+            )
         try:
-            day_end = day_start + timedelta(days=1)
+            start = timezone.make_aware(datetime.combine(from_day, time.min))
+            end = timezone.make_aware(
+                datetime.combine(to_day, time.min)
+            ) + timedelta(days=1)
         except OverflowError:
             # « 9999-12-31 » : la borne haute du jour n'existe pas dans le
-            # calendrier Python — journée vide, jamais un 500.
-            raise ValidationError({"date": ["Date hors limites."]})
+            # calendrier Python — 400 par champ, jamais un 500.
+            field = "to" if (raw_from or raw_to) else "date"
+            raise ValidationError({field: ["Date hors limites."]})
+        return start, end
+
+    def get_queryset(self):
+        params = self.request.query_params
+        day_start, day_end = self._period_bounds(params)
         qs = (
             Appointment.objects.for_center(self.center)
             .filter(

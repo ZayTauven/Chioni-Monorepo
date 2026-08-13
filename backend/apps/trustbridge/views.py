@@ -14,6 +14,7 @@ cross-guardian probes → 404.
 from datetime import datetime, time, timedelta
 from decimal import Decimal
 
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.utils.dateparse import parse_date
@@ -25,11 +26,13 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.centers.models import StaffMembership
+from apps.common.roles import BILLING_ROLES
 from apps.common.permissions import (
     CenterScopedViewMixin,
     IsGuardianWithScope,
     IsPatientSelf,
     IsStaffOfCenter,
+    active_membership_qs,
     claimed_patient_profile,
     payment_requests_shared_with_guardian,
     receipts_visible_to_guardian,
@@ -54,7 +57,9 @@ from apps.trustbridge.serializers import (
     DisputeCreateSerializer,
     DisputeResolveSerializer,
     DisputeStaffSerializer,
+    InvoiceCancelSerializer,
     InvoiceCreateSerializer,
+    InvoiceOperatingSerializer,
     InvoiceStaffSerializer,
     PaymentIntentGuardianSerializer,
     PaymentRequestGuardianSerializer,
@@ -67,6 +72,7 @@ from apps.trustbridge.serializers import (
 )
 from apps.trustbridge.services import (
     acknowledge_care_received,
+    cancel_invoice,
     close_payment_request,
     confirm_care,
     create_invoice,
@@ -87,14 +93,51 @@ from apps.trustbridge.services import (
 
 Role = StaffMembership.Role
 
-#: Roles allowed to bill and manage money on behalf of the center.
-BILLING_ROLES = (Role.DIRECTOR, Role.SECRETARY, Role.CASHIER)
+# ``BILLING_ROLES`` lives in apps.common.roles since S1 (single source —
+# audit C.5.2); the app-local groups below have this module as their only
+# consumer and stay here.
+
 #: Roles allowed to attest that the care was actually delivered.
+#: S1 (arbitrage C.3) : rôles INCHANGÉS — la confirmation de soin est un
+#: acte soignant/directeur (éthique produit). Limite assumée et
+#: documentée (ADR 0008 addendum S1) : un centre réduit à
+#: secrétaire+caissier actifs ne peut pas passer payee → soin_confirme.
 CARE_CONFIRM_ROLES = (
     Role.DIRECTOR, Role.DOCTOR, Role.NURSE, Role.MIDWIFE, Role.PHARMACIST,
 )
 #: Dispute resolution engages the center: director only.
 DISPUTE_RESOLVE_ROLES = (Role.DIRECTOR,)
+
+
+def _is_billing_member(user, center):
+    """The caller holds a BILLING hat in this center — the invoice READ
+    views pick their serializer with it (S1, passe guardian): the full
+    caisse payload (``cancel_reason`` included) for billing roles, the
+    operating payload for everyone else. Mirror of the medical R-API-1
+    role segmentation."""
+    return active_membership_qs(user, center=center, roles=BILLING_ROLES).exists()
+
+
+def _validated_id_param(params, field, label):
+    """``?field=<id>`` or a 400 per field — never a 500 on garbage, and
+    the center-scoped queryset makes a FOREIGN id simply match nothing
+    (no cross-tenant probe, pattern ``?practitioner=`` de scheduling)."""
+    raw = params.get(field)
+    if raw in (None, ""):
+        return None
+    if not raw.isdigit():
+        raise DrfValidationError({field: [f"Identifiant de {label} invalide."]})
+    return int(raw)
+
+
+def _validated_status_param(params, choices):
+    """``?status=`` among ``choices`` or a 400 per field."""
+    raw = params.get("status")
+    if raw in (None, ""):
+        return None
+    if raw not in choices.values:
+        raise DrfValidationError({"status": ["Statut inconnu."]})
+    return raw
 
 
 # ---------------------------------------------------------------------------
@@ -103,8 +146,14 @@ DISPUTE_RESOLVE_ROLES = (Role.DIRECTOR,)
 
 
 class CenterInvoiceListCreateView(CenterScopedViewMixin, generics.ListCreateAPIView):
-    """GET /centers/{c}/invoices/ (any staff) — POST (billing roles):
-    create a DRAFT invoice from an encounter of THIS center."""
+    """GET /centers/{c}/invoices/?patient=&status= (any staff — lecture
+    d'exploitation assumée, arbitrage C.3) — POST (billing roles): create
+    a DRAFT invoice from an encounter of THIS center.
+
+    S1 refusal semantics (ADR 0008 addendum): ``encounter`` travels in the
+    BODY → an id outside the center's perimeter answers an explicit 400
+    (the message covers foreign and non-existent ids alike), never a 404.
+    """
 
     def get_permissions(self):
         if self.request.method == "POST":
@@ -114,22 +163,38 @@ class CenterInvoiceListCreateView(CenterScopedViewMixin, generics.ListCreateAPIV
     def get_serializer_class(self):
         if self.request.method == "POST":
             return InvoiceCreateSerializer
-        return InvoiceStaffSerializer
+        if _is_billing_member(self.request.user, self.center):
+            return InvoiceStaffSerializer
+        return InvoiceOperatingSerializer
 
     def get_queryset(self):
-        return (
+        qs = (
             Invoice.objects.for_center(self.center)
             .prefetch_related("lines")
             .order_by("-created_at")
         )
+        params = self.request.query_params
+        patient_id = _validated_id_param(params, "patient", "patient")
+        if patient_id is not None:
+            qs = qs.filter(patient_id=patient_id)
+        status_value = _validated_status_param(params, Invoice.Status)
+        if status_value is not None:
+            qs = qs.filter(status=status_value)
+        return qs
 
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        encounter = get_object_or_404(
-            Encounter.objects.for_center(self.center),
-            pk=serializer.validated_data["encounter"],
+        encounter = (
+            Encounter.objects.for_center(self.center)
+            .filter(pk=serializer.validated_data["encounter"])
+            .first()
         )
+        if encounter is None:
+            raise DjangoValidationError(
+                "Cette consultation n'appartient pas à ce centre : "
+                "facturation refusée."
+            )
         invoice = create_invoice(
             actor=request.user,
             center=self.center,
@@ -142,10 +207,19 @@ class CenterInvoiceListCreateView(CenterScopedViewMixin, generics.ListCreateAPIV
 
 
 class CenterInvoiceDetailView(CenterScopedViewMixin, generics.RetrieveAPIView):
-    """GET /centers/{c}/invoices/{pk}/ — center-scoped (cross-tenant → 404)."""
+    """GET /centers/{c}/invoices/{pk}/ — center-scoped (cross-tenant → 404).
+
+    Serializer by role (S1, passe guardian): billing roles read the full
+    caisse payload, everyone else the operating one (``cancel_reason`` is
+    caisse narrative — see ``InvoiceOperatingSerializer``).
+    """
 
     permission_classes = [IsStaffOfCenter()]
-    serializer_class = InvoiceStaffSerializer
+
+    def get_serializer_class(self):
+        if _is_billing_member(self.request.user, self.center):
+            return InvoiceStaffSerializer
+        return InvoiceOperatingSerializer
 
     def get_queryset(self):
         return Invoice.objects.for_center(self.center).prefetch_related("lines")
@@ -212,6 +286,30 @@ class CenterInvoiceIssueView(_CenterInvoiceActionView):
         return Response(InvoiceStaffSerializer(invoice).data)
 
 
+class CenterInvoiceCancelView(_CenterInvoiceActionView):
+    """POST /centers/{c}/invoices/{pk}/cancel/ — S1, ADR 0015 addendum.
+
+    Billing roles, mandatory reason. Strict conditions in the service
+    (:func:`apps.trustbridge.services.cancel_invoice`): never with an
+    active cash-in, never once the linked request moved money or opened a
+    dispute. Audited ``invoice.cancelled`` (references only — the reason
+    stays on the row).
+    """
+
+    permission_classes = [IsStaffOfCenter(*BILLING_ROLES)]
+
+    @extend_schema(request=InvoiceCancelSerializer, responses=InvoiceStaffSerializer)
+    def post(self, request, *args, **kwargs):
+        serializer = InvoiceCancelSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        invoice = cancel_invoice(
+            actor=request.user,
+            invoice=self.get_invoice(),
+            reason=serializer.validated_data["reason"],
+        )
+        return Response(InvoiceStaffSerializer(invoice).data)
+
+
 class CenterInvoicePaymentRequestCreateView(_CenterInvoiceActionView):
     """POST /centers/{c}/invoices/{pk}/payment-requests/ — open the request."""
 
@@ -234,18 +332,25 @@ def center_payment_requests_qs(center):
 
 
 class CenterPaymentRequestListView(CenterScopedViewMixin, generics.ListAPIView):
-    """GET /centers/{c}/payment-requests/ — the center's requests (any staff)."""
+    """GET /centers/{c}/payment-requests/?status= — the center's requests
+    (any staff — lecture d'exploitation assumée, arbitrage C.3)."""
 
     permission_classes = [IsStaffOfCenter()]
     serializer_class = PaymentRequestStaffSerializer
 
     def get_queryset(self):
-        return (
+        qs = (
             center_payment_requests_qs(self.center)
             .select_related("invoice")
             .prefetch_related("shares")
             .order_by("-created_at")
         )
+        status_value = _validated_status_param(
+            self.request.query_params, PaymentRequest.Status
+        )
+        if status_value is not None:
+            qs = qs.filter(status=status_value)
+        return qs
 
 
 class CenterPaymentRequestDetailView(CenterScopedViewMixin, generics.RetrieveAPIView):
@@ -267,14 +372,21 @@ class _CenterPaymentRequestActionView(CenterScopedViewMixin, APIView):
         )
 
     def get_patient_link(self, payment_request, link_pk):
-        """A guardian link OF THE INVOICED PATIENT or 404 — a foreign link
-        is indistinguishable from a non-existent one."""
-        return get_object_or_404(
-            GuardianLink.objects.filter(
-                patient_id=payment_request.invoice.patient_id
-            ),
-            pk=link_pk,
-        )
+        """A guardian link OF THE INVOICED PATIENT, or an explicit 400.
+
+        S1 refusal semantics (ADR 0008 addendum): the link id travels in
+        the request BODY → 400 explicite, with ONE message covering
+        foreign and non-existent ids alike (nothing leaks about whether
+        the id exists elsewhere)."""
+        link = GuardianLink.objects.filter(
+            patient_id=payment_request.invoice.patient_id, pk=link_pk
+        ).first()
+        if link is None:
+            raise DjangoValidationError(
+                "Ce lien de tutelle ne concerne pas le patient facturé : "
+                "action refusée."
+            )
+        return link
 
 
 class CenterPaymentRequestShareView(_CenterPaymentRequestActionView):
@@ -363,17 +475,29 @@ class CenterPaymentRequestCloseView(_CenterPaymentRequestActionView):
 
 
 class CenterDisputeListView(CenterScopedViewMixin, generics.ListAPIView):
-    """GET /centers/{c}/disputes/ — the center's disputes (read, any staff)."""
+    """GET /centers/{c}/disputes/?status= — the center's disputes.
 
-    permission_classes = [IsStaffOfCenter()]
+    S1 (arbitrage C.3, défaut PO réversible) : lecture restreinte aux
+    rôles BILLING — le motif d'un litige est un texte libre tapé par un
+    patient/tuteur à propos d'argent, il n'a rien à faire sous les yeux
+    de tout le staff (pharmacien compris). ``resolve`` reste directeur.
+    """
+
+    permission_classes = [IsStaffOfCenter(*BILLING_ROLES)]
     serializer_class = DisputeStaffSerializer
 
     def get_queryset(self):
-        return (
+        qs = (
             Dispute.objects.filter(payment_request__invoice__center=self.center)
             .select_related("payment_request")
             .order_by("-created_at")
         )
+        status_value = _validated_status_param(
+            self.request.query_params, Dispute.Status
+        )
+        if status_value is not None:
+            qs = qs.filter(status=status_value)
+        return qs
 
 
 class CenterDisputeResolveView(CenterScopedViewMixin, APIView):
@@ -442,10 +566,15 @@ class CenterInvoicePaymentListCreateView(CenterScopedViewMixin, APIView):
             amount_kmf=serializer.validated_data["amount_kmf"],
             operator=serializer.validated_data.get("operator", ""),
             reference=serializer.validated_data.get("reference", ""),
+            idempotency_key=serializer.validated_data.get("idempotency_key"),
         )
+        # S1 idempotence : rejouer la même clé renvoie l'encaissement déjà
+        # créé — 200 (rien de nouveau) avec le MÊME reçu, jamais un second
+        # encaissement (contrat testé, ADR 0015 addendum).
+        replayed = getattr(payment, "was_replayed", False)
         return Response(
             CashPaymentStaffSerializer(payment).data,
-            status=status.HTTP_201_CREATED,
+            status=status.HTTP_200_OK if replayed else status.HTTP_201_CREATED,
         )
 
 
@@ -635,12 +764,16 @@ class MyPaymentRequestShareView(_MyPaymentRequestActionView):
         payment_request = self.get_payment_request()
         serializer = ShareTargetSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        link = get_object_or_404(
-            GuardianLink.objects.filter(
-                patient=claimed_patient_profile(request.user)
-            ),
+        # S1 refusal semantics (ADR 0008 addendum): body-carried link id →
+        # explicit 400, one message for foreign and non-existent alike.
+        link = GuardianLink.objects.filter(
+            patient=claimed_patient_profile(request.user),
             pk=serializer.validated_data["guardian_link"],
-        )
+        ).first()
+        if link is None:
+            raise DjangoValidationError(
+                "Ce lien de tutelle n'est pas l'un des vôtres : partage refusé."
+            )
         share_payment_request(
             actor=request.user, payment_request=payment_request, guardian_link=link
         )
@@ -852,10 +985,16 @@ class PspWebhookView(APIView):
     active PSP backend; a bad signature or an unknown reference answers
     400 and records nothing. Replays are no-ops (idempotency key + row
     lock in the service).
+
+    NO throttle (S1): the global user throttle keys anonymous callers by
+    IP — a burst of legitimate provider retries must never be answered
+    429 (a dropped success webhook = un encaissement qui n'arrive jamais).
+    The signature is the gate here, not a rate.
     """
 
     authentication_classes = []  # signature-based, not session/JWT
     permission_classes = [AllowAny]
+    throttle_classes = []
 
     @extend_schema(request=None, responses=None)
     def post(self, request, *args, **kwargs):

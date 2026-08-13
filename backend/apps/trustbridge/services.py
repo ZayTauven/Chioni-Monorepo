@@ -32,7 +32,7 @@ from decimal import Decimal
 
 from django.conf import settings
 from django.core.exceptions import ValidationError
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.db.models import (
     DecimalField,
     ExpressionWrapper,
@@ -48,6 +48,7 @@ from django.utils import timezone
 from apps.audit.services import AuditAction, audit
 from apps.centers.models import HealthCenter
 from apps.common import notifications
+from apps.medical.models import Encounter
 from apps.common.models import Currency
 from apps.patients.models import GuardianLink
 from apps.trustbridge.fx import net_eur_for_kmf, quote_eur_for_kmf
@@ -148,6 +149,12 @@ def create_invoice(*, actor, center, encounter, act_ids=None):
         raise ValidationError(
             "Cette consultation n'appartient pas à ce centre : facturation refusée."
         )
+    # S1 (passe guardian) — the encounter row LOCK: the « already billed »
+    # check below is only meaningful under serialisation. Two simultaneous
+    # create_invoice on the same encounter both passed it and left TWO
+    # living invoices carrying the same acts (double billing) — probed by
+    # tests/test_adversarial_s1.py with real threads.
+    encounter = Encounter.objects.select_for_update().get(pk=encounter.pk)
     acts = encounter.acts.all()
     if act_ids is not None:
         acts = acts.filter(pk__in=act_ids)
@@ -202,6 +209,90 @@ def issue_invoice(*, actor, invoice):
         actor=actor, action=AuditAction.INVOICE_ISSUED, target=invoice,
         invoice_id=invoice.pk, center_id=invoice.center_id,
         total_kmf=invoice.total_kmf, currency=str(Currency.KMF),
+    )
+    return invoice
+
+
+@transaction.atomic
+def cancel_invoice(*, actor, invoice, reason):
+    """Cancel a DRAFT/ISSUED invoice that carries no active money (S1 —
+    ADR 0015 addendum: the clean re-invoicing path).
+
+    Strict conditions, all under the invoice row lock (the caisse's
+    serialisation point):
+
+    - mandatory reason, stored on the row (NEVER in the audit payload);
+    - never on a PAID or already-CANCELLED invoice;
+    - never while an active (non-reversed) cash-in exists — reversing
+      first keeps every franc's story explicit;
+    - never while the linked payment request is ``payee``/``soin_confirme``/
+      ``cloturee``/``litige`` (money moved or a disagreement is open);
+    - a request merely ``brouillon``/``envoyee`` does NOT block: the
+      diaspora rail is already closed on a cancelled invoice (quote, pay
+      and the webhook all refuse it — revue 2a), the request simply stays
+      ``envoyee`` with an honest 400 on quote/pay;
+    - a RECENT pending intent (guardian mid-3DS) blocks for a few minutes
+      — mirror of the counter guard: MVP has no refund flow, so we never
+      knowingly let a guardian be debited into a refusal.
+
+    Cancellation frees the encounter's acts for a fresh invoice
+    (``create_invoice`` excludes cancelled invoices from the
+    already-billed check). NO SMS to anyone: the app shows no
+    « cancelled » event to the guardian (the request keeps its status and
+    the quote answers an honest 400) and the SMS rule is « le contenu
+    suit la visibilité dans l'app », never the inverse (ADR 0012).
+    """
+    if not (reason or "").strip():
+        raise ValidationError("Le motif d'annulation est obligatoire.")
+    invoice = _locked_invoice(invoice)
+    if invoice.status == Invoice.Status.CANCELLED:
+        raise ValidationError("Cette facture est déjà annulée.")
+    if invoice.status == Invoice.Status.PAID:
+        raise ValidationError(
+            "Une facture réglée ne s'annule pas : contre-passez d'abord "
+            "ses encaissements guichet (le rail diaspora, lui, passe par "
+            "un litige)."
+        )
+    if CashPayment.objects.filter(invoice=invoice, reversal__isnull=True).exists():
+        raise ValidationError(
+            "Un encaissement non contre-passé existe sur cette facture : "
+            "contre-passez-le avant d'annuler."
+        )
+    blocking_request = invoice.payment_requests.filter(
+        status__in=(
+            Status.PAID, Status.CARE_CONFIRMED, Status.CLOSED, Status.DISPUTED,
+        )
+    )
+    if blocking_request.exists():
+        raise ValidationError(
+            "La demande de paiement liée est payée, clôturée ou en litige : "
+            "annulation refusée."
+        )
+    _refuse_if_pending_diaspora_intent(
+        invoice,
+        message=(
+            "Un paiement diaspora est peut-être en cours sur cette facture. "
+            "Attendez quelques minutes avant d'annuler."
+        ),
+    )
+    request_ids = list(invoice.payment_requests.values_list("pk", flat=True))
+    previous_status = invoice.status
+    invoice.status = Invoice.Status.CANCELLED
+    invoice.cancelled_at = timezone.now()
+    invoice.cancelled_by = actor
+    invoice.cancel_reason = reason.strip()
+    invoice.save(
+        update_fields=[
+            "status", "cancelled_at", "cancelled_by", "cancel_reason",
+            "updated_at",
+        ]
+    )
+    audit(
+        actor=actor, action=AuditAction.INVOICE_CANCELLED, target=invoice,
+        invoice_id=invoice.pk, center_id=invoice.center_id,
+        patient_id=invoice.patient_id, total_kmf=invoice.total_kmf,
+        currency=str(Currency.KMF), status_before=previous_status,
+        payment_request_id=request_ids[0] if request_ids else None,
     )
     return invoice
 
@@ -288,7 +379,7 @@ def _locked_invoice(invoice):
     return Invoice.objects.select_for_update().get(pk=invoice.pk)
 
 
-def _refuse_if_pending_diaspora_intent(invoice):
+def _refuse_if_pending_diaspora_intent(invoice, *, message=None):
     """Counter-side mirror of the anti-double-débit guard (ADR 0015).
 
     MVP has no refund flow: if a guardian is mid-3DS on this invoice's
@@ -299,6 +390,9 @@ def _refuse_if_pending_diaspora_intent(invoice):
     The webhook's balance re-check remains the LAST line of defence for
     the residual race (an intent committed between this check and our
     commit — different lock rows, so not serialised).
+
+    ``message`` lets other invoice mutations behind the same guard
+    (S1: invoice cancellation) speak their own refusal.
     """
     threshold = timezone.now() - timedelta(
         minutes=settings.PSP_INTENT_GUARD_MINUTES
@@ -313,14 +407,91 @@ def _refuse_if_pending_diaspora_intent(invoice):
     )
     if pending.exists():
         raise ValidationError(
-            "Un paiement diaspora est en cours sur cette facture. "
-            "Attendez quelques minutes avant d'encaisser au guichet."
+            message
+            or "Un paiement diaspora est en cours sur cette facture. "
+               "Attendez quelques minutes avant d'encaisser au guichet."
         )
 
 
-@transaction.atomic
+def _existing_cash_payment_for_key(center, key):
+    """The committed cash-in already carrying (center, key), or None —
+    relations preloaded for the API serializer's replay response."""
+    return (
+        CashPayment.objects.filter(center=center, idempotency_key=key)
+        .select_related("cash_receipt__center", "reversal", "received_by")
+        .first()
+    )
+
+
+def _validate_idempotent_replay(
+    existing, *, invoice, method, amount_kmf, operator, reference
+):
+    """A replayed key must describe the SAME cash-in — a key reused for a
+    different invoice/amount/method is a client bug, refused explicitly
+    (never « merged » into the wrong payment). The REFERENCE is part of
+    the contract too (S1 passe guardian): it names the real-world
+    mobile-money transaction — a different reference under the same key is
+    a DIFFERENT payment, and silently answering the old one would erase
+    the new transaction from the books."""
+    if (
+        existing.invoice_id != invoice.pk
+        or existing.method != method
+        or existing.amount_kmf != Decimal(amount_kmf)
+        or existing.operator != (operator or "").strip()
+        or existing.reference != (reference or "").strip()
+    ):
+        raise ValidationError(
+            "Cette clé d'idempotence a déjà servi pour un autre "
+            "encaissement : rejouez la requête à l'identique ou changez "
+            "de clé."
+        )
+
+
 def record_cash_payment(
-    *, actor, center, invoice, method, amount_kmf, operator="", reference=""
+    *, actor, center, invoice, method, amount_kmf, operator="", reference="",
+    idempotency_key=None,
+):
+    """THE counter cash-in path — see :func:`_record_cash_payment`.
+
+    S1 idempotence (vigilance 2a) : an optional ``idempotency_key`` makes
+    the POST replayable. The nominal replay is resolved INSIDE the atomic
+    block, after the invoice row lock (two same-key requests on the same
+    invoice serialise there: the second finds the winner's row and returns
+    it, flagged ``was_replayed`` — the view answers 200 with the same
+    receipt, nothing is written, nothing is audited twice).
+
+    This wrapper handles the one race the invoice lock cannot serialise:
+    two simultaneous same-key requests on DIFFERENT invoices (different
+    lock rows). The DB unique constraint arbitrates — the loser's whole
+    transaction (ledger included) rolls back on IntegrityError, and the
+    committed winner is re-read here, outside the aborted transaction.
+    A mismatching replay then surfaces as an explicit 400.
+    """
+    key = (idempotency_key or "").strip() or None
+    try:
+        return _record_cash_payment(
+            actor=actor, center=center, invoice=invoice, method=method,
+            amount_kmf=amount_kmf, operator=operator, reference=reference,
+            idempotency_key=key,
+        )
+    except IntegrityError as exc:
+        if key is None or "unique_cash_idempotency_key_per_center" not in str(exc):
+            raise
+        existing = _existing_cash_payment_for_key(center, key)
+        if existing is None:  # pragma: no cover — constraint said otherwise
+            raise
+        _validate_idempotent_replay(
+            existing, invoice=invoice, method=method,
+            amount_kmf=amount_kmf, operator=operator, reference=reference,
+        )
+        existing.was_replayed = True
+        return existing
+
+
+@transaction.atomic
+def _record_cash_payment(
+    *, actor, center, invoice, method, amount_kmf, operator, reference,
+    idempotency_key,
 ):
     """THE counter cash-in path (espèces / mobile money) — ADR 0015.
 
@@ -360,6 +531,18 @@ def record_cash_payment(
             "Cette facture n'appartient pas à ce centre : encaissement refusé."
         )
     invoice = _locked_invoice(invoice)
+    if idempotency_key:
+        # Replay resolution BEFORE any state check: the payment this key
+        # created may have settled the invoice (« déjà réglée » would
+        # otherwise mask the legitimate replay of its own receipt).
+        existing = _existing_cash_payment_for_key(center, idempotency_key)
+        if existing is not None:
+            _validate_idempotent_replay(
+                existing, invoice=invoice, method=method,
+                amount_kmf=amount_kmf, operator=operator, reference=reference,
+            )
+            existing.was_replayed = True
+            return existing
     if invoice.status == Invoice.Status.DRAFT:
         raise ValidationError(
             "Une facture en brouillon ne s'encaisse pas : émettez-la d'abord."
@@ -404,6 +587,7 @@ def record_cash_payment(
         operator=operator,
         reference=(reference or "").strip(),
         amount_kmf=amount_kmf,
+        idempotency_key=idempotency_key,
         ledger_transaction=ledger_tx,
         received_by=actor,
     )
@@ -601,9 +785,15 @@ def send_payment_request(*, actor, payment_request):
         )
     # ADR 0015 — counter instalments may have settled the invoice between
     # the request's creation and its sending: never SMS guardians about an
-    # invoice that owes nothing — nor about a cancelled one.
-    _refuse_cancelled_invoice(payment_request.invoice)
-    if invoice_balance_kmf(payment_request.invoice) <= 0:
+    # invoice that owes nothing — nor about a cancelled one. Locked read
+    # (S1, same request → invoice order as pay/ and the webhook): a
+    # cancellation committing in this exact window must not let the
+    # « demande envoyée » SMS leave for a dead invoice.
+    invoice = Invoice.objects.select_for_update().get(
+        pk=payment_request.invoice_id
+    )
+    _refuse_cancelled_invoice(invoice)
+    if invoice_balance_kmf(invoice) <= 0:
         raise ValidationError(
             "Cette facture est déjà entièrement réglée : rien à demander."
         )
@@ -717,13 +907,23 @@ def create_payment_intent(*, guardian_user, payment_request):
         )
     _refuse_if_recent_pending_intent(payment_request)
     _require_center_can_collect(payment_request.invoice.center)
+    # S1 (passe guardian) — the invoice row LOCK, in the SAME order as the
+    # webhook (request → invoice, no deadlock cycle): an invoice being
+    # cancelled at the desk while the guardian is inside pay/ serialises
+    # here. Without it, cancel_invoice sees no intent yet (not committed),
+    # commits its cancellation, and this transaction then charges the
+    # guardian into a guaranteed webhook refusal — a real debit with no
+    # refund path in the MVP. Probed by tests/test_adversarial_s1.py.
+    invoice = Invoice.objects.select_for_update().get(
+        pk=payment_request.invoice_id
+    )
     # A cancelled invoice must never charge a guardian (mirror of the
-    # counter refusal); the webhook re-checks under the invoice lock.
-    _refuse_cancelled_invoice(payment_request.invoice)
+    # counter refusal); the webhook re-checks under the invoice lock too.
+    _refuse_cancelled_invoice(invoice)
     # ADR 0015 — the intent is frozen on the invoice's REMAINING balance
-    # (counter instalments may exist); the webhook re-checks that balance
-    # under the invoice lock before writing a single franc.
-    balance = invoice_balance_kmf(payment_request.invoice)
+    # (counter instalments may exist), read under the SAME lock; the
+    # webhook re-checks that balance before writing a single franc.
+    balance = invoice_balance_kmf(invoice)
     if balance <= 0:
         raise ValidationError(
             "Cette facture est déjà entièrement réglée : plus rien à payer."

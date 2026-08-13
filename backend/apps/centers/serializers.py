@@ -76,6 +76,34 @@ class StaffMembershipSerializer(serializers.ModelSerializer):
         read_only_fields = ["id", "user", "is_active", "created_at"]
 
 
+class PractitionerSerializer(serializers.ModelSerializer):
+    """One row of the practitioner directory (S1 — annuaire praticiens).
+
+    MINIMAL payload on purpose: the whole staff can read this (the
+    secretary resolves a practitioner for an appointment), so it carries
+    the display name, the role and the photo — never a phone, never the
+    activation state, nothing the director-only staff screens expose.
+    ``id`` is the MEMBERSHIP id: it feeds ``practitioner`` in appointment
+    and encounter payloads directly.
+    """
+
+    display_name = serializers.SerializerMethodField()
+    avatar = serializers.SerializerMethodField()
+
+    class Meta:
+        model = StaffMembership
+        fields = ["id", "display_name", "role", "avatar"]
+        read_only_fields = fields
+
+    def get_display_name(self, membership) -> str:
+        user = membership.user
+        full = f"{user.first_name} {user.last_name}".strip()
+        return full or user.username
+
+    def get_avatar(self, membership):
+        return media_url(self.context.get("request"), membership.user.avatar)
+
+
 class StaffCreateSerializer(serializers.Serializer):
     """Audience: director — add a staff member by phone (pivot, ADR 0001)."""
 

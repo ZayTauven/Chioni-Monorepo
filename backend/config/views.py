@@ -7,10 +7,16 @@ from rest_framework.views import APIView
 
 
 class HealthCheckView(APIView):
-    """Public liveness probe — no authentication, no database access."""
+    """Public liveness probe — no authentication, no database access.
+
+    No throttle either (S1): the global user throttle keys anonymous
+    callers by IP, and a monitoring probe behind a shared NAT must never
+    read anything but 200.
+    """
 
     permission_classes = [AllowAny]
     authentication_classes: list = []
+    throttle_classes: list = []
 
     @extend_schema(
         operation_id="health_check",

@@ -5,6 +5,7 @@ Every view declares exactly one hat (permission + queryset helper from
 because no queryset here is derived from "any right the user holds".
 """
 
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db.models import Q
 from django.shortcuts import get_object_or_404
 from drf_spectacular.utils import extend_schema
@@ -14,16 +15,16 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.centers.models import StaffMembership
 from apps.common.permissions import (
     CenterScopedViewMixin,
-    IsGuardianWithScope,
+    IsGuardian,
     IsPatientSelf,
     IsStaffOfCenter,
     claimed_patient_profile,
     guardian_links_with_scope,
     guardian_profile,
 )
+from apps.common.roles import BILLING_ROLES
 from apps.medical.models import Consent
 from apps.patients.models import GuardianLink, PatientProfile
 from apps.patients.serializers import (
@@ -58,16 +59,6 @@ from apps.patients.throttling import (
     InviteGuardianPerPhoneThrottle,
     InviteGuardianPerUserThrottle,
 )
-
-#: Roles allowed to route payment-request shares at the desk — the SAME
-#: billing roles as ``apps.trustbridge.views.BILLING_ROLES``, kept local so
-#: the patients app never imports trustbridge (dependency direction).
-BILLING_ROLES = (
-    StaffMembership.Role.DIRECTOR,
-    StaffMembership.Role.SECRETARY,
-    StaffMembership.Role.CASHIER,
-)
-
 
 def center_patients_qs(center):
     """Patients visible to a center: created at its desk or already seen
@@ -188,19 +179,35 @@ class CenterPatientGuardianLinksView(CenterScopedViewMixin, generics.ListAPIView
 class CenterPatientMergeView(CenterScopedViewMixin, APIView):
     """POST /centers/{center_pk}/patients/merge/ — absorb a duplicate.
 
-    Both profiles must be inside THIS center's perimeter (404 otherwise):
-    a center never merges patients it has not itself received.
+    S1 (arbitrage C.3, défaut PO réversible) : rôles BILLING seulement —
+    la fusion est une opération d'administration de dossier au guichet
+    (elle déplace des liens de tutelle), pas un geste de soin. Création et
+    modification de patient restent ouvertes à tout staff.
+
+    Both profiles must be inside THIS center's perimeter. S1 refusal
+    semantics (ADR 0008 addendum): the ids travel in the BODY → an id
+    outside the perimeter answers an explicit 400 (same message for
+    foreign and non-existent ids — nothing leaks), never a 404.
     """
 
-    permission_classes = [IsStaffOfCenter()]
+    permission_classes = [IsStaffOfCenter(*BILLING_ROLES)]
 
     @extend_schema(request=MergeRequestSerializer, responses=PatientStaffSerializer)
     def post(self, request, center_pk):
         serializer = MergeRequestSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         scoped = center_patients_qs(self.center)
-        source = get_object_or_404(scoped, pk=serializer.validated_data["source_id"])
-        target = get_object_or_404(scoped, pk=serializer.validated_data["target_id"])
+
+        def resolve(field):
+            profile = scoped.filter(pk=serializer.validated_data[field]).first()
+            if profile is None:
+                raise DjangoValidationError(
+                    "Ce patient n'est pas connu de ce centre : fusion refusée."
+                )
+            return profile
+
+        source = resolve("source_id")
+        target = resolve("target_id")
         canonical = merge_profiles(
             source=source, target=target, actor=request.user, center=self.center
         )
@@ -400,11 +407,14 @@ class MyGuardianProfileView(APIView):
 class ProtegeListCreateView(generics.ListCreateAPIView):
     """GET/POST /guardian/proteges/ — my protégés (administrative view only).
 
-    The list queryset goes through ``guardian_links_with_scope`` — the F3
-    combination (scope × link perimeter) — with the minimal payments scope.
+    ``IsGuardian`` (S1): this is a guardian-SPACE endpoint — a brand-new
+    guardian with zero links must be able to create their first protégé
+    (porte A) and read an empty list. The list queryset still goes through
+    ``guardian_links_with_scope`` — the F3 combination (scope × link
+    perimeter) — with the minimal payments scope.
     """
 
-    permission_classes = [IsGuardianWithScope(Consent.Scope.PAYMENTS)]
+    permission_classes = [IsGuardian]
 
     def get_serializer_class(self):
         if self.request.method == "POST":
@@ -432,9 +442,14 @@ class ProtegeListCreateView(generics.ListCreateAPIView):
 
 
 class GuardianInvitationListView(generics.ListAPIView):
-    """GET /guardian/invitations/ — links awaiting MY acceptance."""
+    """GET /guardian/invitations/ — links awaiting MY acceptance.
 
-    permission_classes = [IsGuardianWithScope(Consent.Scope.PAYMENTS)]
+    ``IsGuardian`` (S1): an invitation is not ACTIVE yet, so it carries no
+    scope by definition — requiring one would lock a new guardian out of
+    their own first invitation.
+    """
+
+    permission_classes = [IsGuardian]
     serializer_class = GuardianLinkGuardianSerializer
 
     def get_queryset(self):
@@ -451,7 +466,7 @@ class GuardianInvitationListView(generics.ListAPIView):
 class AcceptInvitationView(APIView):
     """POST /guardian/invitations/{link_pk}/accept/ — open the minimal scope."""
 
-    permission_classes = [IsGuardianWithScope(Consent.Scope.PAYMENTS)]
+    permission_classes = [IsGuardian]
 
     @extend_schema(request=None, responses=GuardianLinkGuardianSerializer)
     def post(self, request, link_pk):
@@ -472,7 +487,7 @@ class DeclineInvitationView(APIView):
     invisible (404); an invitation no longer pending answers 400.
     """
 
-    permission_classes = [IsGuardianWithScope(Consent.Scope.PAYMENTS)]
+    permission_classes = [IsGuardian]
 
     @extend_schema(request=None, responses=GuardianLinkGuardianSerializer)
     def post(self, request, link_pk):
@@ -487,7 +502,7 @@ class DeclineInvitationView(APIView):
 class GuardianRevokeLinkView(APIView):
     """POST /guardian/links/{link_pk}/revoke/ — the guardian steps back."""
 
-    permission_classes = [IsGuardianWithScope(Consent.Scope.PAYMENTS)]
+    permission_classes = [IsGuardian]
 
     @extend_schema(request=None, responses=GuardianLinkGuardianSerializer)
     def post(self, request, link_pk):

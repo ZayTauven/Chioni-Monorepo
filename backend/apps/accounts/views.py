@@ -141,9 +141,13 @@ class MeAvatarView(APIView):
     Any authenticated user (staff, patient, guardian — the avatar belongs
     to the account, not to a hat). Upload goes through the hardened
     pipeline; replacement and removal leave no orphan file behind.
+    Strict ``uploads`` throttle scope (S1, shared with the center logo):
+    every upload runs the Pillow pipeline — CPU, vigilance vague 1.
     """
 
     parser_classes = [MultiPartParser, FormParser]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "uploads"
 
     @extend_schema(request=AvatarUploadSerializer, responses={200: None})
     def post(self, request):

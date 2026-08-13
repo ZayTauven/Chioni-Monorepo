@@ -86,3 +86,45 @@ Trois endpoints de lecture (`/centers/{c}/stats/activity/`, `/stats/finances/`, 
 7. **Fenêtre commune** : `?from=&to=` jours locaux Comores inclusifs (pattern ADR 0013 réutilisé sans toucher `apps/scheduling`), défaut 30 jours, max 366, séries zéro-remplies, dates invalides/impossibles/hors calendrier → 400 par champ. `unpaid` reste une photo à l'instant T, indépendante de la fenêtre.
 
 Tests : `tests/test_center_stats.py` (39) — exactitude des agrégats (multi-statuts, tranches + contre-passation + diaspora, factures partiellement soldées), bornes 00h30/23h30 locales, fenêtre, permissions par casquette, cloisonnement tenant, accord SQL↔dérivation, centre vide, comptes de requêtes exacts (6/6/4 — aucun N+1).
+
+## Addendum S1 — Annulation de facture, idempotence guichet, intégralité tarif (2026-08-13)
+
+### 1. Annulation de facture — le chemin de refacturation propre
+
+`POST /centers/{c}/invoices/{pk}/cancel/` (rôles BILLING, motif OBLIGATOIRE) via le service `cancel_invoice` — le premier code qui atteint `Invoice.Status.CANCELLED` (jusqu'ici testé défensivement en 4 endroits mais jamais assigné). Tout sous le verrou de la ligne facture (LE point de sérialisation de la caisse) :
+
+**Conditions strictes** :
+- jamais sur une facture `payee` (contre-passez d'abord les encaissements guichet ; le rail diaspora passe par un litige) ni déjà `annulee` ;
+- jamais tant qu'un encaissement ACTIF (non contre-passé) existe — contre-passer d'abord garde l'histoire de chaque franc explicite ;
+- jamais si la demande liée est `payee`/`soin_confirme`/`cloturee`/`litige` (de l'argent a bougé ou un désaccord est ouvert) ;
+- garde miroir anti-double-débit : un intent `cree`/`en_cours` < `PSP_INTENT_GUARD_MINUTES` bloque l'annulation quelques minutes (un tuteur en plein 3DS ne doit pas être débité vers un refus — le MVP n'a pas de refund).
+
+**Cas demande `envoyee` — tranché honnêtement** : l'annulation est PERMISE. Le rail diaspora est déjà structurellement fermé sur facture annulée (revue 2a) : devis → 400, `pay/` → 400, webhook tardif → 400 + AuditLog `payment.webhook_refused` (`refusal="invoice_cancelled"`, pièce de réconciliation). La demande RESTE `envoyee` (pas de transition d'annulation dans la machine ADR 0009 — limitation §4 inchangée) : le tuteur qui ouvre le devis reçoit le 400 honnête « Cette facture a été annulée par le centre ».
+
+**Pas de SMS** : la règle actée est « le contenu d'un SMS suit la visibilité dans l'app, jamais l'inverse » (ADR 0012). L'app ne présente AUCUN événement « annulation » au tuteur (la demande garde son statut ; seul le devis répond 400) — donc aucun SMS ne part. Si une vue tuteur « demande annulée » naît un jour, le SMS viendra AVEC elle, pas avant. Verrouillé par test (`sms_outbox == []`).
+
+**Traçabilité** : motif stocké SUR la facture (`cancel_reason` + `cancelled_at`/`cancelled_by`, exposés au staff seul), audit `invoice.cancelled` références-only (le motif n'entre JAMAIS dans le payload — même règle que contre-passation et litige). Effet libérateur : les actes de la facture annulée redeviennent facturables (`create_invoice` exclut déjà les factures annulées) — c'est la refacturation propre. Une facture annulée refuse toute nouvelle demande de paiement (« émise » exigée, inchangé).
+
+### 2. Idempotence guichet (vigilance 2a soldée)
+
+Champ optionnel `idempotency_key` (≤ 64 car.) sur `POST /centers/{c}/invoices/{pk}/payments/`, stocké sur `CashPayment`, **unique par centre** (contrainte DB partielle `unique_cash_idempotency_key_per_center`, NULL exclus — deux centres peuvent réutiliser la même clé sans se coupler).
+
+- **Rejeu nominal** : même clé → **200** avec l'encaissement DÉJÀ créé et le MÊME reçu — jamais un second encaissement, jamais une seconde transaction du ledger, jamais un second événement d'audit (le rejeu est une lecture). La résolution du rejeu se fait APRÈS le verrou de la ligne facture et AVANT les contrôles d'état — le rejeu du paiement qui a SOLDÉ la facture répond 200, jamais « déjà réglée » (c'est le cas timeout-retry pour lequel la feature existe).
+- **Clé réutilisée à tort** (autre facture, autre montant, autre méthode/opérateur) → 400 explicite — jamais de « fusion » silencieuse vers le mauvais encaissement.
+- **Concurrence** : même facture → sérialisée par le verrou facture (le second trouve la ligne du gagnant, test à 2 threads réels : un seul encaissement, les deux appels tiennent le même). Factures différentes, même clé → la contrainte DB arbitre : le perdant voit son IntegrityError, sa transaction ENTIÈRE (ledger compris) est annulée, et le wrapper hors-transaction relit le gagnant → 400 de non-concordance (test à threads réels : un seul encaissement, zéro écriture orpheline).
+- Un encaissement `pont_confiance` ne porte JAMAIS de clé guichet (le rail diaspora a son `PaymentIntent.idempotency_key`).
+- Sémantique DRF assumée : en JSON une clé vide explicite → 400 ; en form-data `""` équivaut à « champ absent » (comportement HTML standard de DRF) → traité comme sans clé.
+
+### 2 bis. Passe guardian S1 — trois courses fermées, un contrat élargi
+
+Revue adversariale du sprint (probes pérennes : `tests/test_adversarial_s1.py`) :
+
+- **`create_payment_intent` prend le verrou de la ligne FACTURE** (ordre demande → facture, le même que le webhook — aucun cycle) : sans lui, une annulation à la caisse pendant qu'un tuteur est dans `pay/` ne voyait aucun intent (pas encore commité), passait, et le tuteur était débité vers un refus webhook garanti (pas de refund en MVP) — entrelacement démontré déterministe par probe. Le gel du solde de l'intent se lit désormais sous ce même verrou (plus de solde périmé face à un encaissement guichet simultané).
+- **`send_payment_request` lit la facture sous le même verrou** : une annulation commitée dans la fenêtre d'envoi ne laisse plus partir le SMS « demande envoyée » pour une facture morte.
+- **`create_invoice` prend le verrou de la ligne CONSULTATION** : le contrôle « acte déjà porté » ne vaut que sérialisé — deux `create_invoice` simultanés sur la même consultation produisaient DEUX factures vivantes des mêmes actes (double facturation, probe à threads réels).
+- **La RÉFÉRENCE entre dans le contrat d'idempotence** : une clé rejouée avec une autre référence désigne une AUTRE transaction mobile money — la « fusionner » silencieusement effaçait le second versement des livres. Désormais 400 de non-concordance, comme montant/méthode/opérateur/facture.
+- **`cancel_reason` réservé aux rôles BILLING en lecture** (serializer par rôle, pattern R-API-1) — voir ADR 0008 §3.
+
+### 3. Intégralité tarif au niveau base (vigilance 2a soldée)
+
+`CheckConstraint` `tariff_price_kmf_integral` (`price_kmf = ROUND(price_kmf)`) sur `TariffItem` — la garde `save()`/serializer existait, mais `update()`/`bulk_create()` la contournaient (l'angle mort exact sondé par la revue 2b). La migration `centers/0004` fait précéder la contrainte d'un garde `RunPython` qui **REFUSE de s'appliquer** (message FR listant les lignes) tant que des tarifs fractionnaires existent — **jamais d'arrondi silencieux** : un prix est une décision du centre, seul un humain le corrige. La probe wave2b « ligne fractionnaire pré-existante » a été reconvertie : le contournement tarif est désormais fermé (IntegrityError testé) ; le résidu historique possible reste la vieille `InvoiceLine` fractionnaire (instantané sans contrainte), dont la dégradation honnête (solde 0,50 visible, jamais « payée ») reste testée telle quelle.

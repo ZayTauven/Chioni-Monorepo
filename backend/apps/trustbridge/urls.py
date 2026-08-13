@@ -14,6 +14,7 @@ from apps.trustbridge.views import (
     CenterCashPaymentReverseView,
     CenterDisputeListView,
     CenterDisputeResolveView,
+    CenterInvoiceCancelView,
     CenterInvoiceDetailView,
     CenterInvoiceIssueView,
     CenterInvoiceListCreateView,
@@ -68,6 +69,11 @@ urlpatterns = [
         "centers/<int:center_pk>/invoices/<int:pk>/issue/",
         CenterInvoiceIssueView.as_view(),
         name="center-invoice-issue",
+    ),
+    path(
+        "centers/<int:center_pk>/invoices/<int:pk>/cancel/",
+        CenterInvoiceCancelView.as_view(),
+        name="center-invoice-cancel",
     ),
     path(
         "centers/<int:center_pk>/invoices/<int:pk>/payment-requests/",

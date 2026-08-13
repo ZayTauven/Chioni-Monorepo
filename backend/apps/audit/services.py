@@ -65,12 +65,19 @@ class AuditAction:
     # Role change and/or shadow-account identity edit by the director
     # (payload refs: old_role/role + comma-joined changed fields).
     STAFF_UPDATED = "staff.membership_updated"
+    # Reactivation of a deactivated membership (director only, S1) — the
+    # symmetric of STAFF_DEACTIVATED; the row is unique per
+    # (user, center, role) so reactivating can never create a duplicate.
+    STAFF_REACTIVATED = "staff.membership_reactivated"
     CENTER_UPDATED = "center.updated"
     TARIFF_CREATED = "tariff.created"
     TARIFF_UPDATED = "tariff.updated"
 
     # Medical data production
     ENCOUNTER_CREATED = "encounter.created"
+    # Closure of a consultation (clinical roles, S1) : « terminee » —
+    # a closed encounter refuses new prescriptions and record entries.
+    ENCOUNTER_CLOSED = "encounter.closed"
     PRESCRIPTION_CREATED = "prescription.created"
     RECORD_ENTRY_CREATED = "health_record_entry.created"
 
@@ -78,6 +85,10 @@ class AuditAction:
     # currencies ONLY — never an act label (ADR 0005/0007).
     INVOICE_CREATED = "invoice.created"
     INVOICE_ISSUED = "invoice.issued"
+    # Cancellation of a DRAFT/ISSUED invoice without any active cash-in
+    # (S1, ADR 0015 addendum). Payload: references only — the mandatory
+    # cancellation reason lives on the Invoice row, NEVER in this payload.
+    INVOICE_CANCELLED = "invoice.cancelled"
     PAYMENT_REQUEST_CREATED = "payment_request.created"
     PAYMENT_REQUEST_SENT = "payment_request.sent"
     PAYMENT_REQUEST_SHARED = "payment_request.shared"

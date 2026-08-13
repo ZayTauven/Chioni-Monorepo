@@ -4,9 +4,17 @@ NO guardian endpoint here (phase A rule): the ``detail_clinique`` scope
 will be wired whole in a later phase, never half-exposed.
 """
 
+from datetime import datetime, time, timedelta
+
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.shortcuts import get_object_or_404
+from django.utils import timezone
+from django.utils.dateparse import parse_date
+from drf_spectacular.utils import extend_schema
 from rest_framework import generics, status
+from rest_framework.exceptions import ValidationError as DrfValidationError
 from rest_framework.response import Response
+from rest_framework.views import APIView
 
 from apps.centers.models import StaffMembership, TariffItem
 from apps.common.permissions import (
@@ -16,6 +24,7 @@ from apps.common.permissions import (
     active_membership_qs,
     claimed_patient_profile,
 )
+from apps.common.roles import CLINICAL_ROLES
 from apps.medical.models import Encounter, HealthRecordEntry, Prescription
 from apps.medical.serializers import (
     EncounterAdminSerializer,
@@ -28,6 +37,7 @@ from apps.medical.serializers import (
     PrescriptionSerializer,
 )
 from apps.medical.services import (
+    close_encounter,
     create_encounter,
     create_prescription,
     create_record_entry,
@@ -35,12 +45,10 @@ from apps.medical.services import (
 from apps.patients.views import center_patients_qs
 from apps.scheduling.models import Appointment
 
-#: Roles allowed to produce AND read clinical content (R-API-1).
-CLINICAL_ROLES = (
-    StaffMembership.Role.DOCTOR,
-    StaffMembership.Role.NURSE,
-    StaffMembership.Role.MIDWIFE,
-)
+# ``CLINICAL_ROLES`` lives in apps.common.roles since S1 (single source —
+# it also feeds the practitioner directory); the derived groups below have
+# this module as their only consumer.
+
 #: Roles allowed to prescribe.
 PRESCRIBER_ROLES = (
     StaffMembership.Role.DOCTOR,
@@ -66,16 +74,52 @@ def is_clinical_member(user, center):
 # ---------------------------------------------------------------------------
 
 
+def _local_day_bounds(raw_date, field="date"):
+    """Local Comoros day bounds for a ``?date=`` filter — the exact ADR
+    0013 refusal semantics: malformed AND well-formed-impossible dates
+    both answer the same 400 per field, never a 500."""
+    try:
+        day = parse_date(raw_date)
+    except ValueError:
+        day = None
+    if day is None:
+        raise DrfValidationError({field: ["Format attendu : AAAA-MM-JJ."]})
+    day_start = timezone.make_aware(datetime.combine(day, time.min))
+    try:
+        day_end = day_start + timedelta(days=1)
+    except OverflowError:
+        raise DrfValidationError({field: ["Date hors limites."]})
+    return day_start, day_end
+
+
+def _validated_id_param(params, field, label):
+    """``?field=<id>`` or a 400 per field; a foreign id simply matches
+    nothing in the center-scoped queryset (no cross-tenant probe)."""
+    raw = params.get(field)
+    if raw in (None, ""):
+        return None
+    if not raw.isdigit():
+        raise DrfValidationError({field: [f"Identifiant de {label} invalide."]})
+    return int(raw)
+
+
 class CenterEncounterListCreateView(CenterScopedViewMixin, generics.ListCreateAPIView):
-    """GET /centers/{center_pk}/encounters/ (any staff) — POST (clinical roles).
+    """GET /centers/{center_pk}/encounters/?patient=&date=&practitioner=
+    (any staff) — POST (clinical roles).
 
     R-API-1: the GET payload depends on the caller's ROLE — clinical staff
     get the clinical serializer (reason, diagnosis), administrative staff
     the operating one (date, patient, practitioner, acts). The queryset
-    stays center-scoped in both cases.
+    stays center-scoped in both cases; filter values are validated (400
+    per field on garbage) and a FOREIGN id matches nothing (S1 filters).
 
     The practitioner is ALWAYS the caller's own clinical membership in this
     center: a view can never attribute an act to someone else's hat.
+
+    S1 refusal semantics (ADR 0008 addendum): ``patient``, ``tariff_items``
+    and ``appointment`` travel in the POST BODY → an id outside the
+    center's perimeter answers an explicit 400 (pattern scheduling — one
+    message covering foreign and non-existent ids alike), never a 404.
     """
 
     def get_permissions(self):
@@ -91,33 +135,57 @@ class CenterEncounterListCreateView(CenterScopedViewMixin, generics.ListCreateAP
         return EncounterAdminSerializer
 
     def get_queryset(self):
-        return (
+        qs = (
             Encounter.objects.for_center(self.center)
             .select_related("practitioner__user")
             .prefetch_related("acts")
             .order_by("-occurred_at")
         )
+        params = self.request.query_params
+        patient_id = _validated_id_param(params, "patient", "patient")
+        if patient_id is not None:
+            qs = qs.filter(patient_id=patient_id)
+        practitioner_id = _validated_id_param(params, "practitioner", "praticien")
+        if practitioner_id is not None:
+            qs = qs.filter(practitioner_id=practitioner_id)
+        raw_date = params.get("date")
+        if raw_date:
+            day_start, day_end = _local_day_bounds(raw_date)
+            qs = qs.filter(occurred_at__gte=day_start, occurred_at__lt=day_end)
+        return qs
 
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
-        # Perimeter checks: patient seen by this center, tariffs of its grid.
-        patient = get_object_or_404(
-            center_patients_qs(self.center), pk=data["patient"]
-        )
-        tariffs = [
-            get_object_or_404(TariffItem.objects.for_center(self.center), pk=pk)
-            for pk in data["tariff_items"]
-        ]
+        # Perimeter checks (body refs → 400 explicite, S1): patient seen by
+        # this center, tariffs of its grid, appointment of this center.
+        patient = center_patients_qs(self.center).filter(pk=data["patient"]).first()
+        if patient is None:
+            raise DjangoValidationError("Ce patient n'est pas connu de ce centre.")
+        grid = TariffItem.objects.for_center(self.center)
+        tariffs = []
+        for pk in data["tariff_items"]:
+            tariff = grid.filter(pk=pk).first()
+            if tariff is None:
+                raise DjangoValidationError(
+                    "Un acte ne peut référencer qu'un tarif de la grille de "
+                    "ce centre."
+                )
+            tariffs.append(tariff)
         appointment = None
         if data.get("appointment") is not None:
-            # Center-scoped resolution (IDOR → 404); the service then checks
-            # the appointment concerns the SAME patient (400) and honors it.
-            appointment = get_object_or_404(
-                Appointment.objects.for_center(self.center),
-                pk=data["appointment"],
+            # Center-perimeter resolution (400 explicite); the service then
+            # checks the appointment concerns the SAME patient and honors it.
+            appointment = (
+                Appointment.objects.for_center(self.center)
+                .filter(pk=data["appointment"])
+                .first()
             )
+            if appointment is None:
+                raise DjangoValidationError(
+                    "Ce rendez-vous n'appartient pas à ce centre."
+                )
         practitioner = (
             active_membership_qs(request.user, center=self.center, roles=CLINICAL_ROLES)
             .order_by("id")
@@ -160,6 +228,30 @@ class CenterEncounterDetailView(CenterScopedViewMixin, generics.RetrieveAPIView)
             .select_related("practitioner__user")
             .prefetch_related("acts")
         )
+
+
+class CenterEncounterCloseView(CenterScopedViewMixin, APIView):
+    """POST /centers/{center_pk}/encounters/{pk}/close/ — S1: en_cours →
+    terminee (clinical roles; the reference is in the URL → foreign
+    encounter = 404).
+
+    Effects (documented, ADR 0008 addendum S1): a closed encounter refuses
+    new prescriptions and record entries (400 explicite in the services);
+    billing it stays possible (the invoice routinely comes after the
+    care). ``annulee`` is out of S1 scope (invoice cascade to design).
+    """
+
+    permission_classes = [IsStaffOfCenter(*CLINICAL_ROLES)]
+
+    @extend_schema(request=None, responses=EncounterClinicalSerializer)
+    def post(self, request, *args, **kwargs):
+        encounter = get_object_or_404(
+            Encounter.objects.for_center(self.center), pk=self.kwargs["pk"]
+        )
+        encounter = close_encounter(actor=request.user, encounter=encounter)
+        # The caller holds a clinical role (permission above): the clinical
+        # payload is theirs to read (R-API-1).
+        return Response(EncounterClinicalSerializer(encounter).data)
 
 
 class _EncounterNestedView(CenterScopedViewMixin, generics.GenericAPIView):

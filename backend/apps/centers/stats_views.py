@@ -43,8 +43,8 @@ from apps.medical.models import Encounter
 from apps.patients.models import PatientProfile
 from apps.scheduling.models import Appointment
 from apps.trustbridge.models import CashPayment, CashPaymentReversal, Invoice
+from apps.common.roles import BILLING_ROLES
 from apps.trustbridge.services import unpaid_invoices_qs
-from apps.trustbridge.views import BILLING_ROLES
 
 #: Longest inclusive period served (a leap year).
 MAX_PERIOD_DAYS = 366

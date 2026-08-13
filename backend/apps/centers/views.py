@@ -10,12 +10,14 @@ from rest_framework import generics, status
 from rest_framework.exceptions import NotFound
 from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.response import Response
+from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 
 from apps.centers.models import HealthCenter, StaffMembership, TariffItem
 from apps.centers.serializers import (
     HealthCenterSerializer,
     LogoUploadSerializer,
+    PractitionerSerializer,
     StaffCreateSerializer,
     StaffMembershipSerializer,
     StaffUpdateSerializer,
@@ -24,6 +26,7 @@ from apps.centers.serializers import (
 from apps.centers.services import (
     add_staff_member,
     deactivate_staff_member,
+    reactivate_staff_member,
     remove_center_logo,
     set_center_logo,
     update_center,
@@ -37,6 +40,7 @@ from apps.common.permissions import (
     StaffOfObjectCenter,
     user_centers_qs,
 )
+from apps.common.roles import CLINICAL_ROLES
 from apps.common.uploads import media_url
 
 DIRECTOR = StaffMembership.Role.DIRECTOR
@@ -90,6 +94,10 @@ class CenterLogoView(APIView):
 
     parser_classes = [MultiPartParser, FormParser]
     permission_classes = [StaffOfObjectCenter(DIRECTOR)]
+    # S1 — STRICT scope shared with the avatar endpoint: every upload runs
+    # the Pillow pipeline (decode + re-encode = CPU), vigilance vague 1.
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "uploads"
 
     def _get_center(self, request, pk):
         center = user_centers_qs(request.user).filter(pk=pk).first()
@@ -199,6 +207,59 @@ class StaffDeactivateView(CenterScopedViewMixin, APIView):
             StaffMembershipSerializer(
                 membership, context={"request": request}
             ).data
+        )
+
+
+class StaffReactivateView(CenterScopedViewMixin, APIView):
+    """POST /centers/{center_pk}/staff/{pk}/reactivate/ — director only (S1).
+
+    The symmetric of deactivation (which was irreversible by API: an
+    erroneous click meant a trip through the Django admin). Uniqueness is
+    guaranteed by construction — see ``services.reactivate_staff_member``.
+    Audited ``staff.membership_reactivated``.
+    """
+
+    permission_classes = [IsStaffOfCenter(DIRECTOR)]
+
+    def post(self, request, center_pk, pk):
+        membership = get_object_or_404(
+            StaffMembership.objects.for_center(self.center), pk=pk
+        )
+        reactivate_staff_member(actor=request.user, membership=membership)
+        return Response(
+            StaffMembershipSerializer(
+                membership, context={"request": request}
+            ).data
+        )
+
+
+class CenterPractitionerListView(CenterScopedViewMixin, generics.ListAPIView):
+    """GET /centers/{center_pk}/practitioners/ — S1: the practitioner
+    directory, readable by EVERY active staff of the center.
+
+    Manque n° 1 du frontend (audit C.1) : la secrétaire doit résoudre un
+    praticien pour poser un rendez-vous, mais ``GET /staff/`` est réservé
+    au directeur — le sélecteur RDV se rabattait sur ``stats/activity``
+    (praticiens ayant déjà consulté : un recruté de la veille était
+    inassignable). Perimeter: ACTIVE memberships holding a CLINICAL role
+    (medecin, infirmier, sage_femme). Minimal payload (no phone, no
+    activation state — see ``PractitionerSerializer``).
+
+    NOT paginated (like prescriptions/record-entries): this list feeds a
+    <select> and a center's clinical staff is small — the frontend needs
+    it whole.
+    """
+
+    permission_classes = [IsStaffOfCenter()]
+    serializer_class = PractitionerSerializer
+    pagination_class = None
+
+    def get_queryset(self):
+        return (
+            StaffMembership.objects.for_center(self.center)
+            .filter(is_active=True, role__in=CLINICAL_ROLES)
+            .select_related("user")
+            .order_by("role", "id")
         )
 
 

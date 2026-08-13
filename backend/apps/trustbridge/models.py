@@ -94,6 +94,27 @@ class Invoice(TimeStampedModel):
     status = models.CharField(
         "statut", max_length=16, choices=Status.choices, default=Status.DRAFT
     )
+    # S1 — cancellation trail (ADR 0015 addendum). The mandatory reason
+    # lives HERE, visible to the center handling its own billing, and is
+    # NEVER pushed into the AuditLog payload (ADR 0007: references only —
+    # same rule as the reversal/dispute free texts).
+    cancelled_at = models.DateTimeField("annulée le", null=True, blank=True)
+    cancelled_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        verbose_name="annulée par",
+        on_delete=models.PROTECT,
+        related_name="invoices_cancelled",
+        null=True,
+        blank=True,
+    )
+    cancel_reason = models.TextField(
+        "motif d'annulation",
+        blank=True,
+        help_text=(
+            "Obligatoire à l'annulation (service cancel_invoice) — une "
+            "annulation sans motif est irrecevable."
+        ),
+    )
 
     objects = CenterScopedQuerySet.as_manager()
 
@@ -854,6 +875,23 @@ class CashPayment(AppendOnlyModel):
         help_text="Ex. identifiant de transaction mobile money.",
     )
     amount_kmf = models.DecimalField("montant (KMF)", max_digits=12, decimal_places=2)
+    # S1 (vigilance 2a soldée) — optional counter idempotency key: a desk
+    # client retrying a POST (timeout, double-clic, réseau comorien) sends
+    # the SAME key and gets the SAME payment back instead of cashing in
+    # twice. Unique per center at the DB level (race-safe); NULL when the
+    # desk sends none, and ALWAYS null for a Trust Bridge cash-in (the
+    # diaspora rail has its own PaymentIntent.idempotency_key).
+    idempotency_key = models.CharField(
+        "clé d'idempotence guichet",
+        max_length=64,
+        null=True,
+        blank=True,
+        default=None,
+        help_text=(
+            "Fournie par le client du guichet pour rendre le POST rejouable "
+            "sans double encaissement ; unique par centre."
+        ),
+    )
     ledger_transaction = models.ForeignKey(
         LedgerTransaction,
         verbose_name="transaction du ledger",
@@ -910,6 +948,14 @@ class CashPayment(AppendOnlyModel):
                     )
                 ),
                 name="cash_payment_intent_iff_trust_bridge",
+            ),
+            # S1 — one cash-in per (center, idempotency key): the DB is the
+            # last arbiter of the replay race (two simultaneous POSTs with
+            # the same key can never both insert).
+            models.UniqueConstraint(
+                fields=["center", "idempotency_key"],
+                condition=models.Q(idempotency_key__isnull=False),
+                name="unique_cash_idempotency_key_per_center",
             ),
         ]
 

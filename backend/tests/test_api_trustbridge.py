@@ -137,14 +137,24 @@ class TestStaffInvoiceEndpoints:
         assert len(response.data["lines"]) == 1
         assert response.data["lines"][0]["label"] == "Consultation générale"
 
-    def test_billing_an_encounter_of_another_center_is_404(self):
+    def test_billing_an_encounter_of_another_center_is_an_explicit_400(self):
+        """S1 refusal semantics (ADR 0008 addendum): the encounter id
+        travels in the BODY → 400 explicite, same message for foreign and
+        non-existent ids (no cross-tenant existence oracle)."""
         scn = build_scenario(status="facture_brouillon")
         foreign = build_scenario(status="facture_brouillon")
         response = client_for(scn.cashier).post(
             f"/api/v1/centers/{scn.center.pk}/invoices/",
             {"encounter": foreign.encounter.pk},
         )
-        assert response.status_code == 404
+        assert response.status_code == 400
+        assert "n'appartient pas à ce centre" in str(response.data)
+        unknown = client_for(scn.cashier).post(
+            f"/api/v1/centers/{scn.center.pk}/invoices/",
+            {"encounter": 999999},
+        )
+        assert unknown.status_code == 400
+        assert unknown.data == response.data
 
     def test_invoice_list_is_center_scoped(self):
         scn = build_scenario(status="facture_brouillon")
@@ -177,7 +187,11 @@ class TestStaffPaymentRequestEndpoints:
         assert sent.status_code == 200, sent.content
         assert sent.data["status"] == Status.SENT
 
-    def test_share_with_a_foreign_patients_link_is_404(self):
+    def test_share_with_a_foreign_patients_link_is_an_explicit_400(self):
+        """S1 refusal semantics (ADR 0008 addendum): the link id travels in
+        the BODY → 400 explicite. ONE message covers a foreign link and a
+        non-existent one — nothing reveals that the id exists elsewhere,
+        and nothing is shared."""
         scn = build_scenario(status=Status.DRAFT)
         _, other_profile = make_guardian_user()
         foreign_link = make_active_link(
@@ -188,7 +202,16 @@ class TestStaffPaymentRequestEndpoints:
             f"{scn.payment_request.pk}/share/",
             {"guardian_link": foreign_link.pk},
         )
-        assert response.status_code == 404  # invisible, not merely refused
+        assert response.status_code == 400
+        assert "ne concerne pas le patient facturé" in str(response.data)
+        assert not scn.payment_request.shares.exists()
+        unknown = client_for(scn.cashier).post(
+            f"/api/v1/centers/{scn.center.pk}/payment-requests/"
+            f"{scn.payment_request.pk}/share/",
+            {"guardian_link": 999999},
+        )
+        assert unknown.status_code == 400
+        assert unknown.data == response.data
 
     def test_share_with_an_inactive_link_is_400(self):
         scn = build_scenario(status=Status.DRAFT)
@@ -361,7 +384,9 @@ class TestPatientEndpoints:
         assert response.status_code == 201, response.content
         assert scn.payment_request.shares.filter(guardian_link=scn.link).exists()
 
-    def test_patient_cannot_share_with_a_foreign_link_404(self):
+    def test_patient_cannot_share_with_a_foreign_link_explicit_400(self):
+        """S1 refusal semantics: body-carried link id → 400 explicite,
+        identical for a foreign link and a non-existent one."""
         scn = build_scenario(status=Status.DRAFT)
         _, other_profile = make_guardian_user()
         foreign_link = make_active_link(
@@ -371,7 +396,9 @@ class TestPatientEndpoints:
             f"/api/v1/patients/me/payment-requests/{scn.payment_request.pk}/share/",
             {"guardian_link": foreign_link.pk},
         )
-        assert response.status_code == 404
+        assert response.status_code == 400
+        assert "n'est pas l'un des vôtres" in str(response.data)
+        assert not scn.payment_request.shares.exists()
 
     def test_acknowledge_after_payment_is_stored(self):
         scn = build_scenario(status=Status.PAID)
@@ -446,13 +473,34 @@ class TestGuardianPerimeter:
         assert detail.status_code == 404
 
     def test_link_revocation_cuts_access_instantly(self):
+        """S1 — the cut now happens at the PERMISSION: with their only link
+        revoked, the guardian holds no active link carrying the
+        ``paiements`` scope at all, so the scoped-data door itself answers
+        403 (about the caller's OWN state — nothing about the request).
+        The row stays as unreachable as before, one layer earlier."""
         scn = build_scenario(status=Status.SENT)
         client = client_for(scn.guardian_user)
         url = f"/api/v1/guardian/payment-requests/{scn.payment_request.pk}/"
         assert client.get(url).status_code == 200
         scn.link.revoke()
-        assert client.get(url).status_code == 404
-        assert client.get("/api/v1/guardian/payment-requests/").data["results"] == []
+        assert client.get(url).status_code == 403
+        assert client.get("/api/v1/guardian/payment-requests/").status_code == 403
+
+    def test_revocation_of_one_link_keeps_the_queryset_cut_for_the_rest(self):
+        """Second layer (F3 queryset) still does the row-level work when
+        the guardian KEEPS another active link: the revoked protégé's
+        request disappears (404/empty) while the door stays open."""
+        scn = build_scenario(status=Status.SENT)
+        other_patient = make_claimed_patient(first_name="Anfia")
+        make_active_link(scn.guardian_profile, other_patient)  # second link
+        client = client_for(scn.guardian_user)
+        url = f"/api/v1/guardian/payment-requests/{scn.payment_request.pk}/"
+        assert client.get(url).status_code == 200
+        scn.link.revoke()
+        assert client.get(url).status_code == 404  # row gone, door open
+        listing = client.get("/api/v1/guardian/payment-requests/")
+        assert listing.status_code == 200
+        assert listing.data["results"] == []
 
     def test_cross_guardian_idor_is_404(self):
         scn = build_scenario(status=Status.SENT)
@@ -518,8 +566,16 @@ class TestGuardianFieldContract:
         assert "VIH" not in response.content.decode("utf-8")
 
     def test_receipts_of_other_guardians_are_invisible(self):
-        build_scenario(status=Status.CLOSED)
-        outsider_user, _ = make_guardian_user()
+        """S1 — a guardian with NO active link is stopped at the door
+        (403, scope check); one WITH an active link but no share still
+        sees an empty list (F3 queryset). Either way: zero foreign rows."""
+        scn = build_scenario(status=Status.CLOSED)
+        outsider_user, outsider_profile = make_guardian_user()
+        assert (
+            client_for(outsider_user).get("/api/v1/guardian/receipts/").status_code
+            == 403
+        )
+        make_active_link(outsider_profile, make_claimed_patient(first_name="Anfia"))
         response = client_for(outsider_user).get("/api/v1/guardian/receipts/")
         assert response.status_code == 200
         assert response.data["results"] == []

@@ -437,7 +437,10 @@ class TestAutoHonorThroughEncounterApi:
         appointment.refresh_from_db()
         assert appointment.status == Status.HONORED
 
-    def test_foreign_appointment_is_404_and_nothing_is_created(self):
+    def test_foreign_appointment_is_an_explicit_400_and_nothing_is_created(self):
+        """S1 refusal semantics (ADR 0008 addendum): the appointment id
+        travels in the POST BODY → 400 explicite (pattern scheduling),
+        same message for foreign and non-existent ids."""
         other_center, _ = make_center_with_director()
         foreign = make_appointment(center=other_center)
 
@@ -449,7 +452,8 @@ class TestAutoHonorThroughEncounterApi:
             }
         )
 
-        assert response.status_code == 404
+        assert response.status_code == 400
+        assert "n'appartient pas à ce centre" in str(response.data)
         assert Encounter.objects.count() == 0
         foreign.refresh_from_db()
         assert foreign.status == Status.SCHEDULED

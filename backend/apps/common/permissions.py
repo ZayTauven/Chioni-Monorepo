@@ -254,24 +254,76 @@ class IsPatientSelf(BasePermission):
 # ---------------------------------------------------------------------------
 # Audience: a guardian
 # ---------------------------------------------------------------------------
+#
+# TWO permission levels since S1 (audit C.5.1 — the scope passed to
+# ``IsGuardianWithScope`` was never tested: the whole guardian perimeter
+# rested on queryset discipline alone):
+#
+# - ``IsGuardian`` — the guardian-SPACE door: profile, invitations,
+#   protégé creation, link lifecycle (accept/decline/revoke). These
+#   endpoints act on the links THEMSELVES; a link awaiting acceptance is
+#   not ACTIVE and thus carries no scope by definition — requiring one
+#   would lock a brand-new guardian out of their own first invitation.
+# - ``IsGuardianWithScope(scope)`` — the scoped-DATA door (payment
+#   requests, receipts, future clinical reads): the caller must hold at
+#   least one ACTIVE link whose effective scopes include ``scope``.
+#   A guardian with no such link answers 403 BEFORE any queryset runs:
+#   a view that forgot its scope filter no longer leaks to guardians who
+#   were never granted that scope (the queryset helpers remain the second,
+#   row-level layer — F3: the permission gates the KIND, the helpers gate
+#   the ROWS).
+#
+# Testable guard-rail: both classes expose ``guardian_gate``/``required_scope``
+# markers so the structural test (tests/test_permissions_guardian_scope.py)
+# can walk every ``/guardian/…`` route and refuse a view that declares no
+# guardian permission — a future guardian endpoint cannot ship unguarded.
+
+
+class IsGuardian(BasePermission):
+    """The caller owns a guardian profile — opens the guardian SPACE only.
+
+    Views using this permission act on the guardian's own links/profile;
+    any view serving scoped data must use :func:`IsGuardianWithScope`.
+    """
+
+    message = "Réservé aux tuteurs."
+    guardian_gate = True
+    required_scope = None
+
+    def has_permission(self, request, view):
+        return bool(
+            request.user
+            and request.user.is_authenticated
+            and guardian_profile(request.user) is not None
+        )
 
 
 def IsGuardianWithScope(scope):
-    """Factory: the caller has a guardian profile; the view MUST then build
-    its queryset via :func:`guardian_links_with_scope`/:func:`patients_visible_to_guardian`
-    with the SAME scope — the permission opens the guardian space, the
-    helpers enforce the perimeter (F3: never one without the other).
+    """Factory: guardian profile AND at least one ACTIVE link whose
+    effective scopes (``Consent.objects.active_scopes``) include ``scope``.
+
+    The view MUST still build its queryset via
+    :func:`guardian_links_with_scope`/:func:`patients_visible_to_guardian`
+    (or the trustbridge helpers built on them) with the SAME scope — the
+    permission gates what KIND of data the caller may enter at all, the
+    helpers gate WHICH rows (F3: never one without the other).
+
+    Denial semantics: no guardian profile → 403 « Réservé aux tuteurs. » ;
+    profile but no active link carrying the scope → 403 with an honest
+    message about the caller's OWN state (nothing about anyone's data).
     """
 
-    class _IsGuardianWithScope(BasePermission):
-        message = "Réservé aux tuteurs."
+    class _IsGuardianWithScope(IsGuardian):
         required_scope = scope
 
         def has_permission(self, request, view):
-            return bool(
-                request.user
-                and request.user.is_authenticated
-                and guardian_profile(request.user) is not None
+            if not super().has_permission(request, view):
+                return False
+            if guardian_links_with_scope(request.user, self.required_scope).exists():
+                return True
+            self.message = (
+                "Aucun lien de tutelle actif ne vous ouvre cette information."
             )
+            return False
 
     return _IsGuardianWithScope

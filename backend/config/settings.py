@@ -171,11 +171,22 @@ REST_FRAMEWORK = {
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
     # Domain services raise Django ValidationError — translate to HTTP 400.
     "EXCEPTION_HANDLER": "apps.common.exceptions.exception_handler",
+    # S1 — GLOBAL user throttle on every endpoint that does not declare its
+    # own throttle_classes (auth/OTP/invitation keep their strict scopes by
+    # overriding; health check and PSP webhook opt out explicitly). The
+    # rate is deliberately GENEROUS: it exists to absorb a runaway script
+    # or a stolen token being farmed, never to slow down a desk in rush
+    # (10 req/s sustained is far above any human workflow). Anonymous
+    # callers are keyed by IP by DRF's UserRateThrottle.
+    "DEFAULT_THROTTLE_CLASSES": [
+        "rest_framework.throttling.UserRateThrottle",
+    ],
     # R-API-4 — scoped throttles for credential-bearing endpoints.
     # OTP scopes (ADR 0010) are STRICT and multilayered: an SMS endpoint is
     # both a cost hole and a harassment vector, so the request endpoint is
     # capped per TARGET PHONE and per CALLER IP independently.
     "DEFAULT_THROTTLE_RATES": {
+        "user": env("THROTTLE_USER", default="600/min"),
         "auth_token": env("THROTTLE_AUTH_TOKEN", default="10/min"),
         "auth_refresh": env("THROTTLE_AUTH_REFRESH", default="30/min"),
         "otp_request_phone": env("THROTTLE_OTP_REQUEST_PHONE", default="3/hour"),
@@ -190,6 +201,11 @@ REST_FRAMEWORK = {
         "invite_guardian_phone": env(
             "THROTTLE_INVITE_GUARDIAN_PHONE", default="3/day"
         ),
+        # S1 — STRICT scope on image uploads (center logo, user avatar):
+        # each one runs the Pillow decode/re-encode pipeline (CPU,
+        # vigilance vague 1). 20/h per user covers any legitimate retouch
+        # session while starving a CPU-burn loop.
+        "uploads": env("THROTTLE_UPLOADS", default="20/hour"),
     },
 }
 
@@ -211,8 +227,14 @@ SPECTACULAR_SETTINGS = {
     ),
     "VERSION": "1.0.0",
     "SERVE_INCLUDE_SCHEMA": False,
-    # Dev convenience; restrict before any non-local deployment.
-    "SERVE_PERMISSIONS": ["rest_framework.permissions.AllowAny"],
+    # S1 (audit C.5.5) — `/api/schema/` and `/api/docs/` are public in DEV
+    # ONLY. Deployed, the OpenAPI schema is a reconnaissance map (every
+    # route, every field, every enum): admin accounts only.
+    "SERVE_PERMISSIONS": (
+        ["rest_framework.permissions.AllowAny"]
+        if DEBUG
+        else ["rest_framework.permissions.IsAdminUser"]
+    ),
 }
 
 # ---------------------------------------------------------------------------

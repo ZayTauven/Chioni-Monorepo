@@ -8,6 +8,7 @@ NO guardian route in phase A.
 from django.urls import path
 
 from apps.medical.views import (
+    CenterEncounterCloseView,
     CenterEncounterDetailView,
     CenterEncounterListCreateView,
     EncounterPrescriptionView,
@@ -30,6 +31,11 @@ urlpatterns = [
         "centers/<int:center_pk>/encounters/<int:pk>/",
         CenterEncounterDetailView.as_view(),
         name="center-encounter-detail",
+    ),
+    path(
+        "centers/<int:center_pk>/encounters/<int:pk>/close/",
+        CenterEncounterCloseView.as_view(),
+        name="center-encounter-close",
     ),
     path(
         "centers/<int:center_pk>/encounters/<int:encounter_pk>/prescriptions/",

@@ -10,9 +10,11 @@ from apps.centers.views import (
     CenterDetailView,
     CenterListView,
     CenterLogoView,
+    CenterPractitionerListView,
     StaffDeactivateView,
     StaffDetailView,
     StaffListCreateView,
+    StaffReactivateView,
     TariffDetailView,
     TariffListCreateView,
 )
@@ -33,6 +35,17 @@ urlpatterns = [
         "<int:center_pk>/staff/<int:pk>/deactivate/",
         StaffDeactivateView.as_view(),
         name="staff-deactivate",
+    ),
+    path(
+        "<int:center_pk>/staff/<int:pk>/reactivate/",
+        StaffReactivateView.as_view(),
+        name="staff-reactivate",
+    ),
+    # S1 — annuaire praticiens (tout staff actif, non paginé).
+    path(
+        "<int:center_pk>/practitioners/",
+        CenterPractitionerListView.as_view(),
+        name="practitioner-list",
     ),
     # Pilotage (vague 2b) — lecture seule, agrégats SQL.
     path(

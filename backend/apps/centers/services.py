@@ -86,6 +86,29 @@ def deactivate_staff_member(*, actor, membership):
 
 
 @transaction.atomic
+def reactivate_staff_member(*, actor, membership):
+    """Director reactivates a deactivated membership (S1 — the symmetric
+    of :func:`deactivate_staff_member`, which was irreversible by API).
+
+    Uniqueness holds by construction: deactivation never deletes the row
+    and the ``(user, center, role)`` unique constraint spans active AND
+    inactive rows (``add_staff_member`` refuses a duplicate even against
+    an inactive membership), so flipping ``is_active`` back can never
+    create a second membership for the same role.
+    """
+    if membership.is_active:
+        raise ValidationError("Ce membre est déjà actif.")
+    membership.is_active = True
+    membership.save(update_fields=["is_active", "updated_at"])
+    audit(
+        actor=actor, action=AuditAction.STAFF_REACTIVATED, target=membership,
+        membership_id=membership.pk, center_id=membership.center_id,
+        user_id=membership.user_id, role=membership.role,
+    )
+    return membership
+
+
+@transaction.atomic
 def update_staff_member(*, actor, membership, role=None, first_name=None, last_name=None):
     """Director edits an ACTIVE membership: role change and, for shadow
     accounts only, the person's name.

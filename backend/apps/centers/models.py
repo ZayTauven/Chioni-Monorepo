@@ -8,6 +8,7 @@ through it so no data ever leaks between centers.
 
 from django.conf import settings
 from django.db import models
+from django.db.models.functions import Round
 
 from apps.common.models import ActCategory, TimeStampedModel
 from apps.common.money import validate_kmf_integral
@@ -183,6 +184,15 @@ class TariffItem(TimeStampedModel):
             models.CheckConstraint(
                 condition=models.Q(price_kmf__gte=0),
                 name="tariff_price_kmf_positive",
+            ),
+            # S1 (vigilance 2a soldée) — the KMF integrality rule enforced
+            # AT THE DATABASE: ``save()`` and the serializer already refuse
+            # decimals, but a raw ``update()``/``bulk_create()`` bypassed
+            # them (the exact hole probed by the wave-2b adversarial
+            # review). ROUND(price) = price ⇔ whole francs.
+            models.CheckConstraint(
+                condition=models.Q(price_kmf=Round("price_kmf")),
+                name="tariff_price_kmf_integral",
             ),
         ]
 
