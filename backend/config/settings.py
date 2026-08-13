@@ -39,6 +39,8 @@ INSTALLED_APPS = [
     "corsheaders",
     "rest_framework",
     "rest_framework_simplejwt",
+    # F4 — refresh tokens are single-use: rotation + blacklist of the old one.
+    "rest_framework_simplejwt.token_blacklist",
     "drf_spectacular",
     # Chioni apps
     "apps.accounts",
@@ -153,13 +155,18 @@ REST_FRAMEWORK = {
     "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
     "PAGE_SIZE": 20,
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
+    # Domain services raise Django ValidationError — translate to HTTP 400.
+    "EXCEPTION_HANDLER": "apps.common.exceptions.exception_handler",
 }
 
 SIMPLE_JWT = {
     "ACCESS_TOKEN_LIFETIME": timedelta(minutes=30),
     "REFRESH_TOKEN_LIFETIME": timedelta(days=7),
+    # F4 (revue guardian) — a rotated refresh token must die: without the
+    # blacklist, every refresh handed out a NEW 7-day token while the old one
+    # stayed valid, making refresh tokens effectively eternal.
     "ROTATE_REFRESH_TOKENS": True,
-    "BLACKLIST_AFTER_ROTATION": False,
+    "BLACKLIST_AFTER_ROTATION": True,
 }
 
 SPECTACULAR_SETTINGS = {
@@ -182,6 +189,27 @@ CORS_ALLOWED_ORIGINS = env.list(
     "CORS_ALLOWED_ORIGINS",
     default=["http://localhost:3000"],
 )
+
+# ---------------------------------------------------------------------------
+# Pont de Confiance — PSP abstraction & EUR→KMF conversion (étude §4.5)
+# ---------------------------------------------------------------------------
+
+# Active PSP backend: "fake" (dev/tests, no network) or "stripe" (dedicated
+# chantier — skeleton only until API keys exist).
+PSP_BACKEND = env("PSP_BACKEND", default="fake")
+
+# Shared secret signing FakePSP webhooks (HMAC-SHA256 over the raw body).
+# Dev-only value; each deployed environment sets its own.
+PSP_WEBHOOK_SECRET = env("PSP_WEBHOOK_SECRET", default="fake-psp-webhook-secret-dev")
+
+# EUR→KMF rate served by the dev FixedRateSource — the KMF is pegged to the
+# euro. Frozen per PaymentIntent at creation; shown to the guardian BEFORE
+# payment (transparent conversion, decision actée).
+FX_EUR_KMF_RATE = env("FX_EUR_KMF_RATE", default="491.9678")
+
+# Explicit fees (percent of the net EUR amount), paid ON TOP by the guardian:
+# the center always receives the full invoice amount in KMF.
+PSP_FEE_PERCENT = env("PSP_FEE_PERCENT", default="2.50")
 
 # ---------------------------------------------------------------------------
 # Celery (Redis broker)

@@ -1,6 +1,7 @@
 from django.contrib import admin
 
 from .models import (
+    Dispute,
     Invoice,
     InvoiceLine,
     LedgerEntry,
@@ -110,6 +111,26 @@ class LedgerEntryAdmin(AppendOnlyAdminMixin, admin.ModelAdmin):
     list_filter = ("account", "direction", "currency")
 
     def has_add_permission(self, request):
+        return False
+
+
+@admin.register(Dispute)
+class DisputeAdmin(admin.ModelAdmin):
+    list_display = (
+        "id",
+        "payment_request",
+        "status",
+        "previous_status",
+        "opened_by",
+        "resolved_by",
+        "resolved_at",
+        "created_at",
+    )
+    list_filter = ("status",)
+    autocomplete_fields = ("payment_request", "opened_by", "resolved_by")
+
+    def has_delete_permission(self, request, obj=None):
+        # Disputes are part of the money trail: resolved, never erased.
         return False
 
 

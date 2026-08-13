@@ -264,6 +264,15 @@ class PaymentRequest(TimeStampedModel):
         through="PaymentRequestShare",
         help_text="Liens de tutelle ciblés — seuls ces tuteurs voient la demande.",
     )
+    patient_acknowledged_at = models.DateTimeField(
+        "accusé du patient le",
+        null=True,
+        blank=True,
+        help_text=(
+            "Horodatage du « j'ai bien reçu ce soin » du patient — indicateur "
+            "de mission (étude §10) : stocké, pas seulement audité."
+        ),
+    )
 
     class Meta:
         verbose_name = "demande de paiement"
@@ -353,6 +362,7 @@ class PaymentIntent(TimeStampedModel):
 
     class Psp(models.TextChoices):
         STRIPE = "stripe", "Stripe"
+        FAKE = "fake", "Fake (développement)"
 
     class Status(models.TextChoices):
         CREATED = "cree", "Créé"
@@ -400,6 +410,19 @@ class PaymentIntent(TimeStampedModel):
     )
     status = models.CharField(
         "statut PSP", max_length=16, choices=Status.choices, default=Status.CREATED
+    )
+    ledger_transaction = models.ForeignKey(
+        "LedgerTransaction",
+        verbose_name="transaction d'encaissement",
+        on_delete=models.PROTECT,
+        related_name="payment_intents",
+        null=True,
+        blank=True,
+        help_text=(
+            "F2 — renseignée par le service d'encaissement au moment du succès : "
+            "un intent SUCCEEDED est réconciliable avec SA transaction du ledger, "
+            "jamais seulement affirmé. La clôture (reçu) s'appuie dessus."
+        ),
     )
 
     class Meta:
@@ -741,3 +764,73 @@ class Receipt(AppendOnlyModel):
             )
             receipt.save()
         return receipt
+
+
+class Dispute(TimeStampedModel):
+    """A dispute opened on a payment request (paying guardian or patient).
+
+    Phase B addition (argued): the mission requires disputes to be READABLE
+    by center staff, to carry a MANDATORY reason, and to be resolved by
+    staff with a motive that restores the pre-dispute status — none of
+    which is representable with a bare status flag on PaymentRequest.
+    A request under an OPEN dispute can never be closed (service rule).
+
+    Confidentiality note: ``reason`` and ``resolution_note`` are free text
+    typed by the parties about a payment disagreement — they are exposed to
+    the center staff handling the dispute and to their author, NEVER pushed
+    into the AuditLog payload (ADR 0007: references only).
+    """
+
+    class Status(models.TextChoices):
+        OPEN = "ouvert", "Ouvert"
+        RESOLVED = "resolu", "Résolu"
+
+    payment_request = models.ForeignKey(
+        PaymentRequest,
+        verbose_name="demande de paiement",
+        on_delete=models.PROTECT,
+        related_name="disputes",
+    )
+    opened_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        verbose_name="ouvert par",
+        on_delete=models.PROTECT,
+        related_name="disputes_opened",
+    )
+    reason = models.TextField(
+        "motif", help_text="Obligatoire — un litige sans motif est irrecevable."
+    )
+    previous_status = models.CharField(
+        "statut avant litige",
+        max_length=16,
+        choices=PaymentRequest.Status.choices,
+        help_text="Statut de la demande au moment de l'ouverture — restauré à la résolution.",
+    )
+    status = models.CharField(
+        "statut", max_length=16, choices=Status.choices, default=Status.OPEN
+    )
+    resolved_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        verbose_name="résolu par",
+        on_delete=models.PROTECT,
+        related_name="disputes_resolved",
+        null=True,
+        blank=True,
+    )
+    resolution_note = models.TextField("motif de résolution", blank=True)
+    resolved_at = models.DateTimeField("résolu le", null=True, blank=True)
+
+    class Meta:
+        verbose_name = "litige"
+        verbose_name_plural = "litiges"
+        constraints = [
+            # One OPEN dispute at a time per request; resolved history is kept.
+            models.UniqueConstraint(
+                fields=["payment_request"],
+                condition=models.Q(status="ouvert"),
+                name="unique_open_dispute_per_request",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"Litige #{self.pk} — demande #{self.payment_request_id} ({self.get_status_display()})"

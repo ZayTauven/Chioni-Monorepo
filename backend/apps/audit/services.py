@@ -1,0 +1,95 @@
+"""Audit service — the ONE entry point for journalising sensitive actions.
+
+Every service touching money, medical data, consents, patient identity or
+staff roles MUST call :func:`audit` (finding M1: the AuditLog existed but
+nothing wrote to it). Views never call ``AuditLog.log`` directly — they go
+through the domain services, which audit as part of the same transaction.
+
+ADR 0007 — payload contract: identifiers and references ONLY (pks, codes,
+counts, amounts as strings). NEVER a name, a phone number, a diagnosis or
+any other PII/clinical text: the payload must stay meaningful after the
+actor's account is anonymised, and must never leak medical secrets to
+whoever reads the log. A light structural guard below rejects non-scalar
+values so nobody can dump a model instance "for convenience".
+"""
+
+from decimal import Decimal
+
+from apps.audit.models import AuditLog
+
+#: Value types allowed inside an audit payload (scalars only — ADR 0007).
+_SCALAR_TYPES = (str, int, bool, float, Decimal, type(None))
+
+
+class AuditAction:
+    """Catalogue of audited actions — use these constants, never raw strings.
+
+    Keeping the catalogue closed makes the audit trail queryable and lets
+    tests assert exhaustively that each sensitive service writes its entry.
+    """
+
+    # Patient identity
+    PATIENT_CREATED = "patient_profile.created"
+    PATIENT_CLAIMED = "patient_profile.claimed"
+    PATIENT_MERGED = "patient_profile.merged"
+    PATIENT_UPDATED = "patient_profile.updated"
+
+    # Guardianship
+    LINK_CREATED = "guardian_link.created"
+    LINK_ACCEPTED = "guardian_link.accepted"
+    LINK_REVOKED = "guardian_link.revoked"
+
+    # Consents
+    CONSENT_GRANTED = "consent.granted"
+    CONSENT_REVOKED = "consent.revoked"
+
+    # Center staff & money-adjacent configuration
+    STAFF_CREATED = "staff.membership_created"
+    STAFF_DEACTIVATED = "staff.membership_deactivated"
+    CENTER_UPDATED = "center.updated"
+    TARIFF_CREATED = "tariff.created"
+    TARIFF_UPDATED = "tariff.updated"
+
+    # Medical data production
+    ENCOUNTER_CREATED = "encounter.created"
+    PRESCRIPTION_CREATED = "prescription.created"
+    RECORD_ENTRY_CREATED = "health_record_entry.created"
+
+    # Trust Bridge — money (phase B). Payloads: references, amounts and
+    # currencies ONLY — never an act label (ADR 0005/0007).
+    INVOICE_CREATED = "invoice.created"
+    INVOICE_ISSUED = "invoice.issued"
+    PAYMENT_REQUEST_CREATED = "payment_request.created"
+    PAYMENT_REQUEST_SENT = "payment_request.sent"
+    PAYMENT_REQUEST_SHARED = "payment_request.shared"
+    PAYMENT_REQUEST_UNSHARED = "payment_request.unshared"
+    PAYMENT_INTENT_CREATED = "payment_intent.created"
+    PAYMENT_INTENT_FAILED = "payment_intent.failed"
+    PAYMENT_RECORDED = "payment.recorded"
+    CARE_CONFIRMED = "payment_request.care_confirmed"
+    PATIENT_CARE_ACKNOWLEDGED = "payment_request.patient_acknowledged"
+    PAYMENT_REQUEST_CLOSED = "payment_request.closed"
+    DISPUTE_OPENED = "dispute.opened"
+    DISPUTE_RESOLVED = "dispute.resolved"
+
+
+def audit(*, actor, action, target=None, **refs):
+    """Write one immutable audit entry.
+
+    ``actor``  — the ``User`` performing the action (None for system jobs).
+    ``action`` — a constant from :class:`AuditAction`.
+    ``target`` — optional model instance the action applies to.
+    ``refs``   — scalar references only (pks, codes, counts). Values are
+                 normalised to JSON-safe scalars; anything richer is refused
+                 so PII/clinical payloads cannot happen by accident.
+    """
+    payload = {}
+    for key, value in refs.items():
+        if not isinstance(value, _SCALAR_TYPES):
+            raise TypeError(
+                f"AuditLog payload «{key}» must be a scalar reference "
+                f"(got {type(value).__name__}) — ADR 0007: identifiers only, "
+                "never objects, PII or clinical data."
+            )
+        payload[key] = str(value) if isinstance(value, Decimal) else value
+    return AuditLog.log(actor=actor, action=action, target=target, **payload)

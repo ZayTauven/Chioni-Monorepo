@@ -1,0 +1,27 @@
+# ADR 0009 — Pont de Confiance : machine à états au service, PSP abstrait, conversion transparente
+
+- **Statut** : acté (phase B de la couche API)
+- **Date** : 2026-08-13
+
+## Contexte
+
+Les modèles trustbridge durcis (ADR 0003/0005/0006) laissaient trois probes ouvertes au niveau service (`tests/test_hardening.py`) : M5 (machine à états `PaymentRequest` non imposée), F2 (un `PaymentIntent` SUCCEEDED pouvait exister sans trace au ledger), R5/F3 (reçu émissible hors clôture, montants non réconciliés). L'étude §4.5 impose par ailleurs une conversion EUR→KMF transparente (taux affiché AVANT paiement, figé à la transaction, frais explicites) et une abstraction PSP (Stripe d'abord, sans appel réseau tant que le chantier clés n'est pas ouvert).
+
+## Décision
+
+1. **Machine à états exclusive au service** (`apps/trustbridge/services.py`) : tout changement de statut passe par `_set_status()` et sa table `brouillon→envoyee→payee→soin_confirme→cloturee` (+ `envoyee|payee→litige`, sorties de `litige` uniquement par résolution). Aucun endpoint ne pose un statut ; toute transition illégale → `ValidationError` FR (HTTP 400). `envoyee` exige ≥ 1 partage ; `payee` n'est atteignable QUE par `register_payment_success()`.
+2. **Encaissement atomique (F2 fermé)** : au succès PSP, UN bloc atomique écrit la `LedgerTransaction` équilibrée par devise (fonds_tuteur débité du total EUR ; frais_psp crédités ; conversion_change porte le passage EUR→KMF au taux figé ; du_au_centre crédité du montant KMF intégral), passe l'intent à SUCCEEDED **avec FK `ledger_transaction`** (ajout de schéma argumenté : la réconciliation intent↔ledger devient structurelle, la clôture s'appuie dessus), la demande à `payee`, la facture à `payee`, et audite. Rejeu du webhook = no-op strict (verrou de ligne + statut SUCCEEDED court-circuite avant toute écriture).
+3. **PSP = abstraction sans réseau** (`apps/trustbridge/psp/`) : `BasePsp.create_payment(intent)` / `parse_webhook(payload, signature)`. `FakePsp` (dev/tests) signe ses webhooks en HMAC-SHA256 (`PSP_WEBHOOK_SECRET`), succès/échec pilotés par l'émetteur ; `StripePsp` est un squelette `NotImplementedError` (drop-in du chantier dédié). Le PSP ne décide JAMAIS ni montants ni destination : il reçoit un intent entièrement chiffré par les services.
+4. **Conversion transparente** (`apps/trustbridge/fx.py`) : source de taux abstraite (dev : taux fixe `.env FX_EUR_KMF_RATE`, le KMF étant arrimé à l'euro) ; devis exposé au tuteur AVANT paiement (net EUR, frais explicites `PSP_FEE_PERCENT`, total) ; taux et montants FIGÉS sur l'intent à sa création. Les frais sont payés EN SUS par le tuteur : le centre reçoit toujours l'intégralité de la facture en KMF.
+5. **Clôture = reçu réconcilié (R5/F3 fermés)** : `close_payment_request()` relit les écritures de la transaction d'encaissement, vérifie leur égalité avec l'intent, puis émet via `Receipt.issue()` exclusivement (numérotation séquentielle par centre). Une demande en litige ne se clôture pas.
+6. **Litiges** : nouveau modèle `Dispute` (ajout argumenté : motif obligatoire, lecture par le staff, résolution avec motif, restauration du statut pré-litige — irreprésentable par un simple flag). Ouvert par le patient ou un tuteur destinataire ; résolu par le directeur du centre. Le texte libre (motif, résolution) n'entre JAMAIS dans le payload d'audit (ADR 0007).
+7. **Accusé patient stocké** : champ `PaymentRequest.patient_acknowledged_at` (ajout argumenté : c'est l'indicateur de mission de l'étude §10 — il doit être requêtable, pas enfoui dans l'audit). Optionnel, unique, audité, sans effet sur la machine à états.
+8. **Garde-fous d'argent** : la destination des fonds est TOUJOURS dérivée de `invoice.center` (jamais d'une entrée client) ; KYC `actif` exigé à la création de l'intent ET à l'encaissement ; un acte ne se facture qu'une fois ; une seule demande de paiement par facture.
+9. **Périmètre tuteur (F3)** : `payment_requests_shared_with_guardian()` / `receipts_visible_to_guardian()` dans `apps/common/permissions.py` combinent `guardian_links_with_scope(PAYMENTS)` ET `PaymentRequestShare` — un lien actif seul n'ouvre RIEN. Serializers tuteur : `generic_category` uniquement, jamais `label` (ADR 0005, testé sur les champs).
+
+## Conséquences
+
+- Migration `trustbridge/0004` (additive, réversible) : `Dispute`, `patient_acknowledged_at`, `PaymentIntent.ledger_transaction`, choix `fake` sur `PaymentIntent.psp`.
+- Les probes M5/F2/R5 de `test_hardening.py` restent vraies au niveau MODÈLE (documenté) ; `tests/test_trustbridge_services.py` et `tests/test_api_trustbridge.py` verrouillent leur fermeture fonctionnelle au niveau service/API.
+- Limite connue (assumée, MVP) : si un litige est ouvert entre la création d'un intent et son webhook de succès, l'encaissement est refusé alors que le PSP a pu capturer les fonds — rapprochement manuel (le vrai Stripe apportera l'annulation d'intent côté PSP).
+- Limite connue : deux intents concurrents de deux tuteurs sur la même demande — le premier webhook gagne, le second est refusé (`demande plus ouverte au paiement`) ; le remboursement du second est un flux PSP hors MVP.
