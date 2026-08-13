@@ -19,6 +19,7 @@ import Link from 'next/link';
 import type { ApiError } from '@/lib/api';
 import {
   acceptInvitation,
+  declineInvitation,
   listInvitations,
   listPaymentRequests,
   listProteges,
@@ -27,6 +28,7 @@ import { RELATIONSHIP_LABELS, countryName, formatDate, formatKmf } from '@/lib/l
 import type { GuardianLinkGuardian, PaymentRequestGuardian } from '@/lib/types';
 import { useAuth } from '@/context/AuthContext';
 import {
+  DeclineInvitationModal,
   EmptyState,
   ErrorAlert,
   HEART_ICON,
@@ -54,6 +56,10 @@ export function TuteurHome() {
   const [loading, setLoading] = useState(true);
   const [acceptingId, setAcceptingId] = useState<number | null>(null);
   const [acceptError, setAcceptError] = useState<ApiError | null>(null);
+
+  const [declineTarget, setDeclineTarget] = useState<GuardianLinkGuardian | null>(null);
+  const [declineBusy, setDeclineBusy] = useState(false);
+  const [declineError, setDeclineError] = useState<ApiError | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -92,6 +98,21 @@ export function TuteurHome() {
       setAcceptError(toDisplayError(e));
     } finally {
       setAcceptingId(null);
+    }
+  };
+
+  const onDecline = async () => {
+    if (!declineTarget) return;
+    setDeclineBusy(true);
+    setDeclineError(null);
+    try {
+      await declineInvitation(declineTarget.id);
+      setDeclineTarget(null);
+      await load();
+    } catch (e) {
+      setDeclineError(toDisplayError(e));
+    } finally {
+      setDeclineBusy(false);
     }
   };
 
@@ -182,9 +203,19 @@ export function TuteurHome() {
                         {acceptingId === inv.id ? 'Un instant…' : 'Accepter l’invitation'}
                       </span>
                     </button>
+                    <button
+                      type="button"
+                      className="ax-btn ax-btn--ghost ax-btn--block"
+                      disabled={acceptingId === inv.id}
+                      onClick={() => {
+                        setDeclineError(null);
+                        setDeclineTarget(inv);
+                      }}
+                    >
+                      <span className="ax-btn__label">Refuser</span>
+                    </button>
                     <p className="tuteur-money-card__note">
-                      Vous ne reconnaissez pas cette personne&nbsp;? N&rsquo;acceptez pas&nbsp;:
-                      cette invitation restera sans effet.
+                      Vous ne reconnaissez pas cette personne&nbsp;? Vous pouvez refuser.
                     </p>
                   </div>
                 </div>
@@ -256,6 +287,18 @@ export function TuteurHome() {
             </section>
           )}
         </>
+      )}
+
+      {declineTarget && (
+        <DeclineInvitationModal
+          patientName={protegeName(declineTarget.patient)}
+          busy={declineBusy}
+          error={declineError}
+          onConfirm={() => void onDecline()}
+          onClose={() => {
+            if (!declineBusy) setDeclineTarget(null);
+          }}
+        />
       )}
     </div>
   );

@@ -81,6 +81,14 @@ class AuditAction:
     PAYMENT_REQUEST_UNSHARED = "payment_request.unshared"
     PAYMENT_INTENT_CREATED = "payment_intent.created"
     PAYMENT_INTENT_FAILED = "payment_intent.failed"
+    # Zombie intents purge (ADR 0009 addendum) — system actor, reason ref.
+    PAYMENT_INTENT_CANCELLED = "payment_intent.cancelled"
+    # A SUCCESS webhook refused because the intent/request can no longer
+    # cash in (late webhook after purge, dispute, double payment attempt):
+    # the provider may have really debited — this row is the reconciliation
+    # evidence (references + statuses only, written OUTSIDE the rolled-back
+    # transaction).
+    PAYMENT_WEBHOOK_REFUSED = "payment.webhook_refused"
     PAYMENT_RECORDED = "payment.recorded"
     CARE_CONFIRMED = "payment_request.care_confirmed"
     PATIENT_CARE_ACKNOWLEDGED = "payment_request.patient_acknowledged"

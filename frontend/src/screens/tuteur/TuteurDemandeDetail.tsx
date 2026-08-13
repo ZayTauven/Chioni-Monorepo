@@ -92,13 +92,18 @@ function StatusTimeline({ request }: { request: PaymentRequestGuardian }) {
   const litige = request.status === 'litige';
   const reached = litige ? 0 : STEP_ORDER.indexOf(request.status as (typeof STEP_ORDER)[number]);
 
-  const steps = [
+  const steps: Array<{ done: string; pending: string; time?: string }> = [
     {
       done: 'Demande envoyée par le centre',
       pending: 'Demande envoyée par le centre',
       time: formatDate(request.created_at),
     },
-    { done: 'Paiement reçu par le centre', pending: 'En attente de votre paiement' },
+    {
+      done: 'Paiement reçu par le centre',
+      pending: 'En attente de votre paiement',
+      // The REAL payment date, set server-side by the cash-in webhook.
+      time: request.paid_at ? `Payée le ${formatDate(request.paid_at)}` : undefined,
+    },
     { done: 'Soin confirmé par le centre', pending: 'Confirmation du soin par le centre' },
     { done: 'Terminée — reçu disponible', pending: 'Clôture et reçu officiel' },
   ];

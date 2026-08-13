@@ -273,6 +273,18 @@ class PaymentRequest(TimeStampedModel):
             "de mission (étude §10) : stocké, pas seulement audité."
         ),
     )
+    paid_at = models.DateTimeField(
+        "payée le",
+        null=True,
+        blank=True,
+        help_text=(
+            "Horodatage de l'encaissement — posé UNIQUEMENT par "
+            "register_payment_success() dans le même bloc atomique que "
+            "l'écriture du ledger, jamais modifié ensuite (un cycle "
+            "litige/résolution ne l'efface pas). Confort de lecture pour les "
+            "trois audiences ; le ledger reste la seule vérité financière."
+        ),
+    )
 
     class Meta:
         verbose_name = "demande de paiement"

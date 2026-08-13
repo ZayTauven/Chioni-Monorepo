@@ -17,6 +17,7 @@ import type { ApiError } from '@/lib/api';
 import {
   acceptInvitation,
   createProtege,
+  declineInvitation,
   listInvitations,
   listProteges,
   revokeLink,
@@ -25,6 +26,7 @@ import {
 import { RELATIONSHIP_LABELS, SEX_LABELS } from '@/lib/labels';
 import type { GuardianLinkGuardian, Relationship, Sex } from '@/lib/types';
 import {
+  DeclineInvitationModal,
   EmptyState,
   ErrorAlert,
   HEART_ICON,
@@ -282,6 +284,10 @@ export function TuteurProteges() {
   const [revokeBusy, setRevokeBusy] = useState(false);
   const [revokeError, setRevokeError] = useState<ApiError | null>(null);
 
+  const [declineTarget, setDeclineTarget] = useState<GuardianLinkGuardian | null>(null);
+  const [declineBusy, setDeclineBusy] = useState(false);
+  const [declineError, setDeclineError] = useState<ApiError | null>(null);
+
   const loadInvitations = useCallback(async () => {
     setInvitationsError(null);
     try {
@@ -320,6 +326,21 @@ export function TuteurProteges() {
       setRevokeError(toDisplayError(e));
     } finally {
       setRevokeBusy(false);
+    }
+  };
+
+  const onDecline = async () => {
+    if (!declineTarget) return;
+    setDeclineBusy(true);
+    setDeclineError(null);
+    try {
+      await declineInvitation(declineTarget.id);
+      setDeclineTarget(null);
+      await loadInvitations();
+    } catch (e) {
+      setDeclineError(toDisplayError(e));
+    } finally {
+      setDeclineBusy(false);
     }
   };
 
@@ -372,9 +393,19 @@ export function TuteurProteges() {
                     {acceptingId === inv.id ? 'Un instant…' : 'Accepter l’invitation'}
                   </span>
                 </button>
+                <button
+                  type="button"
+                  className="ax-btn ax-btn--ghost ax-btn--block"
+                  disabled={acceptingId === inv.id}
+                  onClick={() => {
+                    setDeclineError(null);
+                    setDeclineTarget(inv);
+                  }}
+                >
+                  <span className="ax-btn__label">Refuser</span>
+                </button>
                 <p className="tuteur-money-card__note">
-                  Vous ne reconnaissez pas cette personne&nbsp;? N&rsquo;acceptez pas&nbsp;: cette
-                  invitation restera sans effet.
+                  Vous ne reconnaissez pas cette personne&nbsp;? Vous pouvez refuser.
                 </p>
               </div>
             </div>
@@ -474,6 +505,18 @@ export function TuteurProteges() {
           error={revokeError}
           onConfirm={() => void onRevoke()}
           onClose={() => setRevokeTarget(null)}
+        />
+      )}
+
+      {declineTarget && (
+        <DeclineInvitationModal
+          patientName={protegeName(declineTarget.patient)}
+          busy={declineBusy}
+          error={declineError}
+          onConfirm={() => void onDecline()}
+          onClose={() => {
+            if (!declineBusy) setDeclineTarget(null);
+          }}
         />
       )}
     </div>

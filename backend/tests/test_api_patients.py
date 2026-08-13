@@ -8,6 +8,7 @@ revocation is effective immediately.
 
 import pytest
 
+from apps.audit.models import AuditLog
 from apps.medical.models import Consent
 from apps.patients.models import GuardianLink, PatientProfile
 
@@ -310,6 +311,33 @@ class TestLinkLifecycle:
         after = client_for(guardian_user).get("/api/v1/guardian/proteges/")
         assert after.data["results"] == []  # immediate — no cache, no grace
 
+    def test_patient_cancels_a_sent_invitation_via_revoke(self):
+        """« Annulation d'invitation » (frontend) : ``revoke/`` fonctionne
+        AUSSI sur un lien encore en ``invitation_envoyee`` — verrouillé ici
+        (la machine à états du modèle le permet, ce test l'atteste)."""
+        patient = make_claimed_patient()
+        invite = client_for(patient.user).post(
+            "/api/v1/patients/me/guardians/invite/",
+            {"phone": "+33698765431", "relationship": "enfant"},
+        )
+        assert invite.status_code == 201, invite.content
+        link = GuardianLink.objects.get(pk=invite.data["id"])
+        assert link.status == GuardianLink.Status.INVITATION_SENT
+
+        response = client_for(patient.user).post(
+            f"/api/v1/patients/me/guardians/{link.pk}/revoke/"
+        )
+
+        assert response.status_code == 200, response.content
+        link.refresh_from_db()
+        assert link.status == GuardianLink.Status.REVOKED
+        assert link.revoked_at is not None
+        # The would-be guardian no longer sees any pending invitation.
+        invitations = client_for(link.guardian.user).get(
+            "/api/v1/guardian/invitations/"
+        )
+        assert invitations.data["results"] == []
+
     def test_guardian_revokes_their_own_link(self):
         patient = make_claimed_patient()
         guardian_user, guardian = make_guardian_user()
@@ -428,6 +456,210 @@ class TestClinicalConsent:
 
         link.refresh_from_db()
         assert Consent.objects.active_scopes(link) == frozenset()
+
+
+# ---------------------------------------------------------------------------
+# Guardian declines an invitation — symmetric of accept, revoke semantics
+# ---------------------------------------------------------------------------
+
+
+class TestGuardianDeclineInvitation:
+    def _invitation(self):
+        patient = make_claimed_patient()
+        invite = client_for(patient.user).post(
+            "/api/v1/patients/me/guardians/invite/",
+            {"phone": "+33698765432", "relationship": "enfant"},
+        )
+        assert invite.status_code == 201, invite.content
+        return patient, GuardianLink.objects.get(pk=invite.data["id"])
+
+    def test_guardian_declines_their_invitation(self):
+        _patient, link = self._invitation()
+        guardian_user = link.guardian.user
+
+        response = client_for(guardian_user).post(
+            f"/api/v1/guardian/invitations/{link.pk}/decline/"
+        )
+
+        assert response.status_code == 200, response.content
+        assert response.data["status"] == GuardianLink.Status.REVOKED
+        link.refresh_from_db()
+        assert link.status == GuardianLink.Status.REVOKED
+        assert link.revoked_at is not None
+        # Gone from the pending invitations list, nothing ever opened.
+        invitations = client_for(guardian_user).get("/api/v1/guardian/invitations/")
+        assert invitations.data["results"] == []
+        assert Consent.objects.active_scopes(link) == frozenset()
+        # Audited like the other link transitions (references only).
+        entry = AuditLog.objects.filter(
+            action="guardian_link.revoked", object_id=str(link.pk)
+        ).latest("created_at")
+        assert entry.actor == guardian_user
+        assert entry.payload["reason"] == "invitation_declined"
+
+    def test_declining_twice_is_400(self):
+        _patient, link = self._invitation()
+        client = client_for(link.guardian.user)
+        url = f"/api/v1/guardian/invitations/{link.pk}/decline/"
+        assert client.post(url).status_code == 200
+        again = client.post(url)
+        assert again.status_code == 400
+        assert "n'est plus en attente" in str(again.data)
+
+    def test_declining_an_already_accepted_link_is_400(self):
+        _patient, link = self._invitation()
+        client = client_for(link.guardian.user)
+        assert (
+            client.post(f"/api/v1/guardian/invitations/{link.pk}/accept/").status_code
+            == 200
+        )
+        response = client.post(f"/api/v1/guardian/invitations/{link.pk}/decline/")
+        assert response.status_code == 400
+        link.refresh_from_db()
+        assert link.status == GuardianLink.Status.ACTIVE  # untouched
+
+    def test_declining_someone_elses_invitation_is_404(self):
+        _patient, link = self._invitation()
+        intruder_user, _ = make_guardian_user()
+
+        response = client_for(intruder_user).post(
+            f"/api/v1/guardian/invitations/{link.pk}/decline/"
+        )
+
+        assert response.status_code == 404
+        link.refresh_from_db()
+        assert link.status == GuardianLink.Status.INVITATION_SENT
+
+
+# ---------------------------------------------------------------------------
+# Staff share routing — GET /centers/{c}/patients/{pk}/guardian-links/
+# ---------------------------------------------------------------------------
+
+#: The ONLY fields the desk sees of a link: the share target, a display
+#: name, the relationship — no phone, no scopes, no status/history.
+STAFF_ROUTING_LINK_FIELDS = {"id", "guardian_name", "relationship"}
+
+
+class TestStaffGuardianLinkDiscovery:
+    """Routing a payment-request share at the desk (cas Mariama, porte C):
+    billing staff list the patient's ACTIVE links to target the guardian
+    the PATIENT designates — nothing more (no phone, no consent scopes)."""
+
+    def _scene(self):
+        center, _ = make_center_with_director()
+        secretary = make_staff_user(center, role=Role.SECRETARY)
+        patient = make_patient(created_by_center=center)
+        return center, secretary, patient
+
+    @staticmethod
+    def _url(center, patient):
+        return f"/api/v1/centers/{center.pk}/patients/{patient.pk}/guardian-links/"
+
+    def test_anonymous_is_401(self):
+        center, _secretary, patient = self._scene()
+        assert client_for().get(self._url(center, patient)).status_code == 401
+
+    def test_foreign_center_staff_is_404(self):
+        center, _secretary, patient = self._scene()
+        other_center, _ = make_center_with_director()
+        outsider = make_staff_user(other_center, role=Role.SECRETARY)
+        assert (
+            client_for(outsider).get(self._url(center, patient)).status_code == 404
+        )
+
+    def test_clinical_role_is_403(self):
+        center, _secretary, patient = self._scene()
+        doctor = make_staff_user(center, role=Role.DOCTOR)
+        assert client_for(doctor).get(self._url(center, patient)).status_code == 403
+
+    def test_patient_of_another_center_is_404(self):
+        center, secretary, _patient = self._scene()
+        other_center, _ = make_center_with_director()
+        foreign_patient = make_patient(created_by_center=other_center)
+        assert (
+            client_for(secretary).get(self._url(center, foreign_patient)).status_code
+            == 404
+        )
+
+    def test_every_billing_role_is_allowed(self):
+        center, _secretary, patient = self._scene()
+        for role in (Role.DIRECTOR, Role.SECRETARY, Role.CASHIER):
+            staff = make_staff_user(center, role=role)
+            response = client_for(staff).get(self._url(center, patient))
+            assert response.status_code == 200, role
+
+    def test_only_active_links_with_the_minimal_payload(self):
+        center, secretary, patient = self._scene()
+        # ACTIVE — the only row that must come back.
+        active_user = make_user()
+        active_user.first_name, active_user.last_name = "Nassim", "Abdou"
+        active_user.save(update_fields=["first_name", "last_name"])
+        _gu, active_guardian = make_guardian_user(user=active_user)
+        active_link = make_active_link(active_guardian, patient)
+        # Every non-active status must stay invisible.
+        _gu2, invited_guardian = make_guardian_user()
+        GuardianLink.objects.create(
+            guardian=invited_guardian, patient=patient,
+            relationship=GuardianLink.Relationship.CHILD,
+            status=GuardianLink.Status.INVITATION_SENT,
+            initiated_by=GuardianLink.InitiatedBy.PATIENT,
+        )
+        _gu3, revoked_guardian = make_guardian_user()
+        make_active_link(revoked_guardian, patient).revoke()
+        _gu4, pending_guardian = make_guardian_user()
+        GuardianLink.objects.create(
+            guardian=pending_guardian, patient=patient,
+            relationship=GuardianLink.Relationship.SIBLING,
+            status=GuardianLink.Status.PENDING_CLAIMANT_CONFIRMATION,
+            initiated_by=GuardianLink.InitiatedBy.GUARDIAN,
+        )
+
+        response = client_for(secretary).get(self._url(center, patient))
+
+        assert response.status_code == 200, response.content
+        (row,) = response.data["results"]
+        assert row["id"] == active_link.pk
+        assert set(row.keys()) == STAFF_ROUTING_LINK_FIELDS
+        assert row["guardian_name"] == "Nassim Abdou"
+        assert row["relationship"] == GuardianLink.Relationship.CHILD
+        # No scopes: whether a clinical consent exists is the PATIENT's
+        # information, never the desk's.
+        assert "scopes" not in row
+        assert "status" not in row
+
+    def test_no_phone_leak_even_for_a_nameless_shadow_guardian(self):
+        """The Mariama case: the guardian is a shadow account known by phone
+        only. The desk gets a MASKED display name — the full number never
+        transits (nor the « invite-<phone> » username)."""
+        center, secretary, patient = self._scene()
+        shadow_user = make_user(phone="+33698000001")
+        _gu, guardian = make_guardian_user(user=shadow_user)
+        make_active_link(guardian, patient)
+
+        response = client_for(secretary).get(self._url(center, patient))
+
+        assert response.status_code == 200
+        raw = response.content.decode("utf-8")
+        assert "+33698000001" not in raw
+        assert "33698000001" not in raw
+        assert "98000001" not in raw  # no long identifying substring either
+        (row,) = response.data["results"]
+        assert row["guardian_name"].endswith("01")  # recognisable at the desk
+        assert "•" in row["guardian_name"]
+
+    def test_full_clinical_consent_changes_nothing_in_the_payload(self):
+        center, secretary, patient = self._scene()
+        _gu, guardian = make_guardian_user()
+        link = make_active_link(guardian, patient)
+        Consent.objects.create(
+            patient=patient, guardian_link=link,
+            scope=Consent.Scope.CLINICAL_DETAIL,
+        )
+
+        response = client_for(secretary).get(self._url(center, patient))
+
+        (row,) = response.data["results"]
+        assert set(row.keys()) == STAFF_ROUTING_LINK_FIELDS
 
 
 # ---------------------------------------------------------------------------

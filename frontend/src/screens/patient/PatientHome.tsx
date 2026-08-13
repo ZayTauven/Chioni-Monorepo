@@ -111,8 +111,10 @@ export function PatientHome() {
           <div className="ax-card__body pat-gate__body">
             <h3 className="pat-gate__question">Avez-vous bien reçu ce soin&nbsp;?</h3>
             <p className="pat-gate__meta">
-              {req.center_name} — {formatKmf(req.total_kmf)}. Demande du{' '}
-              {formatDate(req.created_at)}, payée par un proche.
+              {req.center_name} — {formatKmf(req.total_kmf)}.{' '}
+              {req.paid_at
+                ? `Payée par un proche le ${formatDate(req.paid_at)}.`
+                : `Demande du ${formatDate(req.created_at)}, payée par un proche.`}
             </p>
             <div className="pat-actions">
               <button

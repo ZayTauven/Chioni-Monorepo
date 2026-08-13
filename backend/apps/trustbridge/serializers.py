@@ -77,7 +77,7 @@ class PaymentRequestStaffSerializer(serializers.ModelSerializer):
         model = PaymentRequest
         fields = [
             "id", "invoice", "total_kmf", "status", "created_by",
-            "patient_acknowledged_at", "shares", "created_at",
+            "paid_at", "patient_acknowledged_at", "shares", "created_at",
         ]
         read_only_fields = fields
 
@@ -169,7 +169,8 @@ class PaymentRequestPatientSerializer(serializers.ModelSerializer):
         model = PaymentRequest
         fields = [
             "id", "center_name", "total_kmf", "status", "lines",
-            "shared_with_links", "patient_acknowledged_at", "created_at",
+            "shared_with_links", "paid_at", "patient_acknowledged_at",
+            "created_at",
         ]
         read_only_fields = fields
 
@@ -211,7 +212,7 @@ class PaymentRequestGuardianSerializer(serializers.ModelSerializer):
         model = PaymentRequest
         fields = [
             "id", "patient", "center_name", "total_kmf", "status",
-            "lines", "created_at",
+            "paid_at", "lines", "created_at",
         ]
         read_only_fields = fields
 

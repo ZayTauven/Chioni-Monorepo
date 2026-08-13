@@ -168,6 +168,15 @@ REST_FRAMEWORK = {
         "otp_request_phone": env("THROTTLE_OTP_REQUEST_PHONE", default="3/hour"),
         "otp_request_ip": env("THROTTLE_OTP_REQUEST_IP", default="10/hour"),
         "otp_verify_ip": env("THROTTLE_OTP_VERIFY_IP", default="10/hour"),
+        # Guardian invitation (SMS to a caller-typed phone) — same posture
+        # as the OTP request: per caller AND per target phone. Door C (desk)
+        # is not throttled (staff of a KYC-verified center, traced).
+        "invite_guardian_user": env(
+            "THROTTLE_INVITE_GUARDIAN_USER", default="5/day"
+        ),
+        "invite_guardian_phone": env(
+            "THROTTLE_INVITE_GUARDIAN_PHONE", default="3/day"
+        ),
     },
 }
 
@@ -253,6 +262,22 @@ if PSP_INTENT_GUARD_MINUTES < 1:
         "négative désactiverait silencieusement la garde anti-double-débit."
     )
 
+# Purge des intents zombies (ADR 0009 addendum, point 3) : un intent
+# cree/en_cours plus vieux que cette fenêtre est réputé abandonné (3DS jamais
+# terminé, onglet fermé) et passe à « annule » par la tâche Celery
+# `trustbridge.cancel_stale_intents` (apps/trustbridge/tasks.py, planifiée
+# dans CELERY_BEAT_SCHEDULE). Fenêtre bien plus large que la garde ci-dessus :
+# la garde rend la demande re-payable au bout de quelques minutes, la purge
+# solde l'enregistrement au bout de quelques heures.
+PSP_INTENT_STALE_HOURS = env.int("PSP_INTENT_STALE_HOURS", default=24)
+# Boot guard (même philosophie que PSP_INTENT_GUARD_MINUTES) : une valeur
+# nulle ou négative annulerait des intentions de paiement encore actives.
+if PSP_INTENT_STALE_HOURS < 1:
+    raise ImproperlyConfigured(
+        "PSP_INTENT_STALE_HOURS doit être >= 1 : une valeur nulle ou négative "
+        "ferait annuler par la purge des intentions de paiement encore actives."
+    )
+
 # ---------------------------------------------------------------------------
 # SMS — OTP login + notifications (ADR 0010, needs study §5.4)
 # ---------------------------------------------------------------------------
@@ -285,6 +310,40 @@ CELERY_TASK_TRACK_STARTED = True
 # override via env to run through real workers.
 CELERY_TASK_ALWAYS_EAGER = env.bool("CELERY_TASK_ALWAYS_EAGER", default=DEBUG)
 CELERY_TASK_EAGER_PROPAGATES = CELERY_TASK_ALWAYS_EAGER
+
+# Beat schedule — periodic hygiene tasks. Tasks are referenced BY NAME
+# (plain strings): settings must never import application code.
+
+# Grace before physically deleting dead OtpCode rows (expired or consumed).
+# Dead rows carry the phone in clear (RGPD minimisation wants them gone),
+# but an immediate purge would also erase the attempt counters and timing
+# needed to investigate a reported abuse — 24 h keeps that window open
+# without letting the table grow (ADR 0010).
+OTP_PURGE_GRACE_HOURS = env.int("OTP_PURGE_GRACE_HOURS", default=24)
+# Boot guard (same philosophy as PSP_INTENT_GUARD_MINUTES above): 0 would
+# silently remove the investigation window, and a NEGATIVE value would put
+# the purge cutoff in the future — deleting codes that are still valid.
+if OTP_PURGE_GRACE_HOURS < 1:
+    raise ImproperlyConfigured(
+        "OTP_PURGE_GRACE_HOURS doit être >= 1 : une valeur nulle supprimerait "
+        "la fenêtre d'investigation des abus, une valeur négative purgerait "
+        "des codes OTP encore valides."
+    )
+
+CELERY_BEAT_SCHEDULE = {
+    # RGPD hygiene: drop dead OtpCode rows past the investigation grace
+    # (accounts/tasks.py — utility table, outside the append-only socle).
+    "purge-expired-otp-codes": {
+        "task": "accounts.purge_expired_otp_codes",
+        "schedule": timedelta(hours=1),
+    },
+    # Zombie PaymentIntents cleanup (apps/trustbridge/tasks.py — ADR 0009
+    # addendum): abandoned cree/en_cours intents past the guard window.
+    "cancel-stale-payment-intents": {
+        "task": "trustbridge.cancel_stale_intents",
+        "schedule": timedelta(hours=1),
+    },
+}
 
 # ---------------------------------------------------------------------------
 # Logging

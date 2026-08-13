@@ -185,9 +185,12 @@ class GuardianLink(TimeStampedModel):
     class Status(models.TextChoices):
         INVITATION_SENT = "invitation_envoyee", "Invitation envoyée"
         # OTP-1 (revue guardian) — a link waiting for the PATIENT to confirm
-        # it after they claimed their own profile. Gives NO visibility (it is
-        # not ACTIVE, so ``Consent.active_scopes`` returns ∅): the declarative
-        # phone never authorises a live link without the titulaire's consent.
+        # it after the titulaire ARRIVED on the profile. Trois portes y
+        # mènent : revendication OTP, fusion (lien déplacé sur une cible
+        # revendiquée), fusion (transfert du titulaire sur la cible). Gives
+        # NO visibility (it is not ACTIVE, so ``Consent.active_scopes``
+        # returns ∅): the declarative phone never authorises a live link
+        # without the titulaire's consent.
         PENDING_CLAIMANT_CONFIRMATION = (
             "attente_confirmation_titulaire",
             "En attente de confirmation du titulaire",
@@ -302,12 +305,14 @@ class GuardianLink(TimeStampedModel):
                 consent.revoke()
 
     def suspend_for_claimant_confirmation(self):
-        """OTP-1 — a claim by the titulaire suspends the link until they
-        confirm it.
+        """OTP-1 — the titulaire's arrival on the profile suspends the link
+        until they confirm it (trois portes : revendication OTP, fusion —
+        lien déplacé sur cible revendiquée, fusion — transfert du titulaire).
 
-        When the patient takes possession of their own profile (OTP claim),
-        no guardian may keep a live link — and therefore any visibility —
-        without the patient's explicit consent. The link drops to
+        When the patient takes possession of their own profile (OTP claim
+        or merge transfer), no guardian may keep a live link — and
+        therefore any visibility — without the patient's explicit consent.
+        The link drops to
         ``PENDING_CLAIMANT_CONFIRMATION`` (∅ scope) and its active consents
         are revoked so nothing stale can spring back if the patient later
         confirms. A REVOKED link is final and left untouched.

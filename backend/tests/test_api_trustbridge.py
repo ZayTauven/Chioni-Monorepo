@@ -43,7 +43,8 @@ pytestmark = pytest.mark.django_db
 
 #: Exact field contracts (asserted, not just spot-checked).
 GUARDIAN_PR_FIELDS = {
-    "id", "patient", "center_name", "total_kmf", "status", "lines", "created_at",
+    "id", "patient", "center_name", "total_kmf", "status", "paid_at",
+    "lines", "created_at",
 }
 GUARDIAN_LINE_FIELDS = {"generic_category", "amount_kmf"}
 RECEIPT_FIELDS = {
@@ -645,6 +646,65 @@ class TestGuardianPaymentFlow:
         assert response.status_code == 201, response.content
         assert response.data["status"] == Status.DISPUTED
         assert "VIH" not in response.content.decode("utf-8")
+
+
+# ---------------------------------------------------------------------------
+# paid_at — the payment date every audience can display (UX constat B2)
+# ---------------------------------------------------------------------------
+
+
+class TestPaidAtExposure:
+    """`paid_at` is stamped by `register_payment_success` (webhook path) and
+    surfaces, ISO-8601 nullable, in the three audience serializers."""
+
+    def _read_all_audiences(self, scn):
+        patient = client_for(scn.patient_user).get(
+            f"/api/v1/patients/me/payment-requests/{scn.payment_request.pk}/"
+        )
+        guardian = client_for(scn.guardian_user).get(
+            f"/api/v1/guardian/payment-requests/{scn.payment_request.pk}/"
+        )
+        staff = client_for(scn.cashier).get(
+            f"/api/v1/centers/{scn.center.pk}"
+            f"/payment-requests/{scn.payment_request.pk}/"
+        )
+        assert patient.status_code == guardian.status_code == 200
+        assert staff.status_code == 200
+        return patient.data, guardian.data, staff.data
+
+    def test_null_before_any_payment(self):
+        scn = build_scenario(status=Status.SENT)
+        for payload in self._read_all_audiences(scn):
+            assert "paid_at" in payload
+            assert payload["paid_at"] is None
+
+    def test_stamped_by_the_webhook_and_visible_to_all_audiences(self):
+        scn = build_scenario(status=Status.SENT)
+        before = client_for(scn.patient_user).get(
+            f"/api/v1/patients/me/payment-requests/{scn.payment_request.pk}/"
+        )
+        assert before.data["paid_at"] is None
+
+        pay_via_api(scn)  # intent + signed webhook — THE only path to payee
+
+        scn.payment_request.refresh_from_db()
+        assert scn.payment_request.paid_at is not None
+        for payload in self._read_all_audiences(scn):
+            assert payload["status"] == Status.PAID
+            assert payload["paid_at"] is not None
+            # ISO-8601 with offset (project date convention).
+            assert "T" in payload["paid_at"]
+
+    def test_paid_at_survives_closure_and_lists(self):
+        scn = build_scenario(status=Status.CLOSED)
+        listing = client_for(scn.patient_user).get(
+            "/api/v1/patients/me/payment-requests/"
+        )
+        assert listing.data["results"][0]["paid_at"] is not None
+        staff_listing = client_for(scn.cashier).get(
+            f"/api/v1/centers/{scn.center.pk}/payment-requests/"
+        )
+        assert staff_listing.data["results"][0]["paid_at"] is not None
 
 
 # ---------------------------------------------------------------------------

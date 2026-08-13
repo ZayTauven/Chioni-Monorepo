@@ -37,6 +37,7 @@ from django.utils import timezone
 
 from apps.audit.services import AuditAction, audit
 from apps.centers.models import HealthCenter
+from apps.common import notifications
 from apps.common.models import Currency
 from apps.patients.models import GuardianLink
 from apps.trustbridge.fx import net_eur_for_kmf, quote_eur_for_kmf
@@ -238,6 +239,12 @@ def share_payment_request(*, actor, payment_request, guardian_link):
         guardian_id=guardian_link.guardian_id,
         patient_id=guardian_link.patient_id,
     )
+    if payment_request.status == Status.SENT:
+        # Événement 4, rattrapage (revue guardian) : la demande est DÉJÀ
+        # envoyée — ce tuteur a raté la vague de SMS de l'envoi ; il reçoit
+        # le sien maintenant (même template, on_commit). Un partage en
+        # brouillon reste muet jusqu'à send_payment_request.
+        notifications.notify_payment_request_share_added(share)
     return share
 
 
@@ -279,6 +286,9 @@ def send_payment_request(*, actor, payment_request):
         invoice_id=payment_request.invoice_id,
         share_count=payment_request.shares.count(),
     )
+    # Événement 4 (notifications métier) : un SMS à chaque tuteur partagé —
+    # montant admis (destinataire tuteur), jamais le libellé de l'acte.
+    notifications.notify_payment_request_sent(payment_request)
     return payment_request
 
 
@@ -401,7 +411,20 @@ def get_psp_choice():
     )
 
 
-@transaction.atomic
+class _LateWebhookRefused(Exception):
+    """Internal signal: a SUCCESS event landed on an intent/request that can
+    no longer cash in. Raised INSIDE the atomic block (rolls it back), caught
+    by :func:`register_payment_success` OUTSIDE it, where the refusal is
+    audited — an audit row written before raising inside the transaction
+    would be rolled back with it and leave no reconciliation trace.
+    """
+
+    def __init__(self, message, **refs):
+        super().__init__(message)
+        self.message = message
+        self.refs = refs
+
+
 def register_payment_success(*, intent, actor=None):
     """THE cash-in path — the ONLY way a request ever becomes ``payee``.
 
@@ -410,20 +433,45 @@ def register_payment_success(*, intent, actor=None):
     request → PAID (M5), invoice → PAID, audit. Replaying the webhook is a
     strict no-op: the intent row is locked and an already-SUCCEEDED intent
     returns immediately.
+
+    A LATE success (intent already ``echoue``/``annule`` — purge des
+    zombies, ADR 0009 — or request no longer ``envoyee``) is refused with a
+    400, but the provider may have really debited the guardian: the refusal
+    writes a system AuditLog (``payment.webhook_refused``, references only)
+    OUTSIDE the rolled-back transaction — matière à réconciliation.
     """
+    try:
+        return _register_payment_success(intent=intent, actor=actor)
+    except _LateWebhookRefused as refused:
+        audit(
+            actor=actor, action=AuditAction.PAYMENT_WEBHOOK_REFUSED,
+            target=intent, reason="late_webhook_refused", **refused.refs,
+        )
+        raise ValidationError(refused.message)
+
+
+@transaction.atomic
+def _register_payment_success(*, intent, actor=None):
     intent = PaymentIntent.objects.select_for_update().get(pk=intent.pk)
     if intent.status == PaymentIntent.Status.SUCCEEDED:
         return intent  # idempotent replay — nothing written twice
     if intent.status in (PaymentIntent.Status.FAILED, PaymentIntent.Status.CANCELLED):
-        raise ValidationError(
+        raise _LateWebhookRefused(
             "Cette intention de paiement a échoué ou été annulée : "
-            "elle ne peut plus être encaissée."
+            "elle ne peut plus être encaissée.",
+            intent_id=intent.pk,
+            payment_request_id=intent.payment_request_id,
+            intent_status=intent.status,
         )
     payment_request = _locked(intent.payment_request)
     if payment_request.status != Status.SENT:
-        raise ValidationError(
+        raise _LateWebhookRefused(
             "Encaissement refusé : la demande n'est plus ouverte au paiement "
-            f"(statut : {Status(payment_request.status).label})."
+            f"(statut : {Status(payment_request.status).label}).",
+            intent_id=intent.pk,
+            payment_request_id=payment_request.pk,
+            intent_status=intent.status,
+            request_status=payment_request.status,
         )
     center = payment_request.invoice.center  # structural destination
     _require_center_can_collect(center)
@@ -484,6 +532,14 @@ def register_payment_success(*, intent, actor=None):
     intent.ledger_transaction = ledger_tx
     intent.save(update_fields=["status", "ledger_transaction", "updated_at"])
     _set_status(payment_request, Status.PAID)
+    # ``paid_at`` — the requestable payment timestamp (frontend constat B2:
+    # « payée par un proche » must carry a date). Stamped HERE only, in the
+    # same atomic block as the ledger write, exactly once: the replay no-op
+    # returns before this point, a second success on the same request is
+    # refused above (status is no longer SENT), and a dispute/resolution
+    # cycle never clears it. Reading audience serializers expose it as-is.
+    payment_request.paid_at = timezone.now()
+    payment_request.save(update_fields=["paid_at", "updated_at"])
     invoice = payment_request.invoice
     invoice.status = Invoice.Status.PAID
     invoice.save(update_fields=["status", "updated_at"])
@@ -496,6 +552,10 @@ def register_payment_success(*, intent, actor=None):
         exchange_rate=intent.exchange_rate,
         currency_paid=str(Currency.EUR), currency_received=str(Currency.KMF),
     )
+    # Événement 5 (notifications métier) : SMS au patient, SANS montant.
+    # Le rejeu du webhook retourne AVANT ce point (no-op idempotent) :
+    # jamais deux SMS pour un même encaissement.
+    notifications.notify_payment_received(payment_request)
     return intent
 
 
@@ -669,6 +729,9 @@ def close_payment_request(*, actor, payment_request):
         exchange_rate=receipt.exchange_rate,
         currency_paid=str(Currency.EUR), currency_received=str(Currency.KMF),
     )
+    # Événement 6 (notifications métier) : SMS au tuteur payeur (celui de
+    # l'intent abouti dont le ledger vient d'être réconcilié).
+    notifications.notify_receipt_issued(receipt, intent.guardian)
     return receipt
 
 
@@ -739,3 +802,67 @@ def resolve_dispute(*, actor, dispute, resolution_note):
         restored_status=dispute.previous_status,
     )
     return dispute
+
+
+# ---------------------------------------------------------------------------
+# Hygiene — zombie intents purge (ADR 0009 addendum, point 3)
+# ---------------------------------------------------------------------------
+
+
+def cancel_stale_intents():
+    """Cancel abandoned ``cree``/``en_cours`` intents older than
+    ``PSP_INTENT_STALE_HOURS`` (env, default 24 h; boot-guarded >= 1).
+
+    Why: an intent whose 3DS was never completed (tab closed, card put
+    away) stays ``en_cours`` forever. The anti-double-débit guard already
+    stops considering it after ``PSP_INTENT_GUARD_MINUTES`` (the request
+    becomes payable again), but the row itself must eventually reach a
+    terminal state — an eternal ``en_cours`` pollutes reconciliation and
+    keeps a confirmable payment hanging at the provider.
+
+    Concurrency: each intent is re-read and re-checked UNDER ROW LOCK in
+    its own transaction (never a raw ``update()``). A webhook landing at
+    the same moment either wins the lock first — the intent is no longer
+    pending and is skipped here — or arrives after the cancellation and is
+    refused by :func:`register_payment_success` (an ``annule`` intent can
+    never cash in; the money stays a provider-side reconciliation case,
+    limite documentée de l'ADR 0009).
+
+    When ``psp/stripe.py`` exists, this purge MUST ALSO cancel the intent
+    on the provider side (``payment_intent.cancel`` — exigence actée à
+    l'addendum ADR 0009) : l'annulation locale seule laisse un client
+    secret Stripe confirmable pendant des heures. The Fake PSP holds no
+    provider-side state, so there is nothing to cancel remotely yet.
+
+    Returns the number of intents cancelled (surfaced in worker logs via
+    the Celery task result).
+    """
+    pending_statuses = (
+        PaymentIntent.Status.CREATED,
+        PaymentIntent.Status.PROCESSING,
+    )
+    threshold = timezone.now() - timedelta(
+        hours=settings.PSP_INTENT_STALE_HOURS
+    )
+    stale_pks = list(
+        PaymentIntent.objects.filter(
+            status__in=pending_statuses, created_at__lt=threshold
+        ).values_list("pk", flat=True)
+    )
+    cancelled = 0
+    for pk in stale_pks:
+        with transaction.atomic():
+            intent = PaymentIntent.objects.select_for_update().get(pk=pk)
+            if intent.status not in pending_statuses:
+                continue  # settled by a concurrent webhook — leave it alone
+            intent.status = PaymentIntent.Status.CANCELLED
+            intent.save(update_fields=["status", "updated_at"])
+            audit(
+                actor=None, action=AuditAction.PAYMENT_INTENT_CANCELLED,
+                target=intent,
+                intent_id=intent.pk,
+                payment_request_id=intent.payment_request_id,
+                reason="stale",
+            )
+            cancelled += 1
+    return cancelled

@@ -133,7 +133,12 @@ export function TuteurDemandes() {
                     <span className="tuteur-pr-card__amount ax-num">{formatKmf(r.total_kmf)}</span>
                   </div>
                   <div className="tuteur-pr-card__meta">
-                    <span>{formatDate(r.created_at)}</span>
+                    {/* Once paid, the payment date matters more than the request date. */}
+                    <span>
+                      {r.status === 'payee' && r.paid_at
+                        ? `Payée le ${formatDate(r.paid_at)}`
+                        : formatDate(r.created_at)}
+                    </span>
                     <PrStatusBadge status={r.status} short />
                   </div>
                 </Link>

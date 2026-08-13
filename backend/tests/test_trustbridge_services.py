@@ -417,6 +417,39 @@ class TestCashIn:
             payment_request=scn.payment_request
         ).count() == 1
 
+    def test_paid_at_is_stamped_once_by_the_cash_in(self):
+        """`paid_at` is set by register_payment_success in the SAME atomic
+        block as the ledger write; a replay never moves it, a dispute /
+        resolution cycle never clears it."""
+        scn = build_scenario(status=Status.SENT)
+        assert scn.payment_request.paid_at is None
+        intent = services.create_payment_intent(
+            guardian_user=scn.guardian_user, payment_request=scn.payment_request
+        )
+        payload, signature = signed_webhook(intent.psp_reference)
+        services.handle_psp_webhook(payload=payload, signature=signature)
+
+        scn.payment_request.refresh_from_db()
+        first_paid_at = scn.payment_request.paid_at
+        assert first_paid_at is not None
+
+        services.handle_psp_webhook(payload=payload, signature=signature)  # replay
+        scn.payment_request.refresh_from_db()
+        assert scn.payment_request.paid_at == first_paid_at
+
+        services.open_dispute(
+            actor_user=scn.patient_user,
+            payment_request=scn.payment_request,
+            reason="Vérification du montant",
+        )
+        dispute = scn.payment_request.disputes.get()
+        services.resolve_dispute(
+            actor=scn.director, dispute=dispute, resolution_note="Montant conforme"
+        )
+        scn.payment_request.refresh_from_db()
+        assert scn.payment_request.status == Status.PAID
+        assert scn.payment_request.paid_at == first_paid_at
+
     def test_webhook_with_a_bad_signature_records_nothing(self):
         scn = build_scenario(status=Status.SENT)
         intent = services.create_payment_intent(
@@ -476,6 +509,35 @@ class TestCashIn:
         intent.refresh_from_db()
         assert intent.status == PaymentIntent.Status.PROCESSING
         assert intent.ledger_transaction_id is None
+
+    def test_refused_success_leaves_a_reconciliation_audit_trace(self):
+        """Revue guardian : un « succeeded » refusé peut cacher un débit PSP
+        réel — le refus écrit une ligne d'audit système (références seules)
+        AVANT de lever, hors de la transaction annulée."""
+        from apps.audit.models import AuditLog
+
+        scn = build_scenario(status=Status.SENT)
+        intent = services.create_payment_intent(
+            guardian_user=scn.guardian_user, payment_request=scn.payment_request
+        )
+        services.open_dispute(
+            actor_user=scn.guardian_user,
+            payment_request=scn.payment_request,
+            reason="Montant contesté avant paiement",
+        )
+        with pytest.raises(ValidationError, match="plus ouverte au paiement"):
+            services.register_payment_success(intent=intent)
+
+        entry = AuditLog.objects.filter(
+            action="payment.webhook_refused", object_id=str(intent.pk)
+        ).latest("created_at")
+        assert entry.actor is None  # system path (webhook has no user)
+        assert entry.payload["reason"] == "late_webhook_refused"
+        assert entry.payload["intent_id"] == intent.pk
+        assert entry.payload["payment_request_id"] == scn.payment_request.pk
+        assert entry.payload["request_status"] == Status.DISPUTED
+        # References only — never an act label (ADR 0007).
+        assert "Sérologie" not in str(entry.payload)
 
 
 # ---------------------------------------------------------------------------

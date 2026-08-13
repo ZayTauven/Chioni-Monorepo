@@ -15,6 +15,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from apps.audit.services import AuditAction, audit
+from apps.common import notifications
 from apps.common.phones import normalize_phone
 from apps.medical.models import Consent, Encounter, HealthRecordEntry
 from apps.patients.models import GuardianLink, GuardianProfile, PatientProfile
@@ -221,21 +222,35 @@ def _revoke_self_guardianship_links(*, profile, user, actor):
 
 
 def _suspend_links_for_claimant_confirmation(*, profile, actor):
-    """OTP-1 — when the patient claims their profile, every surviving
+    """OTP-1 — when the titulaire ARRIVES on a profile, every surviving
     guardian link drops to ``PENDING_CLAIMANT_CONFIRMATION``.
+
+    Three doors lead here (invariant éthique — « est-ce bien votre
+    proche ? ») :
+
+    1. **revendication OTP** (:func:`claim_profile`) ;
+    2. **fusion — lien déplacé** sur une cible déjà revendiquée
+       (:func:`merge_profiles`, étape 1) ;
+    3. **fusion — transfert du titulaire** : l'utilisateur revendiqué de la
+       source atterrit sur la cible, dont les liens survivants n'ont jamais
+       été confirmés par lui (:func:`merge_profiles`, étape 3).
 
     The door-A case « patient without a smartphone, managed by their
     guardian » stays legitimate WHILE the profile is unclaimed (the link is
     ACTIVE, the guardian manages the administrative record). The moment the
-    titulaire takes possession by OTP, control returns to them: no link
-    keeps its visibility without their explicit confirmation. Applies to the
-    real family guardian too — that is the point (« est-ce bien votre
-    proche ? »). Self-guardianship links were already revoked (final) by the
-    caller and are skipped.
+    titulaire takes possession — by OTP claim or by merge transfer —
+    control returns to them: no link keeps its visibility without their
+    explicit confirmation. Applies to the real family guardian too — that
+    is the point. Self-guardianship links were already revoked (final) by
+    the caller and are skipped; an already-PENDING link (merge doors) is
+    idempotently skipped — never re-suspended, re-audited or re-counted.
     """
     suspended = 0
     for link in profile.guardian_links.exclude(
-        status=GuardianLink.Status.REVOKED
+        status__in=(
+            GuardianLink.Status.REVOKED,
+            GuardianLink.Status.PENDING_CLAIMANT_CONFIRMATION,
+        )
     ):
         previous_status = link.status
         link.suspend_for_claimant_confirmation()
@@ -276,7 +291,11 @@ def claim_profile(*, user, profile):
         actor=user, action=AuditAction.PATIENT_CLAIMED, target=profile,
         patient_id=profile.pk, user_id=user.pk,
     )
-    _suspend_links_for_claimant_confirmation(profile=profile, actor=user)
+    suspended = _suspend_links_for_claimant_confirmation(profile=profile, actor=user)
+    if suspended:
+        # Événement 3 (notifications métier) : un seul SMS générique quel
+        # que soit le nombre de liens suspendus — jamais le nom du tuteur.
+        notifications.notify_links_pending_confirmation(profile)
     return profile
 
 
@@ -379,6 +398,9 @@ def invite_guardian(*, actor, patient, phone, relationship, initiated_by):
         link_id=link.pk, patient_id=patient.pk, guardian_id=guardian.pk,
         initiated_by=initiated_by, status=link.status,
     )
+    # Événement 1 (notifications métier) : SMS d'invitation au tuteur —
+    # après commit seulement, texte volontairement anonyme.
+    notifications.notify_guardian_invited(link)
     return link
 
 
@@ -395,6 +417,31 @@ def accept_link(*, link, guardian_user):
     audit(
         actor=guardian_user, action=AuditAction.LINK_ACCEPTED, target=link,
         link_id=link.pk, patient_id=link.patient_id, guardian_id=link.guardian_id,
+    )
+    # Événement 2 (notifications métier) : SMS au patient s'il a un téléphone.
+    notifications.notify_invitation_accepted(link)
+    return link
+
+
+@transaction.atomic
+def decline_invitation(*, link, guardian_user):
+    """The invited guardian declines — the link is REVOKED (final).
+
+    Symmetric of :func:`accept_link`, aligned on the existing revoke
+    semantics (M2): a refused invitation is definitive, a new relationship
+    needs a fresh invitation — never a resurrection of this row. Audited
+    as a link revocation with the decline reason reference (same pattern
+    as the ``self_guardianship`` revocations).
+    """
+    if link.guardian.user_id != guardian_user.pk:
+        raise ValidationError("Cette invitation ne vous est pas destinée.")
+    if link.status != GuardianLink.Status.INVITATION_SENT:
+        raise ValidationError("Cette invitation n'est plus en attente.")
+    link.revoke()
+    audit(
+        actor=guardian_user, action=AuditAction.LINK_REVOKED, target=link,
+        link_id=link.pk, patient_id=link.patient_id, guardian_id=link.guardian_id,
+        reason="invitation_declined",
     )
     return link
 
@@ -511,7 +558,10 @@ def merge_profiles(*, source, target, actor, center):
       same-patient invariant keeps holding.
     - **Claimed user** → transferred if exactly one side is claimed; merging
       two CLAIMED profiles is refused (identity conflict → manual/OTP
-      resolution, never an automatic pick).
+      resolution, never an automatic pick). The transfer is the TROISIÈME
+      porte de ``PENDING_CLAIMANT_CONFIRMATION`` : les liens survivants de
+      la cible sont suspendus jusqu'à confirmation du titulaire, exactement
+      comme à la revendication OTP.
     - **Invoices / payment data** → NOT moved: outside draft the patient
       anchor is frozen by a DB trigger (ADR 0006). The absorbed profile
       remains as a tombstone whose ``merged_into`` points to the canonical
@@ -556,13 +606,16 @@ def merge_profiles(*, source, target, actor, center):
             consent.patient = target
             consent.save(update_fields=["patient", "updated_at"])
         moved_links += 1
-        # OTP-1 via the merge door (revue guardian): a link landing on a
-        # CLAIMED target must pass the SAME claimant-confirmation gate as at
-        # claim time — it never stays ACTIVE (nor INVITATION_SENT, which
+        # OTP-1 via the merge door — deuxième porte de
+        # PENDING_CLAIMANT_CONFIRMATION (revue guardian): a link landing on
+        # a CLAIMED target must pass the SAME claimant-confirmation gate as
+        # at claim time — it never stays ACTIVE (nor INVITATION_SENT, which
         # could be accepted into ACTIVE) without the titulaire's consent.
-        # Merging onto an UNCLAIMED target is unchanged (the guardian keeps
-        # managing the administrative record). REVOKED is final and left
-        # alone; an already-PENDING link is idempotently skipped.
+        # Merging onto an UNCLAIMED target is unchanged here (the guardian
+        # keeps managing the administrative record) — UNLESS step 3 below
+        # transfers the titulaire onto it (troisième porte). REVOKED is
+        # final and left alone; an already-PENDING link is idempotently
+        # skipped.
         if (
             target.user_id is not None
             and link.status not in (
@@ -607,6 +660,20 @@ def merge_profiles(*, source, target, actor, center):
         target.claim_status = PatientProfile.ClaimStatus.ACTIVE
         target.save()
         user_transferred = True
+        # Troisième porte de PENDING_CLAIMANT_CONFIRMATION (revue guardian
+        # de l'incrément notifications, 2026-08-13) : le titulaire vient
+        # d'ARRIVER sur la cible par le transfert — ses liens survivants
+        # (ceux qui préexistaient sur la cible ET ceux déplacés depuis la
+        # source à l'étape 1) n'ont jamais été confirmés par lui SUR CE
+        # PROFIL. Sans cette suspension, un lien ACTIF semé sur la cible
+        # non revendiquée gardait sa visibilité « paiements » sur le profil
+        # fraîchement revendiqué, sans consentement — exactement la faille
+        # que la porte de revendication ferme. Les liens déjà confirmés sur
+        # la source repassent par la porte (sur-confirmation assumée : un
+        # écran, jamais un accès silencieux).
+        suspended_links += _suspend_links_for_claimant_confirmation(
+            profile=target, actor=actor
+        )
 
     # 4. Tombstone: the source now points to its canonical profile.
     source.merged_into = target
@@ -620,4 +687,9 @@ def merge_profiles(*, source, target, actor, center):
         encounters_moved=encounters_moved, entries_moved=entries_moved,
         user_transferred=user_transferred,
     )
+    if suspended_links:
+        # Événement 3 (notifications métier), porte fusion : des liens ont
+        # atterri en attente de confirmation sur le profil revendiqué du
+        # titulaire — même SMS générique qu'à la revendication.
+        notifications.notify_links_pending_confirmation(target)
     return target

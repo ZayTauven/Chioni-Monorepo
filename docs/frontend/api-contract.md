@@ -73,7 +73,7 @@
 - `GET /patients/me/record-entries/` → `{id, entry_type(antecedent|allergie|traitement_en_cours|vaccination), content, source_encounter, created_at}`
 
 ### Argent côté patient
-- `GET /patients/me/payment-requests/` (+`/{pk}/`) → `{id, center_name, total_kmf, status, lines[{id,label,generic_category,amount_kmf}], shared_with_links[ids], patient_acknowledged_at, created_at}`
+- `GET /patients/me/payment-requests/` (+`/{pk}/`) → `{id, center_name, total_kmf, status, lines[{id,label,generic_category,amount_kmf}], shared_with_links[ids], paid_at, patient_acknowledged_at, created_at}` — `paid_at` : ISO-8601 nullable, posé par le webhook d'encaissement (« payée par un proche le … »).
 - `POST .../{pk}/share/` `{"guardian_link": <id>}` → 201.
 - `POST .../{pk}/acknowledge/` (sans corps) → 200 — possible seulement après paiement.
 - `POST .../{pk}/dispute/` `{"reason"}` → 201, statut `litige`.
@@ -84,11 +84,11 @@
 - `GET|POST /guardian/profile/` — `{id, country_of_residence(ISO-2, déf. FR), preferred_currency(EUR|KMF, déf. EUR), created_at}`. GET sans profil → 404.
 - `GET /guardian/proteges/` — liens `actif` avec scope `paiements` UNIQUEMENT. Item : `{id, patient{id,first_name,last_name,claim_status}, relationship, status, initiated_by, accepted_at}`. Patient = identité administrative STRICTE.
 - `POST /guardian/proteges/` `{first_name*, last_name*, relationship*, birth_date?, sex?, phone?, city?}` → 201, lien direct `actif` (porte A).
-- `GET /guardian/invitations/` (statut `invitation_envoyee`) ; `POST /guardian/invitations/{link_pk}/accept/` → 200 `actif`.
+- `GET /guardian/invitations/` (statut `invitation_envoyee`) ; `POST /guardian/invitations/{link_pk}/accept/` → 200 `actif` ; `POST /guardian/invitations/{link_pk}/decline/` (sans corps) → 200 `revoque` (**définitif** — une nouvelle relation exige une nouvelle invitation). 400 si plus en attente ; 404 si pas mon invitation.
 - `POST /guardian/links/{link_pk}/revoke/` → 200.
 
 ### Demandes de paiement (double dérivation : lien actif + scope + partage explicite, sinon 404)
-- `GET /guardian/payment-requests/` (+`/{pk}/`) → `{id, patient, center_name, total_kmf, status, lines[{generic_category, amount_kmf}], created_at}` — **jamais de `label`** (secret médical, ADR 0005). Payable si `status === "envoyee"`.
+- `GET /guardian/payment-requests/` (+`/{pk}/`) → `{id, patient, center_name, total_kmf, status, paid_at, lines[{generic_category, amount_kmf}], created_at}` — **jamais de `label`** (secret médical, ADR 0005). Payable si `status === "envoyee"` ; `paid_at` : ISO-8601 nullable, posé par le webhook d'encaissement.
 - `GET .../{pk}/quote/` (**GET**) → devis FX :
   `{amount_kmf, currency_received:"KMF", exchange_rate, amount_eur, fees_eur, total_eur, currency_paid:"EUR"}`
   (frais 2,50 % en sus ; le centre reçoit 100 % du KMF). 400 si non payable.
@@ -108,10 +108,11 @@ Rôles requis notables : BILLING = `directeur, secretaire, caissier` ; cliniques
 
 - `GET /centers/` — mes centres. `GET|PATCH /centers/{pk}/` — `{id, name, type(hopital_public|clinique_privee|centre_sante|cabinet|pharmacie), island(ngazidja|ndzuwani|mwali), city, address, phone, email, kyc_status(en_attente|actif|suspendu, read-only), created_at}`. KYC ≠ actif → encaissement bloqué.
 - **Patients** : `GET(?q=)|POST /centers/{c}/patients/` ; item `{id, first_name, last_name, birth_date, sex, phone, city, claim_status(non_revendique|invite|actif), created_at}`. Création porte C : + `guardian_phone?`, `guardian_relationship?` (write-only → lien `invitation_envoyee`). PATCH d'un profil revendiqué → 400 (identité gérée par le patient). Fusion : `POST .../patients/merge/` `{"source_id","target_id"}`.
+- **Liens de tutelle d'un patient (routage du partage au guichet)** : `GET /centers/{c}/patients/{pk}/guardian-links/` (rôles BILLING ; patient hors périmètre → 404) → liste paginée `{id, guardian_name, relationship}` — liens **`actif` uniquement**, minimum administratif : jamais de téléphone (tuteur sans nom → nom d'affichage masqué `"+336••••••78"`), jamais de scopes ni d'historique. `id` alimente le `guardian_link` de `POST .../payment-requests/{pk}/share/` (cas Mariama : le patient désigne son tuteur au guichet).
 - **Consultations** : `GET|POST /centers/{c}/encounters/` (+`/{pk}/`). POST (cliniques) : `{patient*, reason*, diagnosis?, occurred_at?, tariff_items?[ids]}`. Lecture selon rôle : clinique → avec `reason`/`diagnosis` ; admin → **sans** (vue exploitation).
 - **Ordonnances** : `GET|POST /centers/{c}/encounters/{e}/prescriptions/` (POST : `medecin, sage_femme`). **Entrées carnet** : `GET|POST .../record-entries/` (non paginés).
 - **Factures** : `GET|POST /centers/{c}/invoices/` (+`/{pk}/`, `/{pk}/issue/`). Item : `{id, encounter, patient, total_kmf, status(brouillon|emise|payee|annulee), lines[{id,act,label,generic_category,amount_kmf}], created_at}`. Création : `{"encounter", "act_ids"?}`.
-- **Demandes de paiement** : `POST /centers/{c}/invoices/{pk}/payment-requests/` ; `GET /centers/{c}/payment-requests/` (+`/{pk}/`) → `{id, invoice, total_kmf, status, created_by, patient_acknowledged_at, shares[{id,guardian_link,shared_at,shared_by}], created_at}`. Actions : `share/`+`unshare/` (`{"guardian_link"}`), `send/`, `confirm-care/` (rôles soins), `close/` → **201 reçu**.
+- **Demandes de paiement** : `POST /centers/{c}/invoices/{pk}/payment-requests/` ; `GET /centers/{c}/payment-requests/` (+`/{pk}/`) → `{id, invoice, total_kmf, status, created_by, paid_at, patient_acknowledged_at, shares[{id,guardian_link,shared_at,shared_by}], created_at}` (`paid_at` : ISO-8601 nullable). Actions : `share/`+`unshare/` (`{"guardian_link"}`), `send/`, `confirm-care/` (rôles soins), `close/` → **201 reçu**.
 - **Litiges** : `GET /centers/{c}/disputes/` → `{id, payment_request, opened_by, reason, previous_status, status(ouvert|resolu), resolved_by, resolution_note, resolved_at, created_at}` ; `POST .../{pk}/resolve/` `{"resolution_note"}` (directeur).
 - **Personnel** : `GET|POST /centers/{c}/staff/` (directeur) → `{id, user{id,first_name,last_name,phone}, role, is_active, created_at}`. Création : `{phone*, role*, first_name?, last_name?}` (compte ombre si inconnu). `POST .../staff/{pk}/deactivate/`. Jamais de suppression ; dernier directeur indéactivable.
 - **Tarifs** : `GET|POST /centers/{c}/tariffs/` (+`/{pk}/` PATCH) → `{id, code, label, generic_category*, price_kmf, is_active, created_at}` (écriture : directeur, caissier).

@@ -192,7 +192,12 @@ export function PatientPaiementDetail({ requestId }: { requestId: number }) {
             </div>
             <PaymentStatusBadge status={request.status} />
           </div>
-          <p className="pat-gate__meta">{STATUS_EXPLAINER[request.status]}</p>
+          <p className="pat-gate__meta">
+            {/* The REAL payment date (webhook) replaces the generic sentence. */}
+            {request.status === 'payee' && request.paid_at
+              ? `Payée par un proche le ${formatDate(request.paid_at)}.`
+              : STATUS_EXPLAINER[request.status]}
+          </p>
           <ul className="pat-lines">
             {request.lines.map((line) => (
               <li key={line.id}>

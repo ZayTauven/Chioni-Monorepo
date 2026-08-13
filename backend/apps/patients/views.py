@@ -14,6 +14,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.centers.models import StaffMembership
 from apps.common.permissions import (
     CenterScopedViewMixin,
     IsGuardianWithScope,
@@ -29,6 +30,7 @@ from apps.patients.serializers import (
     GuardianInviteSerializer,
     GuardianLinkGuardianSerializer,
     GuardianLinkPatientSerializer,
+    GuardianLinkStaffRoutingSerializer,
     GuardianProfileSerializer,
     MergeRequestSerializer,
     PatientSelfSerializer,
@@ -44,12 +46,26 @@ from apps.patients.services import (
     create_patient_at_center,
     create_protege,
     decline_guardian_link,
+    decline_invitation,
     grant_clinical_consent,
     invite_guardian,
     merge_profiles,
     revoke_clinical_consent,
     revoke_link,
     update_patient_profile,
+)
+from apps.patients.throttling import (
+    InviteGuardianPerPhoneThrottle,
+    InviteGuardianPerUserThrottle,
+)
+
+#: Roles allowed to route payment-request shares at the desk — the SAME
+#: billing roles as ``apps.trustbridge.views.BILLING_ROLES``, kept local so
+#: the patients app never imports trustbridge (dependency direction).
+BILLING_ROLES = (
+    StaffMembership.Role.DIRECTOR,
+    StaffMembership.Role.SECRETARY,
+    StaffMembership.Role.CASHIER,
 )
 
 
@@ -133,6 +149,42 @@ class CenterPatientDetailView(CenterScopedViewMixin, generics.RetrieveUpdateAPIV
         )
 
 
+class CenterPatientGuardianLinksView(CenterScopedViewMixin, generics.ListAPIView):
+    """GET /centers/{center_pk}/patients/{pk}/guardian-links/ — the ACTIVE
+    guardian links of a patient of THIS center, for routing a share.
+
+    Product justification (trou d'API relevé par le frontend) : le partage
+    d'une demande de paiement (`POST /centers/{c}/payment-requests/{pk}/share/`)
+    exige un ``guardian_link`` que le staff n'avait aucun moyen de connaître.
+    C'est le cas Mariama (porte C, patiente sans smartphone) : au guichet, le
+    centre doit pouvoir router la demande vers le tuteur qu'ELLE désigne.
+
+    Strict scope: billing roles only; patient resolved through the SAME
+    perimeter rule as ``CenterPatientDetailView`` (foreign patient → 404);
+    ACTIVE links only (never the history, the revoked, or the pending ones);
+    administrative minimum in the payload (no phone, no consent scopes —
+    see ``GuardianLinkStaffRoutingSerializer``). This read is not audited
+    (project convention: reads never are) — the share ACTION it prepares
+    stays fully traced by ``PaymentRequestShare.shared_by`` and the
+    ``payment_request.shared`` audit entry.
+    """
+
+    permission_classes = [IsStaffOfCenter(*BILLING_ROLES)]
+    serializer_class = GuardianLinkStaffRoutingSerializer
+
+    def get_queryset(self):
+        patient = get_object_or_404(
+            center_patients_qs(self.center), pk=self.kwargs["pk"]
+        )
+        return (
+            GuardianLink.objects.filter(
+                patient=patient, status=GuardianLink.Status.ACTIVE
+            )
+            .select_related("guardian__user")
+            .order_by("created_at")
+        )
+
+
 class CenterPatientMergeView(CenterScopedViewMixin, APIView):
     """POST /centers/{center_pk}/patients/merge/ — absorb a duplicate.
 
@@ -212,9 +264,17 @@ class MyGuardianLinksView(generics.ListAPIView):
 
 
 class InviteGuardianView(APIView):
-    """POST /patients/me/guardians/invite/ — invite a guardian by phone."""
+    """POST /patients/me/guardians/invite/ — invite a guardian by phone.
+
+    Throttled on two independent axes (per caller AND per target phone —
+    the endpoint sends an SMS to a number typed by the caller, see
+    ``apps.patients.throttling``). Door C (desk creation) is deliberately
+    NOT throttled: authenticated staff of a KYC-verified center, traced
+    responsibility.
+    """
 
     permission_classes = [IsPatientSelf]
+    throttle_classes = [InviteGuardianPerUserThrottle, InviteGuardianPerPhoneThrottle]
 
     @extend_schema(
         request=GuardianInviteSerializer, responses=GuardianLinkPatientSerializer
@@ -400,6 +460,27 @@ class AcceptInvitationView(APIView):
             pk=link_pk,
         )
         accept_link(link=link, guardian_user=request.user)
+        return Response(GuardianLinkGuardianSerializer(link).data)
+
+
+class DeclineInvitationView(APIView):
+    """POST /guardian/invitations/{link_pk}/decline/ — refuse the invitation.
+
+    Symmetric of ``accept/``: a link awaiting THIS guardian's acceptance is
+    REVOKED (final, consistent with the revoke semantics — a new
+    relationship needs a fresh invitation). Someone else's invitation is
+    invisible (404); an invitation no longer pending answers 400.
+    """
+
+    permission_classes = [IsGuardianWithScope(Consent.Scope.PAYMENTS)]
+
+    @extend_schema(request=None, responses=GuardianLinkGuardianSerializer)
+    def post(self, request, link_pk):
+        link = get_object_or_404(
+            GuardianLink.objects.filter(guardian=guardian_profile(request.user)),
+            pk=link_pk,
+        )
+        decline_invitation(link=link, guardian_user=request.user)
         return Response(GuardianLinkGuardianSerializer(link).data)
 
 

@@ -295,6 +295,45 @@ export function Modal({
   );
 }
 
+/* ── decline-invitation modal (shared by TuteurHome and TuteurProteges).
+      Declining is DEFINITIVE backend-side (the link becomes `revoque`) —
+      the modal says so plainly, and says the guardian owes no explanation. ── */
+
+export function DeclineInvitationModal({
+  patientName,
+  busy,
+  error,
+  onConfirm,
+  onClose,
+}: {
+  patientName: string;
+  busy: boolean;
+  error: ApiError | null;
+  onConfirm: () => void;
+  onClose: () => void;
+}) {
+  return (
+    <Modal title="Refuser cette invitation ?" onClose={onClose}>
+      <div className="ax-stack" style={{ gap: 'var(--ax-space-4)' }}>
+        <p style={{ margin: 0, fontSize: 'var(--ax-text-sm)', color: 'var(--ax-text)', lineHeight: 1.6 }}>
+          Ce refus est définitif : le lien avec{' '}
+          <b style={{ color: 'var(--ax-text-strong)' }}>{patientName}</b> ne pourra pas être
+          rétabli. Vous n&rsquo;avez pas à vous justifier.
+        </p>
+        {error && <ErrorAlert error={error} />}
+        <div className="ax-cluster" style={{ justifyContent: 'flex-end', gap: 'var(--ax-space-3)' }}>
+          <button type="button" className="ax-btn ax-btn--ghost" disabled={busy} onClick={onClose}>
+            <span className="ax-btn__label">Revenir</span>
+          </button>
+          <button type="button" className="ax-btn ax-btn--danger" disabled={busy} onClick={onConfirm}>
+            <span className="ax-btn__label">{busy ? 'Refus…' : 'Refuser définitivement'}</span>
+          </button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
 /* ── dispute modal (shared by detail screen; reason is REQUIRED).
       The reason state lives in the PARENT screen so an accidental close
       (backdrop, Escape) never loses what the user typed. ── */

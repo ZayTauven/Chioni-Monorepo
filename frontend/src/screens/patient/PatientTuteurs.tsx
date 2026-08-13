@@ -33,6 +33,7 @@ type Dialog =
   | { kind: 'grant'; link: GuardianLinkPatient }
   | { kind: 'ungrant'; link: GuardianLinkPatient }
   | { kind: 'revoke'; link: GuardianLinkPatient }
+  | { kind: 'cancel-invite'; link: GuardianLinkPatient }
   | null;
 
 const RELATIONSHIP_OPTIONS = Object.entries(RELATIONSHIP_LABELS) as [Relationship, string][];
@@ -217,14 +218,26 @@ export function PatientTuteurs() {
           <h3 className="pat-section">Invitations envoyées</h3>
           {invitations.map((link) => (
             <section key={link.id} className="ax-card">
-              <div className="ax-card__body pat-row">
-                <div className="pat-row__main">
-                  <span className="pat-row__title">
-                    {link.guardian_name || 'Invitation en attente'}
-                  </span>
-                  <span className="pat-row__meta">{RELATIONSHIP_LABELS[link.relationship]}</span>
+              <div className="ax-card__body pat-gate__body">
+                <div className="pat-row" style={{ minHeight: 0 }}>
+                  <div className="pat-row__main">
+                    <span className="pat-row__title">
+                      {link.guardian_name || 'Invitation en attente'}
+                    </span>
+                    <span className="pat-row__meta">{RELATIONSHIP_LABELS[link.relationship]}</span>
+                  </div>
+                  <GuardianLinkStatusBadge status={link.status} />
                 </div>
-                <GuardianLinkStatusBadge status={link.status} />
+                <button
+                  type="button"
+                  className="ax-btn ax-btn--outline ax-btn--lg ax-btn--block"
+                  onClick={() => {
+                    setActionError(null);
+                    setDialog({ kind: 'cancel-invite', link });
+                  }}
+                >
+                  Annuler l&rsquo;invitation
+                </button>
               </div>
             </section>
           ))}
@@ -351,6 +364,28 @@ export function PatientTuteurs() {
           void runAction(
             () => revokeClinicalConsent(dialog.link.id),
             `${dialog.link.guardian_name} ne voit plus vos ordonnances.`,
+          );
+        }}
+        onClose={closeDialog}
+      />
+
+      {/* cancel a SENT invitation — same endpoint as revoke, but the person
+          never was a guardian, so no anxious wording. The backend keeps the
+          revoked row (unique guardian/patient), so re-inviting the SAME
+          person is not possible yet — the modal says it honestly. */}
+      <ConfirmModal
+        open={dialog?.kind === 'cancel-invite'}
+        title="Annuler cette invitation ?"
+        message="L'invitation sera annulée. À savoir : vous ne pourrez pas ré-inviter cette personne pour le moment."
+        confirmLabel="Oui, annuler l'invitation"
+        cancelLabel="Garder l'invitation"
+        busy={busy}
+        error={actionError}
+        onConfirm={() => {
+          if (dialog?.kind !== 'cancel-invite') return;
+          void runAction(
+            () => revokeGuardianLink(dialog.link.id),
+            "L'invitation a été annulée.",
           );
         }}
         onClose={closeDialog}

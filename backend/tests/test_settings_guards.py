@@ -51,6 +51,21 @@ class TestPspBootGuards:
         assert "PSP_WEBHOOK_SECRET" in result.stderr
 
 
+class TestPspIntentStaleGuard:
+    """ADR 0009 addendum — a null/negative purge window would make the beat
+    task cancel PaymentIntents that are still live: refuse to boot."""
+
+    def test_zero_stale_hours_refuses_to_boot(self):
+        result = import_settings(DEBUG="True", PSP_INTENT_STALE_HOURS="0")
+        assert result.returncode != 0
+        assert "ImproperlyConfigured" in result.stderr
+        assert "PSP_INTENT_STALE_HOURS" in result.stderr
+
+    def test_valid_stale_hours_boots(self):
+        result = import_settings(DEBUG="True", PSP_INTENT_STALE_HOURS="6")
+        assert result.returncode == 0, result.stderr
+
+
 class TestSmsBootGuards:
     """ADR 0010 — a deployed instance with a non-sending SMS backend would
     silently strand every OTP login: same fail-fast posture as the PSP."""

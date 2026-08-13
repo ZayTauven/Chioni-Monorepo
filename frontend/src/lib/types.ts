@@ -227,6 +227,8 @@ export interface PaymentRequestPatient {
   status: PaymentRequestStatus;
   lines: PaymentRequestLinePatient[];
   shared_with_links: number[];
+  /** Set by the cash-in webhook — the REAL payment date (« payée par un proche le … »). */
+  paid_at: string | null;
   patient_acknowledged_at: string | null;
   created_at: string;
 }
@@ -261,6 +263,8 @@ export interface PaymentRequestGuardian {
   center_name: string;
   total_kmf: string;
   status: PaymentRequestStatus;
+  /** Set by the cash-in webhook — the REAL payment date. */
+  paid_at: string | null;
   lines: PaymentRequestLineGuardian[];
   created_at: string;
 }
@@ -347,6 +351,18 @@ export interface Invoice {
   created_at: string;
 }
 
+/**
+ * Guardian link as the CENTER sees it (desk-share routing, BILLING roles).
+ * Administrative minimum by design: ACTIVE links only, never a phone number
+ * (`guardian_name` may be a masked display name like « +336••••••78 » for a
+ * guardian without a recorded name), never scopes nor history.
+ */
+export interface GuardianLinkCenter {
+  id: number;
+  guardian_name: string;
+  relationship: Relationship;
+}
+
 export interface PaymentRequestShare {
   id: number;
   guardian_link: number;
@@ -360,6 +376,8 @@ export interface PaymentRequestStaff {
   total_kmf: string;
   status: PaymentRequestStatus;
   created_by: number;
+  /** Set by the cash-in webhook — the REAL payment date. */
+  paid_at: string | null;
   patient_acknowledged_at: string | null;
   shares: PaymentRequestShare[];
   created_at: string;

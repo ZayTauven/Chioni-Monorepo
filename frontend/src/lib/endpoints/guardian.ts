@@ -63,6 +63,15 @@ export function acceptInvitation(linkId: number): Promise<GuardianLinkGuardian> 
   return apiFetch(`/guardian/invitations/${linkId}/accept/`, { method: 'POST' });
 }
 
+/**
+ * Definitive refusal of an invitation — the link becomes `revoque` (FINAL:
+ * a new relationship requires a brand-new invitation). 400 if no longer
+ * pending, 404 if not this guardian's invitation.
+ */
+export function declineInvitation(linkId: number): Promise<GuardianLinkGuardian> {
+  return apiFetch(`/guardian/invitations/${linkId}/decline/`, { method: 'POST' });
+}
+
 export function revokeLink(linkId: number): Promise<GuardianLinkGuardian> {
   return apiFetch(`/guardian/links/${linkId}/revoke/`, { method: 'POST' });
 }

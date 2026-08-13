@@ -6,12 +6,12 @@
  * soin confirmé → clôturée ; litige en dérivation), actions par étape selon
  * le rôle, partages existants, accusé patient.
  *
- * PARTAGE : le backend n'offre AUCUNE route au staff pour découvrir les liens
- * de tutelle d'un patient (vérifié dans apps/patients/urls.py) — le partage à
- * l'initiative du centre est donc impossible à construire honnêtement. L'écran
- * l'assume : les partages existants sont montrés comme information (avec
- * retrait possible, les ids étant connus), et un texte explique que le patient
- * choisit ses tuteurs depuis son espace.
+ * PARTAGE AU GUICHET : `GET /centers/{c}/patients/{pk}/guardian-links/`
+ * (rôles BILLING) liste les liens ACTIFS du patient — minimum administratif
+ * (nom d'affichage + relation, jamais de téléphone). Ce partage existe pour
+ * le patient sans smartphone qui désigne son proche au guichet : la modal le
+ * rappelle (« à faire avec l'accord du patient présent »). Le patient reste
+ * maître de ses tuteurs depuis son espace.
  *
  * REÇU : l'API ne propose pas de relecture des reçus côté centre — le reçu
  * retourné par `close/` (201) est affiché immédiatement en modal.
@@ -27,17 +27,25 @@ import {
   getInvoice,
   getPatient,
   getPaymentRequest,
+  listPatientGuardianLinks,
   sendPaymentRequest,
+  sharePaymentRequest,
   unsharePaymentRequest,
 } from '@/lib/endpoints/centers';
 import {
   PAYMENT_REQUEST_STATUS_LABELS,
+  RELATIONSHIP_LABELS,
   formatDate,
   formatDateTime,
   formatEur,
   formatKmf,
 } from '@/lib/labels';
-import type { PaymentRequestStatus, PaymentRequestStaff, Receipt } from '@/lib/types';
+import type {
+  GuardianLinkCenter,
+  PaymentRequestStatus,
+  PaymentRequestStaff,
+  Receipt,
+} from '@/lib/types';
 import {
   BILLING_ROLES,
   CARE_CONFIRM_ROLES,
@@ -46,6 +54,7 @@ import {
   ErrorAlert,
   IconArrowLeft,
   IconCheck,
+  IconPlus,
   IconReceipt,
   IconSend,
   IconUserOff,
@@ -67,7 +76,7 @@ const STEPS: Array<{ status: PaymentRequestStatus; title: string; hint: string }
   { status: 'cloturee', title: 'Clôturée', hint: 'Reçu émis — le cercle de confiance est bouclé.' },
 ];
 
-function StatusTimeline({ status }: { status: PaymentRequestStatus }) {
+function StatusTimeline({ status, paidAt }: { status: PaymentRequestStatus; paidAt: string | null }) {
   const currentIndex = STEPS.findIndex((s) => s.status === status);
   const inDispute = status === 'litige';
   return (
@@ -94,6 +103,10 @@ function StatusTimeline({ status }: { status: PaymentRequestStatus }) {
                 {step.title}
                 {current && ' — étape actuelle'}
               </p>
+              {/* The REAL payment date (webhook), shown once the step is reached. */}
+              {step.status === 'payee' && (done || current) && paidAt && (
+                <span className="ax-timeline__time">Payée le {formatDate(paidAt)}</span>
+              )}
               <span className="ax-timeline__body">{step.hint}</span>
             </div>
           </li>
@@ -161,6 +174,79 @@ function ReceiptModal({ receipt, onClose }: { receipt: Receipt; onClose: () => v
   );
 }
 
+/* ── desk-share modal (BILLING roles — the patient designates their guardian) ── */
+
+function ShareModal({
+  links,
+  busy,
+  error,
+  onShare,
+  onClose,
+}: {
+  links: GuardianLinkCenter[];
+  busy: boolean;
+  error: ApiError | null;
+  onShare: (linkId: number) => void;
+  onClose: () => void;
+}) {
+  const [selected, setSelected] = useState<number | ''>(links.length === 1 ? links[0].id : '');
+  return (
+    <Modal
+      title="Partager avec un tuteur"
+      onClose={onClose}
+      footer={
+        <>
+          <button type="button" className="ax-btn ax-btn--ghost" disabled={busy} onClick={onClose}>
+            <span className="ax-btn__label">Annuler</span>
+          </button>
+          <button
+            type="button"
+            className="ax-btn ax-btn--primary"
+            disabled={busy || selected === ''}
+            onClick={() => {
+              if (selected !== '') onShare(selected);
+            }}
+          >
+            <span className="ax-btn__label">{busy ? 'Partage…' : 'Partager'}</span>
+          </button>
+        </>
+      }
+    >
+      <div className="ax-alert ax-alert--info" role="note">
+        <div className="ax-alert__content">
+          <p className="ax-alert__message">
+            À faire avec l&apos;accord du patient présent au guichet : c&apos;est lui qui désigne son proche.
+          </p>
+        </div>
+      </div>
+      <div className="ax-field">
+        <label className="ax-field__label" htmlFor="pr-share-link">
+          Tuteur du patient
+        </label>
+        <select
+          id="pr-share-link"
+          className="ax-select"
+          value={selected}
+          onChange={(e) => setSelected(e.target.value === '' ? '' : Number(e.target.value))}
+        >
+          <option value="" disabled>
+            Choisir…
+          </option>
+          {links.map((link) => (
+            <option key={link.id} value={link.id}>
+              {link.guardian_name} — {RELATIONSHIP_LABELS[link.relationship]}
+            </option>
+          ))}
+        </select>
+        <p className="ax-field__hint">
+          Le proche verra le montant à payer et la nature générique des actes — jamais le dossier médical.
+        </p>
+      </div>
+      {error && <ErrorAlert error={error} />}
+    </Modal>
+  );
+}
+
 /* ── screen ── */
 
 export function PaymentRequestDetail({ requestId }: { requestId: number }) {
@@ -181,9 +267,22 @@ export function PaymentRequestDetail({ requestId }: { requestId: number }) {
     [centerId, invoice.data?.patient],
   );
 
+  // ACTIVE guardian links of the invoiced patient — the endpoint is BILLING
+  // only (403 otherwise), so the fetch is gated on the caller's role.
+  const patientId = invoice.data?.patient ?? null;
+  const guardianLinks = useAsync(
+    () =>
+      billing && patientId !== null
+        ? listPatientGuardianLinks(centerId, patientId)
+        : Promise.resolve(null),
+    [centerId, billing, patientId],
+  );
+
   const [actionError, setActionError] = useState<ApiError | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [receipt, setReceipt] = useState<Receipt | null>(null);
+  const [shareOpen, setShareOpen] = useState(false);
+  const [shareError, setShareError] = useState<ApiError | null>(null);
 
   const run = async (key: string, action: () => Promise<PaymentRequestStaff>) => {
     setBusy(key);
@@ -208,6 +307,20 @@ export function PaymentRequestDetail({ requestId }: { requestId: number }) {
       setFresh({ ...request, status: 'cloturee' });
     } catch (err) {
       setActionError(toApiError(err));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const doShare = async (guardianLinkId: number) => {
+    if (!request) return;
+    setBusy('share');
+    setShareError(null);
+    try {
+      setFresh(await sharePaymentRequest(centerId, request.id, guardianLinkId));
+      setShareOpen(false);
+    } catch (err) {
+      setShareError(toApiError(err));
     } finally {
       setBusy(null);
     }
@@ -249,6 +362,22 @@ export function PaymentRequestDetail({ requestId }: { requestId: number }) {
     : invoice.data
       ? `Patient n° ${invoice.data.patient}`
       : '…';
+
+  /* — desk-share derivations (BILLING) — */
+  const activeLinks = guardianLinks.data?.results ?? [];
+  const sharedLinkIds = new Set(request.shares.map((s) => s.guardian_link));
+  const shareableLinks = activeLinks.filter((l) => !sharedLinkIds.has(l.id));
+  const canManageShares = billing && (request.status === 'brouillon' || request.status === 'envoyee');
+  const linksReady = billing && !guardianLinks.loading && guardianLinks.error === null && guardianLinks.data !== null;
+
+  /** Display name of a share — resolved from the links list when the link is
+      still active, honest fallback otherwise (e.g. link revoked since). */
+  const shareLabel = (guardianLinkId: number): string => {
+    const link = activeLinks.find((l) => l.id === guardianLinkId);
+    return link
+      ? `${link.guardian_name} — ${RELATIONSHIP_LABELS[link.relationship]}`
+      : `Lien de tutelle n° ${guardianLinkId}`;
+  };
 
   return (
     <>
@@ -304,7 +433,10 @@ export function PaymentRequestDetail({ requestId }: { requestId: number }) {
           <div className="ax-alert__content">
             <p className="ax-alert__message">
               Cette demande n&apos;est partagée avec aucun proche pour l&apos;instant : l&apos;envoi sera refusé tant qu&apos;un
-              partage n&apos;existe pas. Le patient choisit ses tuteurs et partage ses demandes depuis son espace.
+              partage n&apos;existe pas.{' '}
+              {billing
+                ? 'Partagez-la avec un tuteur du patient (avec son accord), ou le patient peut le faire depuis son espace.'
+                : 'Le patient choisit ses tuteurs et partage ses demandes depuis son espace.'}
             </p>
           </div>
         </div>
@@ -370,13 +502,13 @@ export function PaymentRequestDetail({ requestId }: { requestId: number }) {
                     <li key={share.id} className="ax-list__row">
                       <span className="ax-list__content">
                         <span className="ax-list__title" style={{ fontWeight: 'var(--ax-weight-medium)' }}>
-                          Lien de tutelle n° {share.guardian_link}
+                          {shareLabel(share.guardian_link)}
                         </span>
                         <span style={{ display: 'block', fontSize: 'var(--ax-text-xs)', color: 'var(--ax-text-subtle)' }}>
                           Partagé le {formatDate(share.shared_at)}
                         </span>
                       </span>
-                      {billing && (request.status === 'brouillon' || request.status === 'envoyee') && (
+                      {canManageShares && (
                         <span className="ax-list__trailing">
                           <button
                             type="button"
@@ -397,10 +529,45 @@ export function PaymentRequestDetail({ requestId }: { requestId: number }) {
                   ))}
                 </ul>
               )}
-              <p style={{ margin: 'var(--ax-space-3) 0 0', fontSize: 'var(--ax-text-xs)', color: 'var(--ax-text-muted)' }}>
-                Le patient choisit ses tuteurs et partage ses demandes depuis son espace — le centre ne peut pas désigner
-                un proche à sa place.
-              </p>
+
+              {/* Desk share — BILLING roles, the patient designates their guardian. */}
+              {canManageShares && guardianLinks.error && (
+                <div style={{ marginTop: 'var(--ax-space-3)' }}>
+                  <ErrorAlert error={guardianLinks.error} onRetry={guardianLinks.reload} />
+                </div>
+              )}
+              {canManageShares && linksReady && activeLinks.length === 0 && (
+                <p style={{ margin: 'var(--ax-space-3) 0 0', fontSize: 'var(--ax-text-sm)', color: 'var(--ax-text-muted)' }}>
+                  Ce patient n&apos;a pas encore de tuteur actif — il peut en inviter un depuis son espace, ou vous
+                  pouvez enregistrer un proche à la création du dossier.
+                </p>
+              )}
+              {canManageShares && linksReady && shareableLinks.length > 0 && (
+                <p style={{ margin: 'var(--ax-space-3) 0 0' }}>
+                  <button
+                    type="button"
+                    className="ax-btn ax-btn--secondary ax-btn--sm"
+                    onClick={() => {
+                      setShareError(null);
+                      setShareOpen(true);
+                    }}
+                    disabled={busy !== null}
+                  >
+                    <IconPlus />
+                    <span className="ax-btn__label">Partager avec un tuteur</span>
+                  </button>
+                </p>
+              )}
+              {canManageShares && linksReady && activeLinks.length > 0 && shareableLinks.length === 0 && (
+                <p style={{ margin: 'var(--ax-space-3) 0 0', fontSize: 'var(--ax-text-xs)', color: 'var(--ax-text-muted)' }}>
+                  Tous les tuteurs actifs de ce patient voient déjà cette demande.
+                </p>
+              )}
+              {!billing && (
+                <p style={{ margin: 'var(--ax-space-3) 0 0', fontSize: 'var(--ax-text-xs)', color: 'var(--ax-text-muted)' }}>
+                  Le patient choisit ses tuteurs et partage ses demandes depuis son espace.
+                </p>
+              )}
             </div>
           </div>
         </section>
@@ -414,7 +581,7 @@ export function PaymentRequestDetail({ requestId }: { requestId: number }) {
             </div>
           </div>
           <div className="ax-card__body" style={{ paddingTop: 0 }}>
-            <StatusTimeline status={request.status} />
+            <StatusTimeline status={request.status} paidAt={request.paid_at} />
             {request.status === 'litige' && (
               <p style={{ margin: 'var(--ax-space-4) 0 0' }}>
                 <Link href="/centre/litiges" className="ax-btn ax-btn--secondary ax-btn--sm">
@@ -427,6 +594,17 @@ export function PaymentRequestDetail({ requestId }: { requestId: number }) {
       </div>
 
       {receipt && <ReceiptModal receipt={receipt} onClose={() => setReceipt(null)} />}
+      {shareOpen && (
+        <ShareModal
+          links={shareableLinks}
+          busy={busy === 'share'}
+          error={shareError}
+          onShare={(id) => void doShare(id)}
+          onClose={() => {
+            if (busy !== 'share') setShareOpen(false);
+          }}
+        />
+      )}
     </>
   );
 }

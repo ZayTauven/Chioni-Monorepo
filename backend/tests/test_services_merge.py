@@ -212,6 +212,72 @@ class TestMergeReattachment:
         assert link.status == GuardianLink.Status.REVOKED
 
 
+class TestUserTransferClaimantGate:
+    """Troisième porte de PENDING_CLAIMANT_CONFIRMATION (revue guardian de
+    l'incrément notifications, 2026-08-13) : quand la fusion TRANSFÈRE le
+    titulaire de la source revendiquée vers la cible, les liens survivants
+    de la cible n'ont jamais été confirmés par lui — ils doivent repasser
+    par la porte, exactement comme à la revendication OTP. Avant ce
+    correctif, un lien ACTIF semé sur la cible non revendiquée gardait sa
+    visibilité « paiements » sur le profil fraîchement revendiqué."""
+
+    def test_active_link_on_the_target_is_suspended_by_the_transfer(self):
+        center, director = merge_ctx()
+        _gu, guardian = make_guardian_user()
+        target = make_patient()
+        link = make_active_link(guardian, target)
+        Consent.objects.create(
+            patient=target, guardian_link=link,
+            scope=Consent.Scope.CLINICAL_DETAIL,
+        )
+        source = make_claimed_patient()
+        titulaire = source.user
+
+        merge_profiles(source=source, target=target, actor=director, center=center)
+
+        link.refresh_from_db()
+        target.refresh_from_db()
+        assert target.user == titulaire
+        assert link.status == GuardianLink.Status.PENDING_CLAIMANT_CONFIRMATION
+        # Scopes révoqués : plus AUCUNE visibilité tant que le titulaire
+        # n'a pas confirmé (le consentement clinique ne ressuscite pas).
+        assert Consent.objects.active_scopes(link) == frozenset()
+
+    def test_links_moved_from_the_claimed_source_repass_the_gate_too(self):
+        """Sur-confirmation assumée : les liens que le titulaire avait déjà
+        confirmés sur la source repassent par la porte sur la cible — un
+        écran de confirmation, jamais un accès silencieux."""
+        center, director = merge_ctx()
+        source = make_claimed_patient()
+        _gu, guardian = make_guardian_user()
+        source_link = make_active_link(guardian, source)
+        target = make_patient()
+
+        merge_profiles(source=source, target=target, actor=director, center=center)
+
+        source_link.refresh_from_db()
+        assert source_link.patient_id == target.pk
+        assert (
+            source_link.status
+            == GuardianLink.Status.PENDING_CLAIMANT_CONFIRMATION
+        )
+
+    def test_merge_between_two_unclaimed_profiles_keeps_the_door_a_link_active(self):
+        """Cas Mariama (hors de la troisième porte) : personne ne revendique,
+        le tuteur continue de gérer le dossier — le lien reste ACTIF."""
+        center, director = merge_ctx()
+        _gu, guardian = make_guardian_user()
+        source = make_patient()
+        link = make_active_link(guardian, source)
+        target = make_patient()
+
+        merge_profiles(source=source, target=target, actor=director, center=center)
+
+        link.refresh_from_db()
+        assert link.patient_id == target.pk
+        assert link.status == GuardianLink.Status.ACTIVE
+
+
 class TestClaimService:
     def test_claim_revokes_links_where_the_claimer_was_the_guardian(self):
         guardian_user, guardian = make_guardian_user()

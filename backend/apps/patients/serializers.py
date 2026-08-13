@@ -36,6 +36,51 @@ class PatientStaffSerializer(serializers.ModelSerializer):
         read_only_fields = ["id", "claim_status", "created_at"]
 
 
+def _mask_phone(phone: str) -> str:
+    """Mask a phone for staff display: recognisable, never harvestable.
+
+    Keeps the international prefix and the LAST TWO digits — enough for the
+    desk to confirm with the patient (« votre proche au numéro finissant
+    par 78 ? »), never enough to reconstruct the number.
+    """
+    if len(phone) <= 6:
+        return "•" * len(phone)
+    return f"{phone[:4]}{'•' * (len(phone) - 6)}{phone[-2:]}"
+
+
+class GuardianLinkStaffRoutingSerializer(serializers.ModelSerializer):
+    """ACTIVE guardian links of a patient, for the DESK to route a share.
+
+    Strict administrative minimum (billing staff only): ``id`` (the share
+    target), a display name, the relationship. Deliberately NO phone (a
+    nameless shadow guardian falls back to a MASKED phone — the desk must
+    never harvest diaspora numbers through this route), NO status (only
+    active links are ever listed) and NO consent scopes: whether a
+    clinical consent exists is the PATIENT's information, and the payments
+    scope is implied by the link being shareable at all.
+    """
+
+    guardian_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = GuardianLink
+        fields = ["id", "guardian_name", "relationship"]
+        read_only_fields = fields
+
+    def get_guardian_name(self, link) -> str:
+        user = link.guardian.user
+        full = f"{user.first_name} {user.last_name}".strip()
+        if full:
+            return full
+        # Same display intent as GuardianLinkPatientSerializer, except the
+        # phone fallback is MASKED (the patient knows their guardian's
+        # number; the desk has no need for it). The username is never used
+        # here: shadow accounts are named « invite-<phone> » (leak).
+        if user.phone:
+            return _mask_phone(user.phone)
+        return f"Tuteur n°{link.guardian_id}"
+
+
 class PatientStaffCreateSerializer(serializers.ModelSerializer):
     """Desk creation (porte C) + optional guardian attachment by phone.
 

@@ -10,6 +10,7 @@ import type {
   EncounterAct,
   EncounterStatus,
   GenericCategory,
+  GuardianLinkCenter,
   HealthCenter,
   Invoice,
   Paginated,
@@ -106,6 +107,21 @@ export function updatePatient(
   payload: Partial<Pick<Patient, 'first_name' | 'last_name' | 'birth_date' | 'sex' | 'phone' | 'city'>>,
 ): Promise<Patient> {
   return apiFetch(`/centers/${centerId}/patients/${patientId}/`, { method: 'PATCH', body: payload });
+}
+
+/**
+ * ACTIVE guardian links of a patient — desk-share routing (BILLING roles only,
+ * patient outside the center's perimeter → 404). Administrative minimum:
+ * `{id, guardian_name, relationship}`, never a phone/scopes/history. The `id`
+ * feeds `sharePaymentRequest()` — the case of the patient without a smartphone
+ * who designates their guardian at the desk.
+ */
+export function listPatientGuardianLinks(
+  centerId: number,
+  patientId: number,
+  page = 1,
+): Promise<Paginated<GuardianLinkCenter>> {
+  return apiFetch(`/centers/${centerId}/patients/${patientId}/guardian-links/?page=${page}`);
 }
 
 export function mergePatients(
