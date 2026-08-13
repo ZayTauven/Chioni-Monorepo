@@ -34,10 +34,23 @@ Le téléphone vérifié par OTP est l'identité pivot (ADR 0001) et le SMS est 
 
 Plusieurs profils éligibles (plusieurs tuteurs ont déclaré le même protégé) → le plus ancien est revendiqué, les autres restent des doublons résolus par la fusion (ADR 0001/0002). Aucune structure ne rattache aujourd'hui un user ombre à un profil patient ; si un flux futur le fait, il devra repasser par cette ADR.
 
+### La revendication remet tous les liens de tutelle en attente de confirmation (OTP-1, revue guardian)
+
+**Règle** : la revendication d'un profil par le patient met **tous ses liens de tutelle survivants en attente de confirmation explicite** (`GuardianLink.Status.PENDING_CLAIMANT_CONFIRMATION`) ; le téléphone déclaratif n'autorise **jamais** un lien actif sans consentement du titulaire.
+
+Motivation (cœur éthique du produit — « aider, jamais surveiller ») : `create_protege` (porte A) pose un lien ACTIVE d'emblée, ce qui est **légitime tant que le profil n'est pas revendiqué** (« Mariama, sans smartphone, gérée par sa fille » : le tuteur gère le dossier administratif). Mais laissé actif au moment de l'auto-claim, ce lien donnait à quiconque connaît un numéro — en pré-amorçant un profil « protégé » avec ce numéro — une visibilité `paiements` (montants, nature générique des soins, reçus) sur la victime à sa première connexion, **jamais consentie**. La garde du §3 authentifie le revendiquant, jamais le créateur du profil.
+
+- Au moment de l'auto-claim, `claim_profile` appelle `GuardianLink.suspend_for_claimant_confirmation()` sur tout lien non révoqué : passage en `PENDING_CLAIMANT_CONFIRMATION` (scope **∅** — `Consent.active_scopes()` retourne l'ensemble vide hors statut ACTIF, et `guardian_links_with_scope` filtre déjà sur ACTIF, donc double protection automatique) ; les consentements actifs éventuels sont révoqués (pas de résurrection silencieuse).
+- Le patient voit ces liens dans `GET /patients/me/guardians/` (statut + `scopes: []`) et agit : `POST /patients/me/guardians/{link}/confirm/` (→ ACTIF, scope paiements minimal) ou `/decline/` (→ RÉVOQUÉ, définitif). Endpoints audités (`guardian_link.pending_confirmation`, `.confirmed`, `.declined`).
+- Ceci s'applique **aussi** au vrai tuteur familial (Nassim) — c'est voulu : à sa première connexion, le patient confirme « oui, c'est bien mon proche qui m'aide » (libellé rassurant côté frontend : « Nassim souhaite vous aider à payer vos soins. Est-ce bien votre proche ? »). Tant que non confirmé, le tuteur n'a **aucun** accès aux données de paiement du profil revendiqué, et le protégé disparaît même de sa liste `/guardian/proteges/`.
+- `PENDING_CLAIMANT_CONFIRMATION` est un état distinct de `INVITATION_SENT` (qui vise l'acceptation par le *tuteur*) : ici c'est le *titulaire* qui confirme. Transition compatible avec le trigger DB « lien révoqué définitif » (elle ne sort jamais de `revoque`).
+- **La porte de confirmation couvre AUSSI la fusion (revue guardian, 2e passe).** `merge_profiles` déplaçait un lien vers la cible en conservant son statut : un orphelin ACTIVE (semé par un tiers) fusionné dans le profil **revendiqué** de la victime rouvrait OTP-1 par la porte fusion (endpoint fusion exposé au staff en phase A). Correctif : lors du déplacement d'un lien vers une cible dont le profil est revendiqué (`target.user_id` non NULL), le lien passe par `suspend_for_claimant_confirmation()` exactement comme à la revendication (→ `PENDING_CLAIMANT_CONFIRMATION`, consentements révoqués, audit `guardian_link.pending_confirmation`), et le titulaire le confirme via l'endpoint existant. Cas traités : `REVOKED` intact (définitif, trigger DB), déjà `PENDING` idempotent (sauté), et **fusion vers une cible non revendiquée inchangée** (le tuteur continue de gérer le dossier administratif). Règle générale : *toute arrivée d'un lien de tutelle sur un profil revendiqué — revendication OU fusion — exige la confirmation explicite du titulaire.*
+
 ### Anti-énumération et anti-oracle
 
 - `request` : réponse 200 au corps **constant**, que le téléphone corresponde à un compte, un compte ombre, rien, ou une pierre tombale. Seul un format invalide produit un 400.
 - `verify` : tout échec (téléphone inconnu, code faux, expiré, consommé, mort, compte désactivé) → le MÊME 400 « Code invalide ou expiré. ».
+- **Oracle temporel comptes désactivés fermé (OTP-2, revue guardian)** : le chemin « compte désactivé/banni » faisait auparavant moins de travail (ni `OtpCode`, ni SMS), donnant un oracle de temps de réponse malgré le corps identique. Désormais il fait le **travail équivalent** — il génère, invalide et **stocke** un code jetable (mêmes écritures DB + HMAC) — seule la **remise du SMS** est omise (ne jamais harceler un numéro banni ; un code stocké mais non remis ne peut jamais connecter, `verify` refusant les comptes désactivés).
 
 ### Throttling multicouche (le SMS coûte et peut harceler)
 
@@ -55,8 +68,11 @@ Chaque étape est journalisée (`auth.otp_requested`, `auth.otp_verified`, `auth
 
 ## Conséquences
 
-- Le frontend patient/tuteur branche `otp/request` + `otp/verify` et route avec le `me` retourné ; `two-step` de Vireo correspond à ce flux.
-- Le code transite par le broker Redis quand Celery est asynchrone (inhérent à l'envoi hors process) : le broker fait partie du périmètre de confiance, à durcir au déploiement (auth Redis, réseau privé).
-- Les lignes `OtpCode` mortes (expirées/consommées) restent en base : une purge planifiée (Celery beat) est un petit chantier d'hygiène à prévoir.
-- Latéral assumé : le timing de `request` peut varier marginalement (pas d'envoi pour une pierre tombale) — le corps de réponse, lui, ne varie jamais ; à réévaluer si un chantier « timing uniforme » devient pertinent.
+- Le frontend patient/tuteur branche `otp/request` + `otp/verify` et route avec le `me` retourné ; `two-step` de Vireo correspond à ce flux. Il ajoute l'écran de **confirmation des liens de tutelle** juste après la première connexion (liste `PENDING_CLAIMANT_CONFIRMATION`, boutons confirmer/refuser, ton rassurant).
+- Les lignes `OtpCode` mortes (expirées/consommées/non remises) restent en base : une purge planifiée (Celery beat) est un petit chantier d'hygiène à prévoir.
 - La revendication d'un profil guichet (porte C) reste à concevoir côté centre (vérification en présentiel) — hors périmètre de cette ADR, volontairement.
+
+### Vigilances de déploiement (OTP-3 / OTP-4, revue guardian — pas de correction code)
+
+- **OTP-3 — le code transite par le broker Redis en async.** Inhérent à l'envoi hors process. Conf actuelle : `result_extended` n'est PAS activé (défaut Celery → les **arguments de tâche ne sont pas stockés** dans le backend de résultats), `task_send_sent_event` non activé, `CELERY_TASK_TRACK_STARTED` ne journalise pas les args. À maintenir au déploiement : **ne jamais activer `result_extended`/`task_send_sent_event` pour la tâche `accounts.send_sms`**, broker interne (réseau privé), **TLS** sur Redis, et **TTL court** sur les résultats/messages. Le broker fait partie du périmètre de confiance.
+- **OTP-4 — `phone_audit_ref` est corrélable si `SECRET_KEY` fuit.** Le pseudonyme est un HMAC clé `SECRET_KEY` : irréversible sans la clé, mais deux entrées d'un même numéro sont corrélables, et une fuite de `SECRET_KEY` permettrait un test par force brute sur un numéro suspecté. Consigne d'exploitation : **ne jamais co-exporter les journaux d'audit et `SECRET_KEY`** (secrets et logs dans des périmètres séparés) ; la rotation de `SECRET_KEY` casse la corrélation historique (acceptable).

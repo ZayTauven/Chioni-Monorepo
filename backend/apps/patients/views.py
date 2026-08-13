@@ -38,10 +38,12 @@ from apps.patients.serializers import (
 )
 from apps.patients.services import (
     accept_link,
+    confirm_guardian_link,
     create_guardian_profile,
     create_own_profile,
     create_patient_at_center,
     create_protege,
+    decline_guardian_link,
     grant_clinical_consent,
     invite_guardian,
     merge_profiles,
@@ -251,6 +253,35 @@ class PatientRevokeLinkView(_PatientOwnLinkMixin, APIView):
     def post(self, request, link_pk):
         link = self.get_link(request, link_pk)
         revoke_link(link=link, actor=request.user)
+        return Response(GuardianLinkPatientSerializer(link).data)
+
+
+class PatientConfirmLinkView(_PatientOwnLinkMixin, APIView):
+    """POST /patients/me/guardians/{link_pk}/confirm/ — OTP-1.
+
+    After claiming their profile, the patient confirms a guardianship left
+    pending: « Est-ce bien votre proche ? » → the link (re)activates with
+    the minimal payments scope only.
+    """
+
+    @extend_schema(request=None, responses=GuardianLinkPatientSerializer)
+    def post(self, request, link_pk):
+        link = self.get_link(request, link_pk)
+        confirm_guardian_link(patient_user=request.user, link=link)
+        return Response(GuardianLinkPatientSerializer(link).data)
+
+
+class PatientDeclineLinkView(_PatientOwnLinkMixin, APIView):
+    """POST /patients/me/guardians/{link_pk}/decline/ — OTP-1.
+
+    The patient refuses a pending guardianship (e.g. a stranger who
+    pre-seeded a profile with their phone): the link is revoked, final.
+    """
+
+    @extend_schema(request=None, responses=GuardianLinkPatientSerializer)
+    def post(self, request, link_pk):
+        link = self.get_link(request, link_pk)
+        decline_guardian_link(patient_user=request.user, link=link)
         return Response(GuardianLinkPatientSerializer(link).data)
 
 

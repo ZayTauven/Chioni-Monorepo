@@ -17,7 +17,12 @@ from apps.centers.services import add_staff_member
 from apps.patients.models import GuardianLink, PatientProfile
 from apps.patients.services import create_protege
 
-from .api_helpers import make_center_with_director, make_guardian_user
+from .api_helpers import (
+    client_for,
+    make_center_with_director,
+    make_claimed_patient,
+    make_guardian_user,
+)
 from .factories import make_user
 
 pytestmark = pytest.mark.django_db
@@ -273,6 +278,88 @@ class TestOtpThrottling:
         assert client.post(VERIFY_URL, {"phone": PHONE, "code": "1"}).status_code == 400
         assert client.post(VERIFY_URL, {"phone": PHONE, "code": "1"}).status_code == 429
         assert client.post(REQUEST_URL, {"phone": PHONE}).status_code == 200
+
+
+class TestClaimantConfirmationApi:
+    """OTP-1 end-to-end over HTTP: claim suspends links, the patient
+    confirms/declines, and a suspended link gives the guardian nothing."""
+
+    def _login(self, phone, sms_outbox):
+        client = APIClient()
+        client.post(REQUEST_URL, {"phone": phone})
+        response = client.post(
+            VERIFY_URL, {"phone": phone, "code": code_from(sms_outbox)}
+        )
+        assert response.status_code == 200
+        client.credentials(HTTP_AUTHORIZATION=f"Bearer {response.data['access']}")
+        return client, response.data["me"]
+
+    def _seed_door_a(self, phone):
+        guardian_user, _ = make_guardian_user()
+        protege, link = create_protege(
+            guardian_user=guardian_user,
+            relationship=GuardianLink.Relationship.CHILD,
+            first_name="Mariama", last_name="Ahamada", phone=phone,
+        )
+        return guardian_user, protege, link
+
+    def test_suspended_link_is_invisible_to_the_guardian_until_confirmed(
+        self, sms_outbox
+    ):
+        guardian_user, _protege, link = self._seed_door_a(PHONE)
+
+        # Guardian sees the protégé WHILE the profile is unclaimed.
+        before = APIClient()
+        before.force_authenticate(guardian_user)
+        assert len(before.get("/api/v1/guardian/proteges/").data["results"]) == 1
+
+        # The patient claims by OTP → the link is suspended → invisible.
+        patient_client, me = self._login(PHONE, sms_outbox)
+        assert me["patient_profile"]["claim_status"] == "actif"
+        mid = APIClient()
+        mid.force_authenticate(guardian_user)
+        assert mid.get("/api/v1/guardian/proteges/").data["results"] == []
+
+        # The patient sees it pending and confirms it.
+        rows = patient_client.get("/api/v1/patients/me/guardians/").data["results"]
+        (row,) = rows
+        assert row["status"] == "attente_confirmation_titulaire"
+        assert row["scopes"] == []
+        confirm = patient_client.post(
+            f"/api/v1/patients/me/guardians/{link.pk}/confirm/"
+        )
+        assert confirm.status_code == 200
+        assert confirm.data["status"] == "actif"
+
+        # Now the guardian sees the protégé again (payments scope).
+        after = APIClient()
+        after.force_authenticate(guardian_user)
+        assert len(after.get("/api/v1/guardian/proteges/").data["results"]) == 1
+
+    def test_patient_declines_a_pre_seeded_link(self, sms_outbox):
+        guardian_user, _protege, link = self._seed_door_a(PHONE)
+        patient_client, _me = self._login(PHONE, sms_outbox)
+
+        decline = patient_client.post(
+            f"/api/v1/patients/me/guardians/{link.pk}/decline/"
+        )
+        assert decline.status_code == 200
+        assert decline.data["status"] == "revoque"
+
+        # The stranger is cut off for good.
+        guardian_client = APIClient()
+        guardian_client.force_authenticate(guardian_user)
+        assert guardian_client.get("/api/v1/guardian/proteges/").data["results"] == []
+
+    def test_cross_patient_confirm_is_404(self, sms_outbox):
+        _gu, _protege, link = self._seed_door_a(PHONE)
+        self._login(PHONE, sms_outbox)  # legit owner claims
+
+        intruder = make_claimed_patient()
+        response = client_for(intruder.user).post(
+            f"/api/v1/patients/me/guardians/{link.pk}/confirm/"
+        )
+        assert response.status_code == 404  # invisible, not just forbidden
 
 
 class TestOtpAuditHygiene:

@@ -20,6 +20,8 @@ from apps.patients.views import (
     MyGuardianLinksView,
     MyGuardianProfileView,
     MyPatientProfileView,
+    PatientConfirmLinkView,
+    PatientDeclineLinkView,
     PatientRevokeLinkView,
     ProtegeListCreateView,
 )
@@ -59,6 +61,16 @@ urlpatterns = [
         "patients/me/guardians/<int:link_pk>/revoke/",
         PatientRevokeLinkView.as_view(),
         name="patient-revoke-link",
+    ),
+    path(
+        "patients/me/guardians/<int:link_pk>/confirm/",
+        PatientConfirmLinkView.as_view(),
+        name="patient-confirm-link",
+    ),
+    path(
+        "patients/me/guardians/<int:link_pk>/decline/",
+        PatientDeclineLinkView.as_view(),
+        name="patient-decline-link",
     ),
     path(
         "patients/me/guardians/<int:link_pk>/consents/clinical/",

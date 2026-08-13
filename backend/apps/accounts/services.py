@@ -105,17 +105,16 @@ def request_otp(*, phone: str, purpose: str = OtpCode.Purpose.LOGIN) -> None:
     matches an account, a shadow account or nothing (door B creates the
     account at verify time, so there is almost always « something to do »).
 
-    The ONLY case where no SMS leaves: the phone belongs to a DEACTIVATED
-    account (RGPD tombstone / banned) — sending would be harassment and no
-    login can result. The response upstream still does not change.
+    OTP-2 (revue guardian): the ONLY case where no SMS leaves is a
+    DEACTIVATED account (RGPD tombstone / banned) — delivering would be
+    harassment and no login can result (verify blocks it anyway). To deny a
+    response-time oracle, that path still does the SAME work: it generates,
+    invalidates and STORES a throwaway code — only the delivery is skipped.
     """
     user = get_user_model().objects.filter(phone=phone).first()
-    if user is not None and not user.is_active:
-        audit(
-            actor=None, action=AuditAction.OTP_REQUESTED,
-            user_id=user.pk, purpose=str(purpose), sent=False,
-        )
-        return
+    # A banned/tombstone account never receives an SMS; every other phone
+    # (known-active or unknown) does. The stored code is identical work.
+    deliverable = user is None or user.is_active
 
     code = _generate_code()
     with transaction.atomic():
@@ -133,10 +132,13 @@ def request_otp(*, phone: str, purpose: str = OtpCode.Purpose.LOGIN) -> None:
         refs = {"user_id": user.pk} if user else {"phone_ref": phone_audit_ref(phone)}
         audit(
             actor=None, action=AuditAction.OTP_REQUESTED, target=otp,
-            otp_id=otp.pk, purpose=str(purpose), sent=True, **refs,
+            otp_id=otp.pk, purpose=str(purpose), sent=deliverable, **refs,
         )
-    # Outside the transaction: an SMS for a rolled-back code must not leave.
-    send_sms.delay(phone, OTP_SMS_TEMPLATE.format(code=code))
+    # Outside the transaction: an SMS for a rolled-back code must not leave;
+    # and a banned number is never messaged (a stored-but-undelivered code
+    # can never log in — verify refuses deactivated accounts).
+    if deliverable:
+        send_sms.delay(phone, OTP_SMS_TEMPLATE.format(code=code))
 
 
 # ---------------------------------------------------------------------------

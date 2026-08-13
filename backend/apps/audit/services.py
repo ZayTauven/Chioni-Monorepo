@@ -48,6 +48,12 @@ class AuditAction:
     LINK_CREATED = "guardian_link.created"
     LINK_ACCEPTED = "guardian_link.accepted"
     LINK_REVOKED = "guardian_link.revoked"
+    # OTP-1 — a claim suspends every surviving link until the patient
+    # confirms (or declines) it; the declarative phone never opens a live
+    # link without the titulaire's explicit consent.
+    LINK_PENDING_CONFIRMATION = "guardian_link.pending_confirmation"
+    LINK_CONFIRMED = "guardian_link.confirmed"
+    LINK_DECLINED = "guardian_link.declined"
 
     # Consents
     CONSENT_GRANTED = "consent.granted"

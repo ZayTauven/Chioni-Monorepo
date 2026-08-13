@@ -23,10 +23,13 @@ from apps.accounts.services import (
 from apps.audit.models import AuditLog
 from apps.audit.services import AuditAction
 from apps.centers.services import add_staff_member
+from apps.medical.models import Consent
 from apps.patients.models import GuardianLink, PatientProfile
 from apps.patients.services import (
+    confirm_guardian_link,
     create_patient_at_center,
     create_protege,
+    decline_guardian_link,
     get_or_create_shadow_user,
     invite_guardian,
     revoke_link,
@@ -77,15 +80,18 @@ class TestRequestOtp:
                 verify_otp(phone=PHONE, code=old_code)
         verify_otp(phone=PHONE, code=new_code)  # the NEW code still works
 
-    def test_no_sms_for_deactivated_account(self, sms_outbox):
+    def test_deactivated_account_stores_a_code_but_sends_no_sms(self, sms_outbox):
+        """OTP-2: equivalent work (a throwaway code is stored) but no SMS to a
+        banned number — no cheap path to time-probe a deactivated account."""
         user = make_user(phone=PHONE)
         user.is_active = False
         user.save(update_fields=["is_active"])
         request_otp(phone=PHONE)
-        assert sms_outbox == []
-        assert OtpCode.objects.count() == 0
+        assert sms_outbox == []  # never delivered to a banned number
+        assert OtpCode.objects.count() == 1  # but the work is equivalent
         entry = AuditLog.objects.get(action=AuditAction.OTP_REQUESTED)
         assert entry.payload["sent"] is False
+        assert entry.payload["user_id"] == user.pk  # referenced, no PII
 
     def test_request_audit_without_user_carries_no_pii(self, sms_outbox):
         request_otp(phone=PHONE)
@@ -343,3 +349,88 @@ class TestAutoClaim:
         assert protege_profile.user == shadow
         other_patient.refresh_from_db()
         assert other_patient.user is None
+
+
+class TestClaimSuspendsLinks:
+    """OTP-1 — a claim by the patient suspends every surviving link until
+    the titulaire confirms it (le contrôle repasse au patient)."""
+
+    def _door_a_profile(self, phone=PHONE, first_name="Mariama"):
+        guardian_user, guardian = make_guardian_user()
+        protege, link = create_protege(
+            guardian_user=guardian_user,
+            relationship=GuardianLink.Relationship.CHILD,
+            first_name=first_name,
+            last_name="Ahamada",
+            phone=phone,
+        )
+        return protege, link, guardian_user
+
+    def test_claim_suspends_the_creator_link(self, sms_outbox):
+        _protege, link, _gu = self._door_a_profile()
+        assert link.status == GuardianLink.Status.ACTIVE  # legit while unclaimed
+        code = request_and_get_code(PHONE, sms_outbox)
+        verify_otp(phone=PHONE, code=code)
+        link.refresh_from_db()
+        assert link.status == GuardianLink.Status.PENDING_CLAIMANT_CONFIRMATION
+        assert AuditLog.objects.filter(
+            action=AuditAction.LINK_PENDING_CONFIRMATION
+        ).exists()
+
+    def test_suspended_link_gives_no_payment_scope(self, sms_outbox):
+        _protege, link, _gu = self._door_a_profile()
+        code = request_and_get_code(PHONE, sms_outbox)
+        verify_otp(phone=PHONE, code=code)
+        link.refresh_from_db()
+        assert Consent.objects.active_scopes(link) == frozenset()
+        assert not Consent.objects.allows(link, Consent.Scope.PAYMENTS)
+
+    def test_patient_confirmation_reactivates_the_link(self, sms_outbox):
+        _protege, link, _gu = self._door_a_profile()
+        code = request_and_get_code(PHONE, sms_outbox)
+        result = verify_otp(phone=PHONE, code=code)
+        link.refresh_from_db()
+        confirmed = confirm_guardian_link(patient_user=result["user"], link=link)
+        assert confirmed.status == GuardianLink.Status.ACTIVE
+        assert confirmed.accepted_at is not None
+        assert Consent.Scope.PAYMENTS in Consent.objects.active_scopes(confirmed)
+        assert AuditLog.objects.filter(action=AuditAction.LINK_CONFIRMED).exists()
+
+    def test_patient_decline_revokes_the_link_finally(self, sms_outbox):
+        _protege, link, _gu = self._door_a_profile()
+        code = request_and_get_code(PHONE, sms_outbox)
+        result = verify_otp(phone=PHONE, code=code)
+        link.refresh_from_db()
+        declined = decline_guardian_link(patient_user=result["user"], link=link)
+        assert declined.status == GuardianLink.Status.REVOKED
+        assert AuditLog.objects.filter(action=AuditAction.LINK_DECLINED).exists()
+        # Final: a revoked link can never be confirmed back.
+        with pytest.raises(ValidationError):
+            confirm_guardian_link(patient_user=result["user"], link=link)
+
+    def test_another_patient_cannot_confirm_my_link(self, sms_outbox):
+        _protege, link, _gu = self._door_a_profile()
+        code = request_and_get_code(PHONE, sms_outbox)
+        verify_otp(phone=PHONE, code=code)
+        link.refresh_from_db()
+        with pytest.raises(ValidationError, match="ne vous concerne pas"):
+            confirm_guardian_link(patient_user=make_user(), link=link)
+
+    def test_confirm_requires_the_pending_state(self, sms_outbox):
+        """A link that is not pending confirmation cannot be confirmed."""
+        _protege, link, _gu = self._door_a_profile()
+        code = request_and_get_code(PHONE, sms_outbox)
+        result = verify_otp(phone=PHONE, code=code)
+        link.refresh_from_db()
+        confirm_guardian_link(patient_user=result["user"], link=link)  # → ACTIVE
+        with pytest.raises(ValidationError, match="pas en attente"):
+            confirm_guardian_link(patient_user=result["user"], link=link)
+
+    def test_legit_unclaimed_management_still_works(self, sms_outbox):
+        """The « Mariama managed by her daughter » case is untouched: while
+        the profile is UNCLAIMED, the guardian link stays ACTIVE and opens
+        the minimal payments scope."""
+        _protege, link, _gu = self._door_a_profile()
+        # No OTP claim happened: the profile is still unclaimed.
+        assert link.status == GuardianLink.Status.ACTIVE
+        assert Consent.Scope.PAYMENTS in Consent.objects.active_scopes(link)

@@ -184,6 +184,14 @@ class GuardianLink(TimeStampedModel):
 
     class Status(models.TextChoices):
         INVITATION_SENT = "invitation_envoyee", "Invitation envoyée"
+        # OTP-1 (revue guardian) — a link waiting for the PATIENT to confirm
+        # it after they claimed their own profile. Gives NO visibility (it is
+        # not ACTIVE, so ``Consent.active_scopes`` returns ∅): the declarative
+        # phone never authorises a live link without the titulaire's consent.
+        PENDING_CLAIMANT_CONFIRMATION = (
+            "attente_confirmation_titulaire",
+            "En attente de confirmation du titulaire",
+        )
         ACTIVE = "actif", "Actif"
         REVOKED = "revoque", "Révoqué"
 
@@ -221,7 +229,7 @@ class GuardianLink(TimeStampedModel):
     )
     status = models.CharField(
         "statut",
-        max_length=24,
+        max_length=32,
         choices=Status.choices,
         default=Status.INVITATION_SENT,
     )
@@ -290,5 +298,24 @@ class GuardianLink(TimeStampedModel):
                 self.status = self.Status.REVOKED
                 self.revoked_at = timezone.now()
                 self.save(update_fields=["status", "revoked_at", "updated_at"])
+            for consent in self.consents.active().select_for_update():
+                consent.revoke()
+
+    def suspend_for_claimant_confirmation(self):
+        """OTP-1 — a claim by the titulaire suspends the link until they
+        confirm it.
+
+        When the patient takes possession of their own profile (OTP claim),
+        no guardian may keep a live link — and therefore any visibility —
+        without the patient's explicit consent. The link drops to
+        ``PENDING_CLAIMANT_CONFIRMATION`` (∅ scope) and its active consents
+        are revoked so nothing stale can spring back if the patient later
+        confirms. A REVOKED link is final and left untouched.
+        """
+        if self.status == self.Status.REVOKED:
+            return
+        with transaction.atomic():
+            self.status = self.Status.PENDING_CLAIMANT_CONFIRMATION
+            self.save(update_fields=["status", "updated_at"])
             for consent in self.consents.active().select_for_update():
                 consent.revoke()

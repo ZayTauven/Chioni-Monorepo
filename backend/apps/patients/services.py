@@ -220,11 +220,45 @@ def _revoke_self_guardianship_links(*, profile, user, actor):
     return revoked
 
 
+def _suspend_links_for_claimant_confirmation(*, profile, actor):
+    """OTP-1 — when the patient claims their profile, every surviving
+    guardian link drops to ``PENDING_CLAIMANT_CONFIRMATION``.
+
+    The door-A case « patient without a smartphone, managed by their
+    guardian » stays legitimate WHILE the profile is unclaimed (the link is
+    ACTIVE, the guardian manages the administrative record). The moment the
+    titulaire takes possession by OTP, control returns to them: no link
+    keeps its visibility without their explicit confirmation. Applies to the
+    real family guardian too — that is the point (« est-ce bien votre
+    proche ? »). Self-guardianship links were already revoked (final) by the
+    caller and are skipped.
+    """
+    suspended = 0
+    for link in profile.guardian_links.exclude(
+        status=GuardianLink.Status.REVOKED
+    ):
+        previous_status = link.status
+        link.suspend_for_claimant_confirmation()
+        audit(
+            actor=actor, action=AuditAction.LINK_PENDING_CONFIRMATION, target=link,
+            link_id=link.pk, patient_id=link.patient_id, guardian_id=link.guardian_id,
+            previous_status=previous_status,
+        )
+        suspended += 1
+    return suspended
+
+
 @transaction.atomic
 def claim_profile(*, user, profile):
-    """Attach a verified user to an unclaimed profile (OTP chantier will be
-    the caller). Exposed as a service now so merge/tests exercise the audit
-    contract; no public endpoint before OTP exists.
+    """Attach a verified user to an unclaimed profile (called by the OTP
+    auto-claim — ADR 0010).
+
+    OTP-1 (revue guardian): claiming a profile SUSPENDS every surviving
+    guardian link (``PENDING_CLAIMANT_CONFIRMATION``) — the declarative
+    phone never grants a live link, and thus visibility, without the
+    titulaire's explicit consent. The patient (re)activates each link via
+    :func:`confirm_guardian_link` or refuses it via
+    :func:`decline_guardian_link`.
     """
     if profile.merged_into_id is not None:
         raise ValidationError(
@@ -242,7 +276,55 @@ def claim_profile(*, user, profile):
         actor=user, action=AuditAction.PATIENT_CLAIMED, target=profile,
         patient_id=profile.pk, user_id=user.pk,
     )
+    _suspend_links_for_claimant_confirmation(profile=profile, actor=user)
     return profile
+
+
+@transaction.atomic
+def confirm_guardian_link(*, patient_user, link):
+    """The titulaire confirms a link left pending by their claim (OTP-1).
+
+    Only the patient the link is about may confirm, and only from
+    ``PENDING_CLAIMANT_CONFIRMATION``. Confirmation (re)activates the link
+    with the minimal payments scope (ADR 0004) — clinical detail still
+    requires a separate explicit consent.
+    """
+    if link.patient.user_id != patient_user.pk:
+        raise ValidationError("Ce lien de tutelle ne vous concerne pas.")
+    if link.status != GuardianLink.Status.PENDING_CLAIMANT_CONFIRMATION:
+        raise ValidationError(
+            "Ce lien n'est pas en attente de votre confirmation."
+        )
+    link.status = GuardianLink.Status.ACTIVE
+    link.accepted_at = timezone.now()
+    link.save(update_fields=["status", "accepted_at", "updated_at"])
+    audit(
+        actor=patient_user, action=AuditAction.LINK_CONFIRMED, target=link,
+        link_id=link.pk, patient_id=link.patient_id, guardian_id=link.guardian_id,
+    )
+    return link
+
+
+@transaction.atomic
+def decline_guardian_link(*, patient_user, link):
+    """The titulaire refuses a link left pending by their claim (OTP-1).
+
+    Refusal REVOKES the link (final — a new relationship needs a fresh
+    invitation), so a stranger who pre-seeded a profile with the victim's
+    phone is cleanly and permanently cut off.
+    """
+    if link.patient.user_id != patient_user.pk:
+        raise ValidationError("Ce lien de tutelle ne vous concerne pas.")
+    if link.status != GuardianLink.Status.PENDING_CLAIMANT_CONFIRMATION:
+        raise ValidationError(
+            "Ce lien n'est pas en attente de votre confirmation."
+        )
+    link.revoke()
+    audit(
+        actor=patient_user, action=AuditAction.LINK_DECLINED, target=link,
+        link_id=link.pk, patient_id=link.patient_id, guardian_id=link.guardian_id,
+    )
+    return link
 
 
 # ---------------------------------------------------------------------------
@@ -452,7 +534,7 @@ def merge_profiles(*, source, target, actor, center):
             "manuelle requise (vérification d'identité)."
         )
 
-    moved_links = revoked_links = 0
+    moved_links = revoked_links = suspended_links = 0
 
     # 1. Guardian links (+ their consents) — save()/revoke() only.
     for link in source.guardian_links.select_related("guardian").all():
@@ -474,6 +556,28 @@ def merge_profiles(*, source, target, actor, center):
             consent.patient = target
             consent.save(update_fields=["patient", "updated_at"])
         moved_links += 1
+        # OTP-1 via the merge door (revue guardian): a link landing on a
+        # CLAIMED target must pass the SAME claimant-confirmation gate as at
+        # claim time — it never stays ACTIVE (nor INVITATION_SENT, which
+        # could be accepted into ACTIVE) without the titulaire's consent.
+        # Merging onto an UNCLAIMED target is unchanged (the guardian keeps
+        # managing the administrative record). REVOKED is final and left
+        # alone; an already-PENDING link is idempotently skipped.
+        if (
+            target.user_id is not None
+            and link.status not in (
+                GuardianLink.Status.REVOKED,
+                GuardianLink.Status.PENDING_CLAIMANT_CONFIRMATION,
+            )
+        ):
+            previous_status = link.status
+            link.suspend_for_claimant_confirmation()
+            audit(
+                actor=actor, action=AuditAction.LINK_PENDING_CONFIRMATION,
+                target=link, link_id=link.pk, patient_id=link.patient_id,
+                guardian_id=link.guardian_id, previous_status=previous_status,
+            )
+            suspended_links += 1
 
     # 2. Medical data — the carnet reunites on the canonical profile.
     encounters_moved = 0
@@ -512,6 +616,7 @@ def merge_profiles(*, source, target, actor, center):
         actor=actor, action=AuditAction.PATIENT_MERGED, target=target,
         source_id=source.pk, target_id=target.pk, center_id=center.pk,
         links_moved=moved_links, links_revoked=revoked_links,
+        links_suspended=suspended_links,
         encounters_moved=encounters_moved, entries_moved=entries_moved,
         user_transferred=user_transferred,
     )
