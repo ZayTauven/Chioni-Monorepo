@@ -6,15 +6,20 @@
  * what the API gives (number, center, date, EUR paid, fees, KMF received,
  * rate) and never invents more. The detail modal reuses the transparency-card
  * frame (same visual family as the quote and the landing's hero receipt).
+ *
+ * S1 scope gate: a guardian with NO active link gets a 403 here — rendered as
+ * the caring « aucun protégé » empty state, never as an error alert.
  */
 
-import { useState } from 'react';
-import { listReceipts } from '@/lib/endpoints/guardian';
+import { useCallback, useState } from 'react';
+import Link from 'next/link';
+import { isNoActiveLinkError, listReceipts } from '@/lib/endpoints/guardian';
 import { formatDate, formatEur, formatKmf, formatRate } from '@/lib/labels';
 import type { Receipt } from '@/lib/types';
 import {
   EmptyState,
   ErrorAlert,
+  HEART_ICON,
   LoadingCard,
   Modal,
   RECEIPT_ICON,
@@ -63,8 +68,23 @@ function ReceiptModal({ receipt, onClose }: { receipt: Receipt; onClose: () => v
 }
 
 export function TuteurRecus() {
+  /** True quand l'API a répondu « aucun lien de tutelle actif » (403 S1). */
+  const [noActiveLink, setNoActiveLink] = useState(false);
+  const fetchPage = useCallback(async (page: number) => {
+    try {
+      const data = await listReceipts(page);
+      setNoActiveLink(false);
+      return data;
+    } catch (e) {
+      if (isNoActiveLinkError(e)) {
+        setNoActiveLink(true);
+        return { count: 0, next: null, results: [] as Receipt[] };
+      }
+      throw e;
+    }
+  }, []);
   const { items, count, hasMore, loading, loadingMore, error, reload, loadMore } =
-    usePagedList(listReceipts);
+    usePagedList(fetchPage);
   const [selected, setSelected] = useState<Receipt | null>(null);
 
   return (
@@ -75,11 +95,25 @@ export function TuteurRecus() {
       )}
 
       {!loading && !error && items.length === 0 && (
-        <EmptyState
-          icon={RECEIPT_ICON}
-          title="Aucun reçu pour le moment"
-          text="Un reçu officiel apparaît ici pour chaque paiement, dès que le centre a confirmé le soin et clôturé la demande."
-        />
+        noActiveLink ? (
+          <EmptyState
+            icon={HEART_ICON}
+            title="Aucun protégé pour le moment"
+            text="Acceptez une invitation ou ajoutez un proche : un reçu officiel apparaîtra ici pour chacun de vos paiements."
+          >
+            <p style={{ margin: 'var(--ax-space-3) 0 0' }}>
+              <Link className="ax-btn ax-btn--secondary" href="/tuteur/proteges">
+                <span className="ax-btn__label">Ajouter un proche</span>
+              </Link>
+            </p>
+          </EmptyState>
+        ) : (
+          <EmptyState
+            icon={RECEIPT_ICON}
+            title="Aucun reçu pour le moment"
+            text="Un reçu officiel apparaît ici pour chaque paiement, dès que le centre a confirmé le soin et clôturé la demande."
+          />
+        )
       )}
 
       {!loading && items.length > 0 && (

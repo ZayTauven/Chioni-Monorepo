@@ -9,6 +9,8 @@
  *   pour les autres, symétrie du 403 backend) : /stats/finances/ sur 30 jours,
  *   recettes par méthode, facturé vs encaissé (l'info de pilotage n° 1),
  *   impayés (photo à l'instant T) et contre-passations à part.
+ * - Carte LITIGES (S1 : lecture BILLING seule — le motif libre ne s'affiche
+ *   plus à tout staff) : même règle de montage conditionnel que les finances.
  * Les graphiques passent par le wrapper ApexCharts du template (pattern du
  * dashboard Healthcare de Vireo : sparklines KPI, area accent, légende à
  * pastilles, cv() pour les couleurs — ordre des séries fixe par entité).
@@ -417,6 +419,68 @@ function FinanceBlock() {
   );
 }
 
+/* ── carte litiges (rôles BILLING uniquement — le motif libre ne s'affiche
+      plus à tout staff ; le composant n'est PAS monté sinon, symétrie du 403
+      backend, même pattern que le bloc finances) ── */
+
+function DisputesCard() {
+  const { centerId } = useCenter();
+  const disputes = useAsync(() => listDisputes(centerId, 1), [centerId]);
+  const openDisputes = (disputes.data?.results ?? []).filter((d) => d.status === 'ouvert');
+  const disputesPartial = (disputes.data?.count ?? 0) > PAGE_SIZE;
+
+  return (
+    <section className="ax-card ax-col--6" role="region" aria-label="Litiges ouverts">
+      <div className="ax-card__header">
+        <div className="ax-card__titles">
+          <h2 className="ax-card__title">Litiges ouverts</h2>
+          <p className="ax-card__subtitle">
+            {disputesPartial
+              ? 'Litiges ouverts parmi les plus récents (première page) — la liste complète est sur la page Litiges.'
+              : 'Contestations en attente de résolution'}
+          </p>
+        </div>
+        <Link className="ax-btn ax-btn--link" href="/centre/litiges">Tout voir</Link>
+      </div>
+      <div className="ax-card__body" style={{ paddingTop: 0 }}>
+        {disputes.loading ? (
+          <CardSkeleton lines={3} />
+        ) : disputes.error ? (
+          <ErrorAlert error={disputes.error} onRetry={disputes.reload} />
+        ) : openDisputes.length === 0 ? (
+          <EmptyState
+            title="Aucun litige ouvert"
+            message={
+              disputesPartial
+                ? 'Aucun litige ouvert sur la première page — vérifiez la page Litiges pour l’historique complet.'
+                : 'Aucune contestation en cours. C’est bon signe.'
+            }
+          />
+        ) : (
+          <ul className="ax-list ax-list--compact">
+            {openDisputes.map((d) => (
+              <li key={d.id} className="ax-list__row">
+                <span className="ax-list__content">
+                  <Link href="/centre/litiges" className="ax-link ax-list__title" style={{ fontWeight: 'var(--ax-weight-medium)' }}>
+                    Litige n° {d.id} — demande n° {d.payment_request}
+                  </Link>
+                  <span style={{ display: 'block', fontSize: 'var(--ax-text-xs)', color: 'var(--ax-text-subtle)' }}>
+                    Ouvert le {formatDate(d.created_at)}
+                  </span>
+                </span>
+                <span className="ax-list__trailing" style={{ display: 'inline-flex', alignItems: 'center', gap: 'var(--ax-space-2)' }}>
+                  <StatusBadge tone={DISPUTE_TONES[d.status]} label={DISPUTE_STATUS_LABELS[d.status]} />
+                  <IconChevronRight className="" />
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </section>
+  );
+}
+
 /* ── screen ── */
 
 export function Dashboard() {
@@ -425,11 +489,8 @@ export function Dashboard() {
 
   const centerDetail = useAsync(() => getCenter(centerId), [centerId]);
   const requests = useAsync(() => listPaymentRequests(centerId, 1), [centerId]);
-  const disputes = useAsync(() => listDisputes(centerId, 1), [centerId]);
 
   const latestRequests = (requests.data?.results ?? []).slice(0, 5);
-  const openDisputes = (disputes.data?.results ?? []).filter((d) => d.status === 'ouvert');
-  const disputesPartial = (disputes.data?.count ?? 0) > PAGE_SIZE;
 
   return (
     <>
@@ -454,8 +515,9 @@ export function Dashboard() {
         {/* Bloc finances — rôles BILLING seulement (jamais monté sinon) */}
         {billing && <FinanceBlock />}
 
-        {/* Dernières demandes de paiement */}
-        <section className="ax-card ax-col--6" role="region" aria-label="Dernières demandes de paiement">
+        {/* Dernières demandes de paiement (pleine largeur quand la carte
+            litiges, réservée aux rôles BILLING, n'est pas montée) */}
+        <section className={`ax-card ${billing ? 'ax-col--6' : 'ax-col--12'}`} role="region" aria-label="Dernières demandes de paiement">
           <div className="ax-card__header">
             <div className="ax-card__titles">
               <h2 className="ax-card__title">Dernières demandes de paiement</h2>
@@ -495,55 +557,8 @@ export function Dashboard() {
           </div>
         </section>
 
-        {/* Litiges ouverts */}
-        <section className="ax-card ax-col--6" role="region" aria-label="Litiges ouverts">
-          <div className="ax-card__header">
-            <div className="ax-card__titles">
-              <h2 className="ax-card__title">Litiges ouverts</h2>
-              <p className="ax-card__subtitle">
-                {disputesPartial
-                  ? 'Litiges ouverts parmi les plus récents (première page) — la liste complète est sur la page Litiges.'
-                  : 'Contestations en attente de résolution'}
-              </p>
-            </div>
-            <Link className="ax-btn ax-btn--link" href="/centre/litiges">Tout voir</Link>
-          </div>
-          <div className="ax-card__body" style={{ paddingTop: 0 }}>
-            {disputes.loading ? (
-              <CardSkeleton lines={3} />
-            ) : disputes.error ? (
-              <ErrorAlert error={disputes.error} onRetry={disputes.reload} />
-            ) : openDisputes.length === 0 ? (
-              <EmptyState
-                title="Aucun litige ouvert"
-                message={
-                  disputesPartial
-                    ? 'Aucun litige ouvert sur la première page — vérifiez la page Litiges pour l’historique complet.'
-                    : 'Aucune contestation en cours. C’est bon signe.'
-                }
-              />
-            ) : (
-              <ul className="ax-list ax-list--compact">
-                {openDisputes.map((d) => (
-                  <li key={d.id} className="ax-list__row">
-                    <span className="ax-list__content">
-                      <Link href="/centre/litiges" className="ax-link ax-list__title" style={{ fontWeight: 'var(--ax-weight-medium)' }}>
-                        Litige n° {d.id} — demande n° {d.payment_request}
-                      </Link>
-                      <span style={{ display: 'block', fontSize: 'var(--ax-text-xs)', color: 'var(--ax-text-subtle)' }}>
-                        Ouvert le {formatDate(d.created_at)}
-                      </span>
-                    </span>
-                    <span className="ax-list__trailing" style={{ display: 'inline-flex', alignItems: 'center', gap: 'var(--ax-space-2)' }}>
-                      <StatusBadge tone={DISPUTE_TONES[d.status]} label={DISPUTE_STATUS_LABELS[d.status]} />
-                      <IconChevronRight className="" />
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-        </section>
+        {/* Litiges ouverts — rôles BILLING seulement (jamais monté sinon) */}
+        {billing && <DisputesCard />}
       </div>
     </>
   );

@@ -4,7 +4,7 @@
  * ADR 0005) and NEVER send an amount from the client (`pay/` has an empty body).
  */
 
-import { apiFetch } from '../api';
+import { ApiError, apiFetch } from '../api';
 import type {
   GuardianLinkGuardian,
   GuardianProfile,
@@ -77,6 +77,16 @@ export function revokeLink(linkId: number): Promise<GuardianLinkGuardian> {
 }
 
 /* ── payment requests ── */
+
+/**
+ * S1 scope gate: a guardian with NO active link (fresh profile, or every link
+ * revoked) gets a 403 on `/guardian/payment-requests/*` and `/guardian/receipts/`.
+ * Screens treat it as the « aucun protégé » EMPTY state — never as an error
+ * alert (the guardian did nothing wrong).
+ */
+export function isNoActiveLinkError(e: unknown): boolean {
+  return e instanceof ApiError && e.status === 403;
+}
 
 export function listPaymentRequests(page = 1): Promise<Paginated<PaymentRequestGuardian>> {
   return apiFetch(`/guardian/payment-requests/?page=${page}`);

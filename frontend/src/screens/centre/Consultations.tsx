@@ -5,6 +5,7 @@
  * L'API renvoie un sérialiseur DIFFÉRENT selon le rôle (R-API-1) : les rôles
  * cliniques voient `reason`/`diagnosis`, les rôles administratifs NON — la
  * colonne « Motif » ne s'affiche que si les données la portent réellement.
+ * Filtres S1 : `?date=` (jour local) et `?practitioner=` (annuaire réel).
  * Création réservée aux rôles cliniques : patient (recherche), motif requis,
  * diagnostic, date, actes de la grille tarifaire (multi-sélection + total).
  */
@@ -18,11 +19,13 @@ import {
   createEncounter,
   listEncounters,
   listPatients,
+  listPractitioners,
   listTariffs,
 } from '@/lib/endpoints/centers';
 import {
   ENCOUNTER_STATUS_LABELS,
   GENERIC_CATEGORY_LABELS,
+  STAFF_ROLE_LABELS,
   formatDate,
   formatDateTime,
   formatKmf,
@@ -312,16 +315,29 @@ export function Consultations() {
   const [page, setPage] = useState(1);
   const [createOpen, setCreateOpen] = useState(false);
   const clinical = hasRole(role, CLINICAL_ROLES);
+  /** Filtres serveur S1 : jour local (`?date=`) et praticien (`?practitioner=`). */
+  const [dateFilter, setDateFilter] = useState('');
+  const [practitionerFilter, setPractitionerFilter] = useState<number | ''>('');
 
-  const encounters = useAsync(() => listEncounters(centerId, page), [centerId, page]);
+  const practitioners = useAsync(() => listPractitioners(centerId), [centerId]);
+  const encounters = useAsync(
+    () =>
+      listEncounters(centerId, {
+        page,
+        ...(dateFilter ? { date: dateFilter } : {}),
+        ...(practitionerFilter !== '' ? { practitioner: practitionerFilter } : {}),
+      }),
+    [centerId, page, dateFilter, practitionerFilter],
+  );
   const results = encounters.data?.results ?? [];
   const hasClinicalFields = results.some((e) => e.reason !== undefined);
   const patientNames = usePatientNames(centerId, results.map((e) => e.patient));
+  const hasFilters = dateFilter !== '' || practitionerFilter !== '';
 
-  // Reset to page 1 when switching centers.
+  // Reset to page 1 when switching centers or filters.
   useEffect(() => {
     setPage(1);
-  }, [centerId]);
+  }, [centerId, dateFilter, practitionerFilter]);
 
   return (
     <>
@@ -344,6 +360,52 @@ export function Consultations() {
 
       <div className="ax-dash-grid">
         <section className="ax-card ax-col--12" role="region" aria-label="Liste des consultations">
+          <div className="ax-card__header" style={{ flexWrap: 'wrap', gap: 'var(--ax-space-3)' }}>
+            <div className="ax-cluster" style={{ gap: 'var(--ax-space-3)', flexWrap: 'wrap', alignItems: 'flex-end' }}>
+              <div className="ax-field" style={{ marginBottom: 0 }}>
+                <label className="ax-label" htmlFor="enc-f-date">Jour</label>
+                <input
+                  id="enc-f-date"
+                  type="date"
+                  className="ax-input"
+                  style={{ width: 170 }}
+                  value={dateFilter}
+                  onChange={(e) => setDateFilter(e.target.value)}
+                />
+              </div>
+              <div className="ax-field" style={{ marginBottom: 0 }}>
+                <label className="ax-label" htmlFor="enc-f-practitioner">Soignant</label>
+                <select
+                  id="enc-f-practitioner"
+                  className="ax-select"
+                  style={{ minWidth: 180 }}
+                  value={practitionerFilter === '' ? '' : String(practitionerFilter)}
+                  onChange={(e) =>
+                    setPractitionerFilter(e.target.value === '' ? '' : Number.parseInt(e.target.value, 10))
+                  }
+                >
+                  <option value="">Tous les soignants</option>
+                  {(practitioners.data ?? []).map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.display_name} — {STAFF_ROLE_LABELS[p.role]}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              {hasFilters && (
+                <button
+                  type="button"
+                  className="ax-btn ax-btn--ghost ax-btn--sm"
+                  onClick={() => {
+                    setDateFilter('');
+                    setPractitionerFilter('');
+                  }}
+                >
+                  Effacer les filtres
+                </button>
+              )}
+            </div>
+          </div>
           {encounters.loading ? (
             <TableSkeleton rows={6} cols={5} />
           ) : encounters.error ? (
@@ -354,12 +416,14 @@ export function Consultations() {
             <EmptyState
               title="Aucune consultation"
               message={
-                clinical
-                  ? 'Enregistrez la première consultation avec le bouton « Nouvelle consultation ».'
-                  : 'Les consultations créées par l’équipe soignante apparaîtront ici.'
+                hasFilters
+                  ? 'Aucune consultation ne correspond à ces filtres.'
+                  : clinical
+                    ? 'Enregistrez la première consultation avec le bouton « Nouvelle consultation ».'
+                    : 'Les consultations créées par l’équipe soignante apparaîtront ici.'
               }
               action={
-                clinical ? (
+                clinical && !hasFilters ? (
                   <button type="button" className="ax-btn ax-btn--secondary" onClick={() => setCreateOpen(true)}>
                     <IconStethoscope />
                     <span className="ax-btn__label">Nouvelle consultation</span>

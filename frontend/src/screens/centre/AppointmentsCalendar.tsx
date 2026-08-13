@@ -10,18 +10,18 @@
  *   – GET /centers/{c}/stats/activity/?from&to : UN appel couvre toute la
  *     grille (série zéro-remplie par jour et par statut) → chaque cellule
  *     affiche ses compteurs réels ;
- *   – le détail (heure + patient) n'existe qu'en journalier
- *     (GET /appointments/?date=) : il n'est chargé que pour la semaine du
- *     jour sélectionné (≤ 7 appels, jours vides sautés grâce aux stats).
- *     Les autres jours gardent leurs compteurs — l'UI le dit. Le trou de
- *     contrat (pas d'endpoint plage) est signalé dans le rapport du chantier.
+ *   – le détail (heure + patient) est chargé pour TOUTE la plage visible via
+ *     GET /appointments/?from&to (S1 — plage max 62 jours, paginée) en
+ *     enchaînant les pages jusqu'à épuisement ou plafond (voir
+ *     CAL_DETAIL_MAX_PAGES). En cas de troncature ou d'erreur réseau, les
+ *     jours non couverts gardent leurs compteurs stats — l'UI le dit.
  *
  * Le fichier est chargé en dynamic import depuis Appointments.tsx : la file
  * du jour (vue par défaut de la secrétaire) ne paie pas le poids de la grille.
  */
 import { useMemo, useState } from 'react';
 import { useCenter } from '@/context/CenterContext';
-import { getActivityStats, listAppointments } from '@/lib/endpoints/centers';
+import { getActivityStats, listAppointmentsRange } from '@/lib/endpoints/centers';
 import {
   APPOINTMENT_STATUS_LABELS,
   WEEKDAY_SHORT_NAMES,
@@ -57,6 +57,14 @@ const STATUS_ORDER: AppointmentStatus[] = ['prevu', 'arrive', 'honore', 'manque'
 
 /** Pills shown per detailed cell before the « +N autres » overflow line. */
 const MAX_PILLS = 3;
+
+/**
+ * Plafond de chargement du détail : 10 pages de 20 (200 rendez-vous) par
+ * grille affichée (~42 jours). Au-delà — tri chronologique oblige — seuls les
+ * premiers jours ont leur détail complet ; les jours non couverts gardent
+ * leurs compteurs stats et le sous-titre le dit.
+ */
+const CAL_DETAIL_MAX_PAGES = 10;
 
 /* ── date grid helpers (screen-local ; ISO strings compare lexicographically) ── */
 
@@ -136,35 +144,43 @@ export function AppointmentsCalendar({
     return map;
   }, [stats.data]);
 
-  /* Detail (time + patient) for the selected week only — the list endpoint is
-     day-scoped, so we cap at ≤ 7 calls and skip days the stats say are empty. */
-  const weekStart = mondayOf(selectedDate);
-  const weekEnd = shiftIsoDate(weekStart, 6);
-  const weekVisible = weekStart <= grid.to && weekEnd >= grid.from;
-
-  const detailKey = useMemo(() => {
-    if (!stats.data || !weekVisible) return '';
-    const days: string[] = [];
-    for (let i = 0; i < 7; i += 1) {
-      const d = shiftIsoDate(weekStart, i);
-      if (d < grid.from || d > grid.to) continue;
-      const c = counts.get(d);
-      if (c && totalOf(c) > 0) days.push(d);
+  /* Detail (time + patient) for the WHOLE visible grid — the S1 range endpoint
+     (?from&to, paginated, chronological). Pages are chained until exhaustion
+     or CAL_DETAIL_MAX_PAGES; on truncation or mid-chain failure the possibly
+     incomplete last day is dropped so a partial detail is never shown as
+     complete — those days fall back on their stats counters. */
+  const details = useAsync<{ byDay: Map<string, Appointment[]>; partial: boolean }>(async () => {
+    const byDay = new Map<string, Appointment[]>();
+    let partial = false;
+    try {
+      let page = 1;
+      for (;;) {
+        const chunk = await listAppointmentsRange(centerId, { from: grid.from, to: grid.to, page });
+        for (const a of chunk.results) {
+          const day = isoOf(new Date(a.scheduled_at));
+          const list = byDay.get(day);
+          if (list) list.push(a);
+          else byDay.set(day, [a]);
+        }
+        if (!chunk.next) break;
+        if (page >= CAL_DETAIL_MAX_PAGES) {
+          partial = true;
+          break;
+        }
+        page += 1;
+      }
+    } catch {
+      /* Repli honnête : les jours déjà chargés gardent leur détail, les autres
+         leurs compteurs stats — jamais de données inventées. */
+      partial = true;
     }
-    return days.join(',');
-  }, [stats.data, counts, weekStart, weekVisible, grid.from, grid.to]);
-
-  const details = useAsync<Map<string, Appointment[]>>(async () => {
-    const map = new Map<string, Appointment[]>();
-    const days = detailKey ? detailKey.split(',') : [];
-    if (days.length === 0) return map;
-    const settled = await Promise.allSettled(days.map((d) => listAppointments(centerId, { date: d })));
-    settled.forEach((res, i) => {
-      /* A failed day silently keeps its counters — never invented data. */
-      if (res.status === 'fulfilled') map.set(days[i], res.value.results);
-    });
-    return map;
-  }, [centerId, detailKey, reloadKey]);
+    if (partial) {
+      let lastDay: string | null = null;
+      for (const day of byDay.keys()) if (lastDay === null || day > lastDay) lastDay = day;
+      if (lastDay !== null) byDay.delete(lastDay);
+    }
+    return { byDay, partial };
+  }, [centerId, grid.from, grid.to, reloadKey]);
 
   const chevron = (path: string) => (
     <svg className="ax-btn__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.75} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={path} /></svg>
@@ -210,9 +226,9 @@ export function AppointmentsCalendar({
 
         <div className="ax-card__body" style={{ paddingTop: 0 }}>
           <p className="ax-card__subtitle" style={{ margin: '0 0 var(--ax-space-3)' }}>
-            {weekVisible
-              ? `Le détail (heure et patient) est affiché pour la semaine du ${formatWeekdayDate(selectedDate)} ; les autres jours indiquent le nombre de rendez-vous par statut. Cliquez un jour pour ouvrir sa file.`
-              : 'Les jours indiquent le nombre de rendez-vous par statut. Cliquez un jour pour ouvrir sa file et voir le détail.'}
+            {details.data?.partial
+              ? 'Mois très chargé : le détail (heure et patient) est affiché pour les premiers jours ; les autres indiquent le nombre de rendez-vous par statut. Cliquez un jour pour ouvrir sa file.'
+              : 'Chaque jour affiche ses rendez-vous (heure et patient). Cliquez un jour pour ouvrir sa file.'}
           </p>
 
           {stats.loading && !stats.data ? (
@@ -236,7 +252,7 @@ export function AppointmentsCalendar({
                   {grid.cells.map((cell) => {
                     const dayCounts = counts.get(cell.date);
                     const total = dayCounts ? totalOf(dayCounts) : 0;
-                    const detail = details.data?.get(cell.date);
+                    const detail = details.data?.byDay.get(cell.date);
                     const shown = detail ? Math.min(detail.length, MAX_PILLS) : 0;
                     const isToday = cell.date === today;
                     const isSelected = cell.date === selectedDate;

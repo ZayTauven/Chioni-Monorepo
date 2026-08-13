@@ -8,10 +8,9 @@
  * états. Un chevauchement de praticien à la création/au déplacement est un
  * AVERTISSEMENT non bloquant (« overlaps ») — le guichet décide.
  *
- * Annuaire des praticiens : le directeur lit la liste du personnel ; les
- * autres rôles n'y ont pas accès (ressource staff réservée au directeur) —
- * l'écran se rabat honnêtement sur l'annuaire dérivé des stats d'activité
- * (praticiens actifs sur les 12 derniers mois, contrat § Pilotage).
+ * Annuaire des praticiens (S1) : GET /centers/{c}/practitioners/ — ouvert à
+ * tout le staff actif, memberships cliniques actifs seulement. Un praticien
+ * recruté la veille y figure (plus aucun rabattement sur les stats).
  */
 import { useEffect, useMemo, useState } from 'react';
 import dynamic from 'next/dynamic';
@@ -23,11 +22,10 @@ import {
   cancelAppointment,
   checkInAppointment,
   createAppointment,
-  getActivityStats,
   honorAppointment,
   listAppointments,
   listPatients,
-  listStaff,
+  listPractitioners,
   noShowAppointment,
   updateAppointment,
 } from '@/lib/endpoints/centers';
@@ -50,7 +48,6 @@ import type {
 import {
   APPOINTMENT_TONES,
   AvatarChip,
-  CLINICAL_ROLES,
   CardSkeleton,
   EmptyState,
   ErrorAlert,
@@ -64,7 +61,6 @@ import {
   Pagination,
   StatusBadge,
   TableSkeleton,
-  hasRole,
   toApiError,
   useAsync,
   useDebounced,
@@ -86,7 +82,7 @@ const AppointmentsCalendar = dynamic(() => import('./AppointmentsCalendar'), {
   ),
 });
 
-/* ── practitioner directory ── */
+/* ── practitioner directory (S1 — GET /practitioners/, every active staff) ── */
 
 interface PractitionerOption {
   /** StaffMembership id — the value of `practitioner` on an appointment. */
@@ -95,41 +91,12 @@ interface PractitionerOption {
   role: StaffRole;
 }
 
-/**
- * Director: full active clinical staff (up to 5 pages). Other roles: the
- * activity-stats directory (practitioners with encounters in the last 12
- * months) — the only directory the API opens to them.
- */
-function usePractitioners(): { options: PractitionerOption[]; partial: boolean; loading: boolean } {
-  const { centerId, role } = useCenter();
-  const isDirector = role === 'directeur';
-
-  const state = useAsync<PractitionerOption[]>(async () => {
-    if (isDirector) {
-      const options: PractitionerOption[] = [];
-      let page = 1;
-      while (page <= 5) {
-        const chunk = await listStaff(centerId, page);
-        for (const m of chunk.results) {
-          if (!m.is_active || !hasRole(m.role, CLINICAL_ROLES)) continue;
-          const name = `${m.user.first_name} ${m.user.last_name}`.trim() || m.user.phone;
-          options.push({ id: m.id, name, role: m.role });
-        }
-        if (!chunk.next) break;
-        page += 1;
-      }
-      return options;
-    }
-    const today = todayIsoDate();
-    const stats = await getActivityStats(centerId, { from: shiftIsoDate(today, -365), to: today });
-    return stats.encounters_by_practitioner.map((p) => ({
-      id: p.practitioner,
-      name: p.practitioner_name,
-      role: p.role,
-    }));
-  }, [centerId, isDirector]);
-
-  return { options: state.data ?? [], partial: !isDirector, loading: state.loading };
+/** One bare, non-paginated call — active clinical memberships only. */
+function usePractitioners(): { options: PractitionerOption[]; loading: boolean } {
+  const { centerId } = useCenter();
+  const state = useAsync(() => listPractitioners(centerId), [centerId]);
+  const options = (state.data ?? []).map((p) => ({ id: p.id, name: p.display_name, role: p.role }));
+  return { options, loading: state.loading };
 }
 
 /* ── date helpers (screen-local) ── */
@@ -195,12 +162,6 @@ function PractitionerSelect({
           </option>
         ))}
       </select>
-      {directory.partial && (
-        <span className="ax-field__message">
-          Liste établie à partir de l&apos;activité des 12 derniers mois. Un praticien absent de la liste
-          peut être ajouté par le directeur.
-        </span>
-      )}
       <FieldError error={error} field="practitioner" />
     </div>
   );

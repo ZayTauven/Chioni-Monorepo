@@ -20,12 +20,13 @@ import type { ApiError } from '@/lib/api';
 import {
   acceptInvitation,
   declineInvitation,
+  isNoActiveLinkError,
   listInvitations,
   listPaymentRequests,
   listProteges,
 } from '@/lib/endpoints/guardian';
 import { RELATIONSHIP_LABELS, countryName, formatDate, formatKmf } from '@/lib/labels';
-import type { GuardianLinkGuardian, PaymentRequestGuardian } from '@/lib/types';
+import type { GuardianLinkGuardian, Paginated, PaymentRequestGuardian } from '@/lib/types';
 import { useAuth } from '@/context/AuthContext';
 import {
   DeclineInvitationModal,
@@ -66,7 +67,13 @@ export function TuteurHome() {
     setError(null);
     try {
       const [requests, invitations, proteges] = await Promise.all([
-        listPaymentRequests(),
+        // S1 : sans lien actif, l'API répond 403 sur les demandes — pour un
+        // tuteur fraîchement inscrit (ou entièrement révoqué) c'est simplement
+        // « rien à payer », jamais une erreur.
+        listPaymentRequests().catch((e): Paginated<PaymentRequestGuardian> => {
+          if (isNoActiveLinkError(e)) return { count: 0, next: null, previous: null, results: [] };
+          throw e;
+        }),
         listInvitations(),
         listProteges(),
       ]);

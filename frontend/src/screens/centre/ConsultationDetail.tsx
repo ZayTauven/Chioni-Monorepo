@@ -9,6 +9,9 @@
  *   (POST {items:[{medication,dosage}]}, vérifié dans medical/serializers.py) ;
  * - entrées de carnet : lecture/ajout rôles cliniques uniquement (la liste
  *   renvoyée couvre les entrées du patient produites par CE centre).
+ * - clôture (S1) : rôles cliniques SEULS (le directeur non-clinicien reçoit
+ *   403) — une consultation terminée n'accepte plus d'ordonnances ni
+ *   d'entrées au carnet ; la facturation reste possible.
  * Les sous-ressources ne sont PAS appelées quand le rôle n'y a pas droit :
  * l'écran l'explique honnêtement au lieu d'afficher un 403.
  */
@@ -18,12 +21,14 @@ import { PageHead } from '@/components/shell/PageHead';
 import { useCenter } from '@/context/CenterContext';
 import type { ApiError } from '@/lib/api';
 import {
+  closeEncounter,
   createPrescription,
   createRecordEntry,
   getEncounter,
   getPatient,
   listEncounterPrescriptions,
   listEncounterRecordEntries,
+  type EncounterStaff,
 } from '@/lib/endpoints/centers';
 import {
   ENCOUNTER_STATUS_LABELS,
@@ -45,6 +50,7 @@ import {
   ErrorAlert,
   FieldError,
   IconArrowLeft,
+  IconCheck,
   IconPlus,
   Modal,
   PRESCRIBER_ROLES,
@@ -54,6 +60,57 @@ import {
   toApiError,
   useAsync,
 } from './shared';
+
+/* ── close confirmation (S1 — clinical roles only) ── */
+
+function CloseEncounterModal({
+  encounterId,
+  onClose,
+  onClosed,
+}: {
+  encounterId: number;
+  onClose: () => void;
+  onClosed: (fresh: EncounterStaff) => void;
+}) {
+  const { centerId } = useCenter();
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<ApiError | null>(null);
+
+  const submit = async () => {
+    setSaving(true);
+    setError(null);
+    try {
+      onClosed(await closeEncounter(centerId, encounterId));
+    } catch (err) {
+      setError(toApiError(err));
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Modal
+      title="Clôturer la consultation ?"
+      onClose={onClose}
+      footer={
+        <>
+          <button type="button" className="ax-btn ax-btn--ghost" onClick={onClose} disabled={saving} data-autofocus="">
+            Pas encore
+          </button>
+          <button type="button" className="ax-btn ax-btn--primary" onClick={() => void submit()} disabled={saving}>
+            <IconCheck />
+            <span className="ax-btn__label">{saving ? 'Clôture…' : 'Clôturer'}</span>
+          </button>
+        </>
+      }
+    >
+      {error && <ErrorAlert error={error} />}
+      <p style={{ margin: 0, fontSize: 'var(--ax-text-sm)', color: 'var(--ax-text)', lineHeight: 1.6 }}>
+        Une consultation terminée n&apos;accepte plus d&apos;ordonnances ni d&apos;entrées au carnet.
+        La facturation des actes, elle, reste possible.
+      </p>
+    </Modal>
+  );
+}
 
 /* ── prescription creation modal ── */
 
@@ -248,6 +305,9 @@ export function ConsultationDetail({ encounterId }: { encounterId: number }) {
 
   const [rxOpen, setRxOpen] = useState(false);
   const [entryOpen, setEntryOpen] = useState(false);
+  const [closeOpen, setCloseOpen] = useState(false);
+  /** Rafraîchi en place après la clôture (S1) — pas de re-fetch complet. */
+  const [freshEncounter, setFreshEncounter] = useState<EncounterStaff | null>(null);
 
   const encounter = useAsync(() => getEncounter(centerId, encounterId), [centerId, encounterId]);
   const patient = useAsync(
@@ -297,7 +357,7 @@ export function ConsultationDetail({ encounterId }: { encounterId: number }) {
     );
   }
 
-  const e = encounter.data;
+  const e = freshEncounter ?? encounter.data;
   const actsTotal = e.acts.reduce((sum, a) => sum + Number.parseFloat(a.price_kmf_snapshot), 0);
   const patientName = patient.data
     ? `${patient.data.first_name} ${patient.data.last_name}`.trim()
@@ -314,6 +374,13 @@ export function ConsultationDetail({ encounterId }: { encounterId: number }) {
               <IconArrowLeft />
               <span className="ax-btn__label">Retour</span>
             </Link>
+            {/* S1 : clôture par les rôles cliniques seuls (403 sinon). */}
+            {clinical && e.status === 'en_cours' && (
+              <button type="button" className="ax-btn ax-btn--ghost" onClick={() => setCloseOpen(true)}>
+                <IconCheck />
+                <span className="ax-btn__label">Clôturer la consultation</span>
+              </button>
+            )}
             {billing && e.acts.length > 0 && (
               <Link href={`/centre/factures?encounter=${e.id}`} className="ax-btn ax-btn--primary">
                 <IconPlus />
@@ -408,7 +475,7 @@ export function ConsultationDetail({ encounterId }: { encounterId: number }) {
             <div className="ax-card__titles">
               <h2 className="ax-card__title">Ordonnances</h2>
             </div>
-            {canPrescribe && (
+            {canPrescribe && e.status === 'en_cours' && (
               <button type="button" className="ax-btn ax-btn--secondary ax-btn--sm" onClick={() => setRxOpen(true)}>
                 <IconPlus />
                 <span className="ax-btn__label">Nouvelle ordonnance</span>
@@ -416,6 +483,11 @@ export function ConsultationDetail({ encounterId }: { encounterId: number }) {
             )}
           </div>
           <div className="ax-card__body" style={{ paddingTop: 0 }}>
+            {canPrescribe && e.status === 'terminee' && (
+              <p style={{ margin: '0 0 var(--ax-space-3)', fontSize: 'var(--ax-text-xs)', color: 'var(--ax-text-muted)' }}>
+                Consultation terminée : elle n&apos;accepte plus de nouvelle ordonnance.
+              </p>
+            )}
             {!canReadPrescriptions ? (
               <p style={{ margin: 0, fontSize: 'var(--ax-text-sm)', color: 'var(--ax-text-muted)' }}>
                 Les ordonnances sont réservées aux soignants et au pharmacien (secret médical).
@@ -458,7 +530,7 @@ export function ConsultationDetail({ encounterId }: { encounterId: number }) {
               <h2 className="ax-card__title">Carnet de santé</h2>
               <p className="ax-card__subtitle">Entrées du patient produites par ce centre</p>
             </div>
-            {clinical && (
+            {clinical && e.status === 'en_cours' && (
               <button type="button" className="ax-btn ax-btn--secondary ax-btn--sm" onClick={() => setEntryOpen(true)}>
                 <IconPlus />
                 <span className="ax-btn__label">Ajouter une entrée</span>
@@ -466,6 +538,11 @@ export function ConsultationDetail({ encounterId }: { encounterId: number }) {
             )}
           </div>
           <div className="ax-card__body" style={{ paddingTop: 0 }}>
+            {clinical && e.status === 'terminee' && (
+              <p style={{ margin: '0 0 var(--ax-space-3)', fontSize: 'var(--ax-text-xs)', color: 'var(--ax-text-muted)' }}>
+                Consultation terminée : elle n&apos;accepte plus d&apos;entrée au carnet.
+              </p>
+            )}
             {!clinical ? (
               <p style={{ margin: 0, fontSize: 'var(--ax-text-sm)', color: 'var(--ax-text-muted)' }}>
                 Le carnet de santé est réservé aux rôles soignants (secret médical).
@@ -514,6 +591,16 @@ export function ConsultationDetail({ encounterId }: { encounterId: number }) {
           onCreated={() => {
             setEntryOpen(false);
             recordEntries.reload();
+          }}
+        />
+      )}
+      {closeOpen && (
+        <CloseEncounterModal
+          encounterId={e.id}
+          onClose={() => setCloseOpen(false)}
+          onClosed={(fresh) => {
+            setCloseOpen(false);
+            setFreshEncounter(fresh);
           }}
         />
       )}

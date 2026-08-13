@@ -21,10 +21,12 @@ import type {
   GuardianLinkCenter,
   HealthCenter,
   Invoice,
+  InvoiceStatus,
   MobileMoneyOperator,
   Paginated,
   Patient,
   PaymentRequestStaff,
+  Practitioner,
   Prescription,
   Receipt,
   RecordEntry,
@@ -160,6 +162,17 @@ export function mergePatients(
   });
 }
 
+/* ── practitioners directory (S1 — the appointment/encounter selector) ── */
+
+/**
+ * Every active staff member may read it. Bare NON-paginated array of ACTIVE
+ * clinical memberships — a practitioner hired yesterday shows up (no more
+ * falling back on `stats/activity`).
+ */
+export function listPractitioners(centerId: number): Promise<Practitioner[]> {
+  return apiFetch(`/centers/${centerId}/practitioners/`);
+}
+
 /* ── encounters ── */
 
 export interface EncounterPayload {
@@ -170,8 +183,25 @@ export interface EncounterPayload {
   tariff_items?: number[];
 }
 
-export function listEncounters(centerId: number, page = 1): Promise<Paginated<EncounterStaff>> {
-  return apiFetch(`/centers/${centerId}/encounters/?page=${page}`);
+export interface EncounterFilters {
+  page?: number;
+  /** Patient id — foreign/unknown id yields an empty list. */
+  patient?: number;
+  /** "YYYY-MM-DD" — Comoros local day of `occurred_at`. */
+  date?: string;
+  /** StaffMembership id. */
+  practitioner?: number;
+}
+
+export function listEncounters(
+  centerId: number,
+  { page = 1, patient, date, practitioner }: EncounterFilters = {},
+): Promise<Paginated<EncounterStaff>> {
+  const query = new URLSearchParams({ page: String(page) });
+  if (patient !== undefined) query.set('patient', String(patient));
+  if (date) query.set('date', date);
+  if (practitioner !== undefined) query.set('practitioner', String(practitioner));
+  return apiFetch(`/centers/${centerId}/encounters/?${query.toString()}`);
 }
 
 export function getEncounter(centerId: number, encounterId: number): Promise<EncounterStaff> {
@@ -180,6 +210,15 @@ export function getEncounter(centerId: number, encounterId: number): Promise<Enc
 
 export function createEncounter(centerId: number, payload: EncounterPayload): Promise<EncounterStaff> {
   return apiFetch(`/centers/${centerId}/encounters/`, { method: 'POST', body: payload });
+}
+
+/**
+ * Close an encounter (S1) — clinical roles ONLY (a non-clinician director gets
+ * a 403). A closed encounter refuses new prescriptions/record entries;
+ * invoicing stays possible. Already closed → 400.
+ */
+export function closeEncounter(centerId: number, encounterId: number): Promise<EncounterStaff> {
+  return apiFetch(`/centers/${centerId}/encounters/${encounterId}/close/`, { method: 'POST' });
 }
 
 /* ── prescriptions & record entries (NOT paginated — bare arrays) ── */
@@ -239,6 +278,19 @@ export function listAppointments(
   if (date) query.set('date', date);
   if (practitioner !== undefined) query.set('practitioner', String(practitioner));
   if (status) query.set('status', status);
+  return apiFetch(`/centers/${centerId}/appointments/?${query.toString()}`);
+}
+
+/**
+ * Range listing (S1 — the calendar grid). Both bounds are REQUIRED together,
+ * inclusive Comoros local days, max 62 days, exclusive of `?date=`. Paginated,
+ * same item, sorted by `scheduled_at`.
+ */
+export function listAppointmentsRange(
+  centerId: number,
+  { from, to, page = 1 }: { from: string; to: string; page?: number },
+): Promise<Paginated<Appointment>> {
+  const query = new URLSearchParams({ from, to, page: String(page) });
   return apiFetch(`/centers/${centerId}/appointments/?${query.toString()}`);
 }
 
@@ -307,8 +359,21 @@ export function honorAppointment(centerId: number, id: number): Promise<Appointm
 
 /* ── invoices ── */
 
-export function listInvoices(centerId: number, page = 1): Promise<Paginated<Invoice>> {
-  return apiFetch(`/centers/${centerId}/invoices/?page=${page}`);
+export interface InvoiceFilters {
+  page?: number;
+  /** Patient id — foreign/unknown id yields an empty list. */
+  patient?: number;
+  status?: InvoiceStatus;
+}
+
+export function listInvoices(
+  centerId: number,
+  { page = 1, patient, status }: InvoiceFilters = {},
+): Promise<Paginated<Invoice>> {
+  const query = new URLSearchParams({ page: String(page) });
+  if (patient !== undefined) query.set('patient', String(patient));
+  if (status) query.set('status', status);
+  return apiFetch(`/centers/${centerId}/invoices/?${query.toString()}`);
 }
 
 export function getInvoice(centerId: number, invoiceId: number): Promise<Invoice> {
@@ -324,6 +389,19 @@ export function createInvoice(
 
 export function issueInvoice(centerId: number, invoiceId: number): Promise<Invoice> {
   return apiFetch(`/centers/${centerId}/invoices/${invoiceId}/issue/`, { method: 'POST' });
+}
+
+/**
+ * Cancel an invoice (S1) — BILLING roles, reason MANDATORY. Explicit 400s from
+ * the backend (settled invoice, active cash-in, linked request paid/closed,
+ * diaspora payment in flight…) are shown as-is. The acts become invoicable
+ * again; a request still `envoyee` will answer 400 on quote/pay.
+ */
+export function cancelInvoice(centerId: number, invoiceId: number, reason: string): Promise<Invoice> {
+  return apiFetch(`/centers/${centerId}/invoices/${invoiceId}/cancel/`, {
+    method: 'POST',
+    body: { reason },
+  });
 }
 
 /* ── caisse (ADR 0015 — BILLING roles) ── */
@@ -344,6 +422,13 @@ export interface CashPaymentPayload {
   /** Required by the backend when method is mobile money. */
   operator?: MobileMoneyOperator;
   reference?: string;
+  /**
+   * S1 idempotence — one UUID per cash-in ATTEMPT (≤ 64 chars, unique per
+   * center). Replaying the same key returns 200 with the SAME payment and the
+   * SAME receipt (never a double debit on timeout/double-click); same key with
+   * different parameters → explicit 400.
+   */
+  idempotency_key?: string;
 }
 
 /** 201 with the counter receipt embedded. Never exceeds the remaining balance. */
@@ -510,6 +595,11 @@ export function createStaff(centerId: number, payload: StaffPayload): Promise<St
 
 export function deactivateStaff(centerId: number, staffId: number): Promise<StaffMember> {
   return apiFetch(`/centers/${centerId}/staff/${staffId}/deactivate/`, { method: 'POST' });
+}
+
+/** S1 — deactivation is no longer irreversible. Already active → 400. */
+export function reactivateStaff(centerId: number, staffId: number): Promise<StaffMember> {
+  return apiFetch(`/centers/${centerId}/staff/${staffId}/reactivate/`, { method: 'POST' });
 }
 
 export interface StaffUpdatePayload {

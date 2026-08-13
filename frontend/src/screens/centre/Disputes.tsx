@@ -2,9 +2,11 @@
 /*
  * Chioni — /centre/litiges : contestations sur les demandes de paiement.
  *
- * Lecture : tout le staff. Résolution : DIRECTEUR uniquement, avec note de
- * résolution obligatoire ; la modal annonce le retour de la demande à son
- * statut d'avant litige (`previous_status`).
+ * Lecture : rôles BILLING seuls (S1 — le motif libre du patient/proche ne
+ * s'affiche plus à tout staff ; l'API répond 403 aux soignants/pharmacien,
+ * l'écran ne l'appelle pas pour eux). Résolution : DIRECTEUR uniquement, avec
+ * note de résolution obligatoire ; la modal annonce le retour de la demande à
+ * son statut d'avant litige (`previous_status`).
  */
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
@@ -19,6 +21,7 @@ import {
 } from '@/lib/labels';
 import type { Dispute } from '@/lib/types';
 import {
+  BILLING_ROLES,
   DISPUTE_TONES,
   EmptyState,
   ErrorAlert,
@@ -118,16 +121,36 @@ function ResolveModal({
 
 export function Disputes() {
   const { centerId, role } = useCenter();
+  const billing = hasRole(role, BILLING_ROLES);
   const isDirector = role === 'directeur';
   const [page, setPage] = useState(1);
   const [resolving, setResolving] = useState<Dispute | null>(null);
 
-  const disputes = useAsync(() => listDisputes(centerId, page), [centerId, page]);
+  const disputes = useAsync(
+    () => (billing ? listDisputes(centerId, page) : Promise.resolve(null)),
+    [centerId, page, billing],
+  );
   const results = disputes.data?.results ?? [];
 
   useEffect(() => {
     setPage(1);
   }, [centerId]);
+
+  if (!billing) {
+    return (
+      <>
+        <PageHead title="Litiges" subtitle="Contestations sur les demandes de paiement du centre." />
+        <div className="ax-dash-grid">
+          <section className="ax-card ax-col--12">
+            <EmptyState
+              title="Réservé aux rôles de facturation"
+              message="Les litiges contiennent le motif exprimé librement par le patient ou son proche : ils sont accessibles au directeur, à la secrétaire et au caissier."
+            />
+          </section>
+        </div>
+      </>
+    );
+  }
 
   return (
     <>

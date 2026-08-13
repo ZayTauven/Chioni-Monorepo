@@ -22,6 +22,29 @@ import {
 } from '../../lib/manifest';
 import { Icon } from '../ui/Icon';
 import { useCenter } from '@/context/CenterContext';
+import { BILLING_ROLES, hasRole } from '@/screens/centre/shared';
+import type { StaffRole } from '@/lib/types';
+
+/*
+ * Role-gated nav entries (S1). The manifest is role-agnostic (Vireo node
+ * contract), so the masking lives at render time — same rule as the screens
+ * that never mount a role-restricted block. « Litiges » carries the free-text
+ * dispute reasons: BILLING roles only (backend 403 for the others).
+ */
+const NAV_ROLE_GATES: Record<string, StaffRole[]> = {
+  'centre.litiges': BILLING_ROLES,
+  // Journal de caisse et impayés : écrans BILLING-only (les non-BILLING ne
+  // voyaient qu'un écran « réservé ») — masqués comme « Litiges ». « Factures »
+  // reste visible : la lecture est ouverte à tout le staff (arbitrage C.3).
+  'centre.caisse': BILLING_ROLES,
+  'centre.impayes': BILLING_ROLES,
+};
+
+/** Shared with the command palette — one source of truth for nav visibility. */
+export function navNodeVisible(nodeId: string, role: StaffRole): boolean {
+  const allowed = NAV_ROLE_GATES[nodeId];
+  return !allowed || hasRole(role, allowed);
+}
 
 function Badge({ badge }: { badge: NavNode['badge'] }) {
   if (!badge) return null;
@@ -214,6 +237,7 @@ function CenterIdentity() {
 
 export function Sidebar() {
   const activeSlug = slugFromPath(usePathname() || '/');
+  const { role } = useCenter();
   const [filter, setFilter] = useState('');
 
   return (
@@ -291,7 +315,7 @@ export function Sidebar() {
               {sectionLabel(section)}
             </p>
             {groupsInSection(section)
-              .filter((g) => g.inMenu)
+              .filter((g) => g.inMenu && navNodeVisible(g.id, role))
               .map((g) =>
                 manifest.childrenOf(g.id).filter((c) => c.inMenu).length > 0 ? (
                   <Group

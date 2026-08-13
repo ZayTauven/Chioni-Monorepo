@@ -7,13 +7,15 @@
  * l'explique sans appeler l'API. Ajout : téléphone* + rôle* (+ prénom/nom) —
  * un compte est créé s'il n'existe pas et la personne l'active par SMS.
  * Désactivation avec confirmation ; le 400 « dernier directeur » est montré
- * tel quel. Jamais de suppression (historique = piste d'audit).
+ * tel quel. Réactivation (S1) : symétrique, sur un membre désactivé — la
+ * désactivation n'est plus irréversible. Jamais de suppression (historique =
+ * piste d'audit).
  */
 import { useEffect, useState } from 'react';
 import { PageHead } from '@/components/shell/PageHead';
 import { useCenter } from '@/context/CenterContext';
 import type { ApiError } from '@/lib/api';
-import { createStaff, deactivateStaff, listStaff, updateStaff, type StaffPayload, type StaffUpdatePayload } from '@/lib/endpoints/centers';
+import { createStaff, deactivateStaff, listStaff, reactivateStaff, updateStaff, type StaffPayload, type StaffUpdatePayload } from '@/lib/endpoints/centers';
 import { STAFF_ROLE_LABELS, formatDate } from '@/lib/labels';
 import type { StaffMember, StaffRole } from '@/lib/types';
 import {
@@ -23,6 +25,7 @@ import {
   FieldError,
   IconEdit,
   IconPlus,
+  IconRefresh,
   IconUserOff,
   Modal,
   Pagination,
@@ -344,6 +347,58 @@ function DeactivateModal({
   );
 }
 
+/* ── reactivate confirmation (S1 — symmetric of deactivation) ── */
+
+function ReactivateModal({
+  member,
+  onClose,
+  onDone,
+}: {
+  member: StaffMember;
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const { centerId } = useCenter();
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<ApiError | null>(null);
+
+  const submit = async () => {
+    setSaving(true);
+    setError(null);
+    try {
+      await reactivateStaff(centerId, member.id);
+      onDone();
+    } catch (err) {
+      setError(toApiError(err));
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Modal
+      title={`Réactiver ${memberName(member)} ?`}
+      onClose={onClose}
+      footer={
+        <>
+          <button type="button" className="ax-btn ax-btn--ghost" onClick={onClose} disabled={saving}>
+            Annuler
+          </button>
+          <button type="button" className="ax-btn ax-btn--primary" onClick={() => void submit()} disabled={saving}>
+            <IconRefresh />
+            <span className="ax-btn__label">{saving ? 'Réactivation…' : 'Réactiver'}</span>
+          </button>
+        </>
+      }
+    >
+      {error && <ErrorAlert error={error} />}
+      <p style={{ margin: 0, fontSize: 'var(--ax-text-sm)', color: 'var(--ax-text)' }}>
+        Cette personne retrouvera immédiatement l&apos;accès à cet espace centre, avec son rôle
+        ({STAFF_ROLE_LABELS[member.role]}) et son historique intacts.
+      </p>
+    </Modal>
+  );
+}
+
 /* ── screen ── */
 
 export function Staff() {
@@ -353,6 +408,7 @@ export function Staff() {
   const [addOpen, setAddOpen] = useState(false);
   const [editing, setEditing] = useState<StaffMember | null>(null);
   const [deactivating, setDeactivating] = useState<StaffMember | null>(null);
+  const [reactivating, setReactivating] = useState<StaffMember | null>(null);
 
   const staff = useAsync(
     () => (isDirector ? listStaff(centerId, page) : Promise.resolve(null)),
@@ -443,7 +499,7 @@ export function Staff() {
                           {formatDate(m.created_at)}
                         </td>
                         <td className="ax-table__td" style={{ textAlign: 'end' }}>
-                          {m.is_active && (
+                          {m.is_active ? (
                             <div className="ax-cluster" style={{ gap: 'var(--ax-space-1)', justifyContent: 'flex-end', flexWrap: 'nowrap' }}>
                               <button
                                 type="button"
@@ -462,6 +518,15 @@ export function Staff() {
                                 <span className="ax-btn__label">Désactiver</span>
                               </button>
                             </div>
+                          ) : (
+                            <button
+                              type="button"
+                              className="ax-btn ax-btn--ghost ax-btn--sm"
+                              onClick={() => setReactivating(m)}
+                            >
+                              <IconRefresh />
+                              <span className="ax-btn__label">Réactiver</span>
+                            </button>
                           )}
                         </td>
                       </tr>
@@ -500,6 +565,16 @@ export function Staff() {
           onClose={() => setDeactivating(null)}
           onDone={() => {
             setDeactivating(null);
+            staff.reload();
+          }}
+        />
+      )}
+      {reactivating && (
+        <ReactivateModal
+          member={reactivating}
+          onClose={() => setReactivating(null)}
+          onDone={() => {
+            setReactivating(null);
             staff.reload();
           }}
         />

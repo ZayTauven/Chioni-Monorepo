@@ -5,13 +5,13 @@
  * - Identité : PATCH possible tant que le profil n'est pas revendiqué ; si le
  *   backend répond 400 (« profil géré par le patient »), le message est montré
  *   tel quel et l'édition se referme.
- * - Consultations : l'API ne filtre pas par patient — on filtre CÔTÉ CLIENT la
- *   liste paginée du centre, en l'assumant (bandeau « parmi les N dernières »),
- *   avec chargement progressif des pages suivantes.
- * - Fusion de doublons : le dossier courant est la CIBLE (conservé) ; le
- *   doublon absorbé est choisi par recherche. Avertissement explicite.
+ * - Consultations : filtre serveur S1 `?patient=` — l'historique complet du
+ *   patient dans ce centre, paginé normalement (fini le scan côté client).
+ * - Fusion de doublons : rôles BILLING seuls (S1 — la fusion déplace des liens
+ *   de tutelle ; soignants/pharmacien → 403). Le dossier courant est la CIBLE
+ *   (conservé) ; le doublon absorbé est choisi par recherche.
  */
-import { useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { PageHead } from '@/components/shell/PageHead';
 import { useCenter } from '@/context/CenterContext';
@@ -22,7 +22,6 @@ import {
   listPatients,
   mergePatients,
   updatePatient,
-  type EncounterStaff,
 } from '@/lib/endpoints/centers';
 import {
   CLAIM_STATUS_LABELS,
@@ -31,9 +30,10 @@ import {
   formatDate,
   formatDateTime,
 } from '@/lib/labels';
-import type { Paginated, Patient, Sex } from '@/lib/types';
+import type { Patient, Sex } from '@/lib/types';
 import {
   AvatarChip,
+  BILLING_ROLES,
   CLAIM_TONES,
   CardSkeleton,
   DetailItem,
@@ -46,9 +46,10 @@ import {
   IconMerge,
   IconSearch,
   Modal,
-  PAGE_SIZE,
+  Pagination,
   StatusBadge,
   TableSkeleton,
+  hasRole,
   toApiError,
   useAsync,
   useDebounced,
@@ -311,7 +312,8 @@ function MergeModal({
 /* ── screen ── */
 
 export function PatientDetail({ patientId }: { patientId: number }) {
-  const { centerId } = useCenter();
+  const { centerId, role } = useCenter();
+  const billing = hasRole(role, BILLING_ROLES);
   const [editing, setEditing] = useState(false);
   const [mergeOpen, setMergeOpen] = useState(false);
   const [patched, setPatched] = useState<Patient | null>(null);
@@ -319,33 +321,17 @@ export function PatientDetail({ patientId }: { patientId: number }) {
   const patientState = useAsync(() => getPatient(centerId, patientId), [centerId, patientId]);
   const patient = patched ?? patientState.data;
 
-  // Encounters of the center, filtered client-side on this patient.
-  const [pagesLoaded, setPagesLoaded] = useState(1);
-  const [extraPages, setExtraPages] = useState<EncounterStaff[]>([]);
-  const [loadingMore, setLoadingMore] = useState(false);
-  const firstPage = useAsync(() => listEncounters(centerId, 1), [centerId]);
-
-  const allEncounters = useMemo(
-    () => [...(firstPage.data?.results ?? []), ...extraPages],
-    [firstPage.data, extraPages],
+  // Encounters of THIS patient at this center — server-side `?patient=` (S1).
+  const [encountersPage, setEncountersPage] = useState(1);
+  const encounters = useAsync(
+    () => listEncounters(centerId, { patient: patientId, page: encountersPage }),
+    [centerId, patientId, encountersPage],
   );
-  const patientEncounters = allEncounters.filter((e) => e.patient === patientId);
-  const totalCount = firstPage.data?.count ?? 0;
-  const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
-  const scanned = Math.min(totalCount, pagesLoaded * PAGE_SIZE);
+  const patientEncounters = encounters.data?.results ?? [];
 
-  const loadMore = async () => {
-    setLoadingMore(true);
-    try {
-      const next: Paginated<EncounterStaff> = await listEncounters(centerId, pagesLoaded + 1);
-      setExtraPages((prev) => [...prev, ...next.results]);
-      setPagesLoaded((p) => p + 1);
-    } catch {
-      /* le bouton reste disponible pour réessayer */
-    } finally {
-      setLoadingMore(false);
-    }
-  };
+  useEffect(() => {
+    setEncountersPage(1);
+  }, [centerId, patientId]);
 
   if (patientState.loading) {
     return (
@@ -395,10 +381,13 @@ export function PatientDetail({ patientId }: { patientId: number }) {
               <IconArrowLeft />
               <span className="ax-btn__label">Retour</span>
             </Link>
-            <button type="button" className="ax-btn ax-btn--ghost" onClick={() => setMergeOpen(true)}>
-              <IconMerge />
-              <span className="ax-btn__label">Fusionner un doublon</span>
-            </button>
+            {/* S1 : la fusion déplace des liens de tutelle — rôles BILLING seuls. */}
+            {billing && (
+              <button type="button" className="ax-btn ax-btn--ghost" onClick={() => setMergeOpen(true)}>
+                <IconMerge />
+                <span className="ax-btn__label">Fusionner un doublon</span>
+              </button>
+            )}
           </>
         }
       />
@@ -453,38 +442,23 @@ export function PatientDetail({ patientId }: { patientId: number }) {
           </div>
         </section>
 
-        {/* Encounters at this center */}
+        {/* Encounters at this center — server-filtered on this patient (S1) */}
         <section className="ax-card ax-col--8" role="region" aria-label="Consultations au centre">
           <div className="ax-card__header">
             <div className="ax-card__titles">
               <h2 className="ax-card__title">Consultations dans ce centre</h2>
-              {totalCount > PAGE_SIZE && (
-                <p className="ax-card__subtitle">
-                  Recherche parmi les {scanned} consultations les plus récentes du centre (sur {totalCount}).
-                </p>
-              )}
+              <p className="ax-card__subtitle">L&apos;historique complet du patient dans ce centre</p>
             </div>
           </div>
           <div className="ax-card__body" style={{ paddingTop: 0 }}>
-            {firstPage.loading ? (
+            {encounters.loading ? (
               <TableSkeleton rows={4} cols={3} />
-            ) : firstPage.error ? (
-              <ErrorAlert error={firstPage.error} onRetry={firstPage.reload} />
+            ) : encounters.error ? (
+              <ErrorAlert error={encounters.error} onRetry={encounters.reload} />
             ) : patientEncounters.length === 0 ? (
               <EmptyState
-                title="Aucune consultation trouvée"
-                message={
-                  pagesLoaded < totalPages
-                    ? 'Aucune consultation de ce patient dans les pages déjà chargées. Vous pouvez charger la suite de l’historique.'
-                    : 'Ce patient n’a pas encore de consultation enregistrée dans ce centre.'
-                }
-                action={
-                  pagesLoaded < totalPages ? (
-                    <button type="button" className="ax-btn ax-btn--secondary" onClick={() => void loadMore()} disabled={loadingMore}>
-                      {loadingMore ? 'Chargement…' : 'Charger plus d’historique'}
-                    </button>
-                  ) : undefined
-                }
+                title="Aucune consultation"
+                message="Ce patient n’a pas encore de consultation enregistrée dans ce centre."
               />
             ) : (
               <>
@@ -505,12 +479,8 @@ export function PatientDetail({ patientId }: { patientId: number }) {
                     </li>
                   ))}
                 </ul>
-                {pagesLoaded < totalPages && (
-                  <div style={{ textAlign: 'center', marginTop: 'var(--ax-space-4)' }}>
-                    <button type="button" className="ax-btn ax-btn--secondary ax-btn--sm" onClick={() => void loadMore()} disabled={loadingMore}>
-                      {loadingMore ? 'Chargement…' : 'Charger plus d’historique'}
-                    </button>
-                  </div>
+                {encounters.data && (
+                  <Pagination count={encounters.data.count} page={encountersPage} onPage={setEncountersPage} />
                 )}
               </>
             )}
@@ -526,9 +496,8 @@ export function PatientDetail({ patientId }: { patientId: number }) {
             setMergeOpen(false);
             setPatched(null);
             patientState.reload();
-            firstPage.reload();
-            setExtraPages([]);
-            setPagesLoaded(1);
+            setEncountersPage(1);
+            encounters.reload();
           }}
         />
       )}

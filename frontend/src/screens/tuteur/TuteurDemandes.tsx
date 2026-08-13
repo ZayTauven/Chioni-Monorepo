@@ -6,16 +6,20 @@
  * status, applied to the pages loaded so far. Statuses use the
  * guardian-facing wording of common.tsx. Lines never show act labels
  * (ADR 0005) — this list only shows totals anyway.
+ *
+ * S1 scope gate: a guardian with NO active link gets a 403 here — rendered as
+ * the caring « aucun protégé » empty state, never as an error alert.
  */
 
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { listPaymentRequests } from '@/lib/endpoints/guardian';
+import { isNoActiveLinkError, listPaymentRequests } from '@/lib/endpoints/guardian';
 import { PR_STATUS_TUTEUR_SHORT, formatDate, formatKmf } from '@/lib/labels';
-import type { PaymentRequestStatus } from '@/lib/types';
+import type { PaymentRequestGuardian, PaymentRequestStatus } from '@/lib/types';
 import {
   EmptyState,
   ErrorAlert,
+  HEART_ICON,
   INVOICE_ICON,
   LoadingCard,
   PrStatusBadge,
@@ -33,8 +37,23 @@ const FILTERABLE_STATUSES: PaymentRequestStatus[] = [
 ];
 
 export function TuteurDemandes() {
+  /** True quand l'API a répondu « aucun lien de tutelle actif » (403 S1). */
+  const [noActiveLink, setNoActiveLink] = useState(false);
+  const fetchPage = useCallback(async (page: number) => {
+    try {
+      const data = await listPaymentRequests(page);
+      setNoActiveLink(false);
+      return data;
+    } catch (e) {
+      if (isNoActiveLinkError(e)) {
+        setNoActiveLink(true);
+        return { count: 0, next: null, results: [] as PaymentRequestGuardian[] };
+      }
+      throw e;
+    }
+  }, []);
   const { items, count, hasMore, loading, loadingMore, error, reload, loadMore } =
-    usePagedList(listPaymentRequests);
+    usePagedList(fetchPage);
 
   const [patientFilter, setPatientFilter] = useState<string>('tous');
   const [statusFilter, setStatusFilter] = useState<string>('tous');
@@ -68,11 +87,25 @@ export function TuteurDemandes() {
       )}
 
       {!loading && !error && items.length === 0 && (
-        <EmptyState
-          icon={INVOICE_ICON}
-          title="Aucune demande de paiement"
-          text="Quand un centre de santé enverra une demande pour un de vos proches, elle apparaîtra ici."
-        />
+        noActiveLink ? (
+          <EmptyState
+            icon={HEART_ICON}
+            title="Aucun protégé pour le moment"
+            text="Acceptez une invitation ou ajoutez un proche : les demandes de paiement de ses soins apparaîtront ici."
+          >
+            <p style={{ margin: 'var(--ax-space-3) 0 0' }}>
+              <Link className="ax-btn ax-btn--secondary" href="/tuteur/proteges">
+                <span className="ax-btn__label">Ajouter un proche</span>
+              </Link>
+            </p>
+          </EmptyState>
+        ) : (
+          <EmptyState
+            icon={INVOICE_ICON}
+            title="Aucune demande de paiement"
+            text="Quand un centre de santé enverra une demande pour un de vos proches, elle apparaîtra ici."
+          />
+        )
       )}
 
       {!loading && items.length > 0 && (

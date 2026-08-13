@@ -27,6 +27,7 @@ import {
   formatDateTime,
   formatKmf,
 } from '@/lib/labels';
+import type { InvoiceStatus } from '@/lib/types';
 import {
   AvatarChip,
   BILLING_ROLES,
@@ -65,7 +66,7 @@ function CreateInvoiceModal({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<ApiError | null>(null);
 
-  const recent = useAsync(() => listEncounters(centerId, 1), [centerId]);
+  const recent = useAsync(() => listEncounters(centerId, { page: 1 }), [centerId]);
   const prefill = useAsync(
     () => (prefillEncounterId ? getEncounter(centerId, prefillEncounterId) : Promise.resolve(null)),
     [centerId, prefillEncounterId],
@@ -241,14 +242,19 @@ export function Invoices() {
     return Number.isFinite(parsed) ? parsed : null;
   });
   const [createOpen, setCreateOpen] = useState(prefillEncounter !== null);
+  /** Filtre statut serveur (S1 — `?status=`). */
+  const [statusFilter, setStatusFilter] = useState<InvoiceStatus | ''>('');
 
-  const invoices = useAsync(() => listInvoices(centerId, page), [centerId, page]);
+  const invoices = useAsync(
+    () => listInvoices(centerId, { page, ...(statusFilter ? { status: statusFilter } : {}) }),
+    [centerId, page, statusFilter],
+  );
   const results = invoices.data?.results ?? [];
   const names = usePatientNames(centerId, results.map((i) => i.patient));
 
   useEffect(() => {
     setPage(1);
-  }, [centerId]);
+  }, [centerId, statusFilter]);
 
   return (
     <>
@@ -267,6 +273,25 @@ export function Invoices() {
 
       <div className="ax-dash-grid">
         <section className="ax-card ax-col--12" role="region" aria-label="Liste des factures">
+          <div className="ax-card__header" style={{ flexWrap: 'wrap', gap: 'var(--ax-space-3)' }}>
+            <div className="ax-field" style={{ marginBottom: 0 }}>
+              <label className="ax-label" htmlFor="inv-f-status">Statut</label>
+              <select
+                id="inv-f-status"
+                className="ax-select"
+                style={{ minWidth: 160 }}
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value as InvoiceStatus | '')}
+              >
+                <option value="">Tous</option>
+                {(Object.keys(INVOICE_STATUS_LABELS) as InvoiceStatus[]).map((s) => (
+                  <option key={s} value={s}>
+                    {INVOICE_STATUS_LABELS[s]}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
           {invoices.loading ? (
             <TableSkeleton rows={6} cols={5} />
           ) : invoices.error ? (
@@ -277,12 +302,14 @@ export function Invoices() {
             <EmptyState
               title="Aucune facture"
               message={
-                billing
-                  ? 'Créez la première facture à partir d’une consultation avec actes.'
-                  : 'Les factures créées par l’équipe de facturation apparaîtront ici.'
+                statusFilter
+                  ? 'Aucune facture avec ce statut.'
+                  : billing
+                    ? 'Créez la première facture à partir d’une consultation avec actes.'
+                    : 'Les factures créées par l’équipe de facturation apparaîtront ici.'
               }
               action={
-                billing ? (
+                billing && !statusFilter ? (
                   <button type="button" className="ax-btn ax-btn--secondary" onClick={() => setCreateOpen(true)}>
                     <IconPlus />
                     <span className="ax-btn__label">Nouvelle facture</span>

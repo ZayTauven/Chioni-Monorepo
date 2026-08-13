@@ -9,19 +9,24 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { manifest, hrefForSlug, type NavNode } from '../../lib/manifest';
 import { useFocusTrap } from '../../hooks/useFocusTrap';
+import { useCenter } from '@/context/CenterContext';
+import { navNodeVisible } from './Sidebar';
+import type { StaffRole } from '@/lib/types';
 
 interface Row {
   node: NavNode;
   crumb: string;
 }
 
-function buildRows(): Row[] {
+function buildRows(role: StaffRole): Row[] {
   const rows: Row[] = [];
   for (const n of manifest.nodes) {
     if (n.alias) continue; // canonical entries only
     // Skip pure group containers (nodes whose children carry the real pages);
     // Chioni's flat manifest has none, so every top-level node is a page.
     if (manifest.childrenOf(n.id).length > 0) continue;
+    // Role-gated entries (S1) follow the sidebar's visibility rule.
+    if (!navNodeVisible(n.id, role)) continue;
     const trail = manifest.trail(n).slice(0, -1).map((t) => t.title);
     rows.push({ node: n, crumb: trail.join(' › ') });
   }
@@ -30,11 +35,12 @@ function buildRows(): Row[] {
 
 export function CommandPalette({ open, onClose }: { open: boolean; onClose: () => void }) {
   const router = useRouter();
+  const { role } = useCenter();
   const [q, setQ] = useState('');
   const [active, setActive] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
-  const allRows = useMemo(buildRows, []);
+  const allRows = useMemo(() => buildRows(role), [role]);
   useFocusTrap(panelRef, open);
 
   const results = useMemo(() => {

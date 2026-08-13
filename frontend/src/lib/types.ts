@@ -368,6 +368,14 @@ export interface Invoice {
   balance_kmf: string;
   status: InvoiceStatus;
   lines: InvoiceLine[];
+  /** Set when the invoice was cancelled (S1) — null otherwise. */
+  cancelled_at: string | null;
+  /**
+   * Cancellation reason — BILLING roles ONLY: the field is ABSENT from the
+   * payload for every other role (same free-text class as a dispute reason).
+   * Never render it from a hard-coded fallback.
+   */
+  cancel_reason?: string;
   created_at: string;
 }
 
@@ -441,6 +449,20 @@ export interface TariffItem {
   price_kmf: string;
   is_active: boolean;
   created_at: string;
+}
+
+/**
+ * GET /centers/{c}/practitioners/ item (S1 — the appointment/encounter
+ * selector). Bare NON-paginated array, ACTIVE clinical memberships only.
+ * Never carries a phone number nor an activation state (that stays on
+ * GET /staff/, director only).
+ */
+export interface Practitioner {
+  /** StaffMembership id — plugs directly into `practitioner` fields. */
+  id: number;
+  display_name: string;
+  role: Extract<StaffRole, 'medecin' | 'infirmier' | 'sage_femme'>;
+  avatar: string | null;
 }
 
 /* ── appointments (day queue — every active staff member) ── */

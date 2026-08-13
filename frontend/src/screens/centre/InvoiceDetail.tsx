@@ -8,6 +8,12 @@
  * - encaisser au guichet (ADR 0015) : tranches en KMF ENTIER, jamais plus que
  *   le solde, reçu « G- » émis à chaque encaissement, contre-passation unique
  *   avec MOTIF OBLIGATOIRE (écriture corrective — le reçu reste visible barré).
+ *   Idempotence S1 : une clé UUID par tentative d'encaissement (régénérée
+ *   après chaque succès) — un double-clic/retry réseau renvoie le MÊME reçu ;
+ * - annuler la facture (S1, BILLING, motif obligatoire) : les actes
+ *   redeviennent facturables ; une demande envoyée au proche sera refusée au
+ *   paiement. Le motif (`cancel_reason`) n'est lisible que par les rôles
+ *   BILLING (absent du payload sinon).
  * Les 400 du backend (dépassement de solde, diaspora en cours…) s'affichent
  * tels quels près du formulaire.
  */
@@ -18,6 +24,7 @@ import { PageHead } from '@/components/shell/PageHead';
 import { useCenter } from '@/context/CenterContext';
 import type { ApiError } from '@/lib/api';
 import {
+  cancelInvoice,
   createInvoicePayment,
   createPaymentRequest,
   getInvoice,
@@ -46,6 +53,7 @@ import {
   FieldError,
   IconArrowLeft,
   IconCheck,
+  IconClose,
   IconSend,
   INVOICE_TONES,
   Modal,
@@ -56,6 +64,91 @@ import {
   toApiError,
   useAsync,
 } from './shared';
+
+/* ── annulation de facture (S1 — BILLING, motif obligatoire) ── */
+
+function CancelInvoiceModal({
+  invoice,
+  onClose,
+  onCancelled,
+}: {
+  invoice: Invoice;
+  onClose: () => void;
+  onCancelled: (fresh: Invoice) => void;
+}) {
+  const { centerId } = useCenter();
+  const [reason, setReason] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<ApiError | null>(null);
+
+  const submit = async () => {
+    setSaving(true);
+    setError(null);
+    try {
+      const fresh = await cancelInvoice(centerId, invoice.id, reason.trim());
+      onCancelled(fresh);
+    } catch (err) {
+      // Les 400 du backend (encaissement actif, demande payée, diaspora en
+      // cours…) sont montrés tels quels — ils disent exactement quoi faire.
+      setError(toApiError(err));
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Modal
+      title={`Annuler la facture n° ${invoice.id} ?`}
+      onClose={onClose}
+      footer={
+        <>
+          <button type="button" className="ax-btn ax-btn--ghost" onClick={onClose} disabled={saving}>
+            Garder la facture
+          </button>
+          <button
+            type="submit"
+            form="invoice-cancel-form"
+            className="ax-btn ax-btn--danger"
+            disabled={saving || !reason.trim()}
+          >
+            <span className="ax-btn__label">{saving ? 'Annulation…' : 'Annuler la facture'}</span>
+          </button>
+        </>
+      }
+    >
+      <form
+        id="invoice-cancel-form"
+        onSubmit={(e) => {
+          e.preventDefault();
+          void submit();
+        }}
+        style={{ display: 'flex', flexDirection: 'column', gap: 'var(--ax-space-4)' }}
+      >
+        {error && <ErrorAlert error={error} />}
+        <p style={{ margin: 0, fontSize: 'var(--ax-text-sm)', color: 'var(--ax-text)', lineHeight: 1.6 }}>
+          L&apos;annulation est <b>définitive</b> : les actes de la consultation redeviennent facturables
+          (vous pourrez émettre une facture propre), et si une demande de paiement a été envoyée à un
+          proche, son paiement sera refusé. Le motif reste visible de l&apos;équipe de facturation.
+        </p>
+        <div className="ax-field">
+          <label className="ax-label" htmlFor="inv-cancel-reason">
+            Motif <span className="ax-field__required" aria-hidden="true">*</span>
+          </label>
+          <textarea
+            id="inv-cancel-reason"
+            className={`ax-textarea${error?.fieldErrors.reason ? ' is-invalid' : ''}`}
+            rows={2}
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            placeholder="Ex. : erreur d'actes facturés, facture émise en double…"
+            required
+            data-autofocus=""
+          />
+          <FieldError error={error} field="reason" />
+        </div>
+      </form>
+    </Modal>
+  );
+}
 
 /* ── contre-passation (écriture corrective, motif obligatoire) ── */
 
@@ -165,6 +258,13 @@ function CashInForm({
   const [reference, setReference] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<ApiError | null>(null);
+  /**
+   * Idempotence S1 (transparente pour le caissier) : une clé UUID par
+   * TENTATIVE d'encaissement — générée à l'ouverture du formulaire, conservée
+   * en cas d'échec (rejouer la même tentative après un timeout renvoie le
+   * MÊME reçu, jamais une seconde tranche), régénérée après chaque succès.
+   */
+  const [idempotencyKey, setIdempotencyKey] = useState(() => crypto.randomUUID());
 
   // Une tranche vient d'être encaissée ailleurs → recaler le montant proposé.
   useEffect(() => {
@@ -179,10 +279,12 @@ function CashInForm({
       const fresh = await createInvoicePayment(centerId, invoice.id, {
         method,
         amount_kmf: amount,
+        idempotency_key: idempotencyKey,
         ...(method === 'mobile_money' ? { operator } : {}),
         ...(reference.trim() ? { reference: reference.trim() } : {}),
       });
       setReference('');
+      setIdempotencyKey(crypto.randomUUID());
       onCollected(fresh);
     } catch (err) {
       setError(toApiError(err));
@@ -343,6 +445,11 @@ function CaisseSection({
             Facture entièrement réglée — plus rien à encaisser.
           </p>
         )}
+        {invoice.status === 'annulee' && (
+          <p style={{ margin: 0, fontSize: 'var(--ax-text-sm)', color: 'var(--ax-text-muted)' }}>
+            Facture annulée — aucun encaissement possible. Les encaissements passés restent visibles ci-dessous.
+          </p>
+        )}
       </div>
 
       {payments.loading ? (
@@ -467,6 +574,7 @@ export function InvoiceDetail({ invoiceId }: { invoiceId: number }) {
 
   const [actionError, setActionError] = useState<ApiError | null>(null);
   const [busy, setBusy] = useState<'issue' | 'request' | null>(null);
+  const [cancelOpen, setCancelOpen] = useState(false);
 
   const doIssue = async () => {
     if (!invoice) return;
@@ -553,6 +661,22 @@ export function InvoiceDetail({ invoiceId }: { invoiceId: number }) {
                 <span className="ax-btn__label">{busy === 'request' ? 'Création…' : 'Créer une demande de paiement'}</span>
               </button>
             )}
+            {/* S1 : annulation BILLING quand le statut le permet — les 400 du
+                backend (encaissement actif, demande payée…) tranchent le reste. */}
+            {billing && (invoice.status === 'brouillon' || invoice.status === 'emise') && (
+              <button
+                type="button"
+                className="ax-btn ax-btn--ghost"
+                onClick={() => {
+                  setActionError(null);
+                  setCancelOpen(true);
+                }}
+                disabled={busy !== null}
+              >
+                <IconClose />
+                <span className="ax-btn__label">Annuler la facture</span>
+              </button>
+            )}
           </>
         }
       />
@@ -606,6 +730,20 @@ export function InvoiceDetail({ invoiceId }: { invoiceId: number }) {
               <p style={{ margin: 0, fontSize: 'var(--ax-text-xs)', color: 'var(--ax-text-muted)' }}>
                 Facture émise : les montants sont figés. Encaissez au guichet (par tranches si besoin) ou partagez une demande de paiement avec un proche.
               </p>
+            )}
+            {invoice.status === 'annulee' && (
+              <div className="ax-alert ax-alert--warning" role="status">
+                <div className="ax-alert__content">
+                  <p className="ax-alert__message">
+                    Facture annulée{invoice.cancelled_at ? ` le ${formatDate(invoice.cancelled_at)}` : ''}. Les
+                    actes de la consultation sont redevenus facturables.
+                  </p>
+                  {/* `cancel_reason` n'existe que dans le payload BILLING — jamais affiché en dur. */}
+                  {billing && invoice.cancel_reason ? (
+                    <p className="ax-alert__message">Motif : {invoice.cancel_reason}</p>
+                  ) : null}
+                </div>
+              </div>
             )}
           </div>
         </section>
@@ -661,6 +799,17 @@ export function InvoiceDetail({ invoiceId }: { invoiceId: number }) {
           />
         )}
       </div>
+
+      {cancelOpen && (
+        <CancelInvoiceModal
+          invoice={invoice}
+          onClose={() => setCancelOpen(false)}
+          onCancelled={(freshInvoice) => {
+            setCancelOpen(false);
+            setFresh(freshInvoice);
+          }}
+        />
+      )}
     </>
   );
 }
