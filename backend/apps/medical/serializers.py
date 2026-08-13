@@ -134,6 +134,16 @@ class EncounterCreateSerializer(serializers.Serializer):
     tariff_items = serializers.ListField(
         child=serializers.IntegerField(), required=False, default=list
     )
+    appointment = serializers.IntegerField(
+        required=False,
+        allow_null=True,
+        default=None,
+        help_text=(
+            "Rendez-vous du centre que cette consultation honore : il passe "
+            "automatiquement à « honoré » (résolu dans le périmètre du centre "
+            "par la vue — id étranger → 404)."
+        ),
+    )
 
 
 class EncounterPatientSerializer(serializers.ModelSerializer):

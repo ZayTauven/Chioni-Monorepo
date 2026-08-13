@@ -21,13 +21,21 @@ from apps.medical.models import (
 
 @transaction.atomic
 def create_encounter(*, actor, center, practitioner, patient, reason,
-                     diagnosis="", occurred_at=None, tariff_items=()):
+                     diagnosis="", occurred_at=None, tariff_items=(),
+                     appointment=None):
     """Record a consultation with its acts (tariff snapshots).
 
     ``practitioner`` is the acting staff membership (clinical role, resolved
     by the view from the caller's OWN membership in ``center`` — a view can
     never attribute an act to someone else's hat). Every tariff must belong
     to the same center: cross-tenant tariffs are structurally refused.
+
+    ``appointment`` (optional): the scheduling.Appointment this encounter
+    fulfils — it is automatically marked « honoré » in the SAME transaction
+    (a still-``prevu`` appointment passes through ``arrive`` first, the
+    machine never skips a state). Must belong to the same center AND the
+    same patient; a terminal appointment (already honored, missed,
+    cancelled) is refused and the whole creation rolls back.
     """
     if practitioner.center_id != center.pk:
         raise ValidationError("Le praticien n'appartient pas à ce centre.")
@@ -36,6 +44,16 @@ def create_encounter(*, actor, center, practitioner, patient, reason,
             raise ValidationError(
                 "Un acte ne peut référencer qu'un tarif de la grille de ce centre."
             )
+    if appointment is not None:
+        if appointment.center_id != center.pk:
+            raise ValidationError("Ce rendez-vous n'appartient pas à ce centre.")
+        if appointment.patient_id != patient.pk:
+            raise ValidationError("Ce rendez-vous ne concerne pas ce patient.")
+        # Local import: medical must stay importable without the scheduling
+        # app's service layer loaded (one-way dependency, no cycle).
+        from apps.scheduling.services import honor_appointment_from_encounter
+
+        honor_appointment_from_encounter(appointment)
     extra = {"occurred_at": occurred_at} if occurred_at else {}
     encounter = Encounter.objects.create(
         patient=patient,

@@ -19,6 +19,13 @@ class CenterScopedQuerySet(models.QuerySet):
         return self.filter(center=center)
 
 
+def center_logo_upload_to(instance, filename):
+    """Per-center media directory. ``filename`` is already a uuid + safe
+    extension (apps/common/uploads.py re-normalises it — the client name
+    never reaches this function's output)."""
+    return f"centers/{instance.pk}/logo/{filename}"
+
+
 class HealthCenter(TimeStampedModel):
     """A health facility — the SaaS tenant."""
 
@@ -52,6 +59,19 @@ class HealthCenter(TimeStampedModel):
         choices=KycStatus.choices,
         default=KycStatus.PENDING,
         help_text="Un centre ne peut recevoir de paiements qu'une fois vérifié (actif).",
+    )
+    # « Nullable » au sens produit : pas de logo = chaîne vide (convention
+    # Django pour FileField — null=True y est déconseillé) ; les serializers
+    # exposent None. Écriture UNIQUEMENT via le service set_center_logo()
+    # (pipeline durci apps/common/uploads.py), jamais par PATCH du centre.
+    logo = models.ImageField(
+        "logo",
+        upload_to=center_logo_upload_to,
+        blank=True,
+        help_text=(
+            "Affiché en sidebar, sur les factures et reçus à l'écran "
+            "(l'impression PDF viendra avec le chantier PDF)."
+        ),
     )
 
     class Meta:

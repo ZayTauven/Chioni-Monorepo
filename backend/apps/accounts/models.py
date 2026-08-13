@@ -32,6 +32,13 @@ class UserManager(DjangoUserManager):
         return super()._create_user_object(username, email, password, **extra_fields)
 
 
+def user_avatar_upload_to(instance, filename):
+    """Per-user media directory. ``filename`` is already a uuid + safe
+    extension (apps/common/uploads.py re-normalises it — the client name
+    never reaches this function's output)."""
+    return f"avatars/{instance.pk}/{filename}"
+
+
 class User(AbstractUser):
     """Chioni user account."""
 
@@ -55,6 +62,16 @@ class User(AbstractUser):
             "(invitation/guichet) ou compte n'ayant jamais vérifié son numéro ; "
             "la pose vaut activation du compte (ADR 0010)."
         ),
+    )
+    # « Nullable » au sens produit : pas d'avatar = chaîne vide (convention
+    # Django pour FileField). Écriture UNIQUEMENT via le service
+    # set_user_avatar() (pipeline durci apps/common/uploads.py). Donnée
+    # personnelle : exposée à soi-même (/auth/me/) et à l'annuaire du
+    # personnel d'un centre — JAMAIS dans les vues croisées patient/tuteur.
+    avatar = models.ImageField(
+        "photo de profil",
+        upload_to=user_avatar_upload_to,
+        blank=True,
     )
 
     objects = UserManager()

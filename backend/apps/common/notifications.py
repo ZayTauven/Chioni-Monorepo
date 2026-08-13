@@ -42,6 +42,7 @@ import logging
 from decimal import ROUND_HALF_UP, Decimal
 
 from django.db import transaction
+from django.utils import timezone
 
 from apps.accounts.tasks import send_sms
 from apps.patients.models import GuardianLink
@@ -96,6 +97,16 @@ SMS_PAYMENT_RECEIVED = "Chioni : votre soin a été payé par un proche."
 #: Événement 6 — reçu émis (SMS au tuteur payeur).
 SMS_RECEIPT_ISSUED = (
     "Chioni : votre reçu n° {receipt_number} de {center} est disponible sur Chioni."
+)
+
+#: Événement 7 — rappel de rendez-vous J-1 (SMS au patient). Contenu
+#: MINIMAL (ADR 0012, mêmes règles que l'événement 5) : jamais le motif,
+#: jamais le nom du praticien, et PAS le nom du centre — le téléphone d'un
+#: profil non revendiqué est déclaratif et peut circuler dans le foyer, et
+#: le nom d'un centre spécialisé est une information quasi médicale. Seule
+#: l'heure locale est interpolée.
+SMS_APPOINTMENT_REMINDER = (
+    "Chioni : rappel — vous avez un rendez-vous demain à {time}."
 )
 
 
@@ -260,4 +271,21 @@ def notify_receipt_issued(receipt, paying_guardian):
         SMS_RECEIPT_ISSUED.format(
             receipt_number=receipt.sequence_number, center=receipt.center.name
         ),
+    )
+
+
+def notify_appointment_reminder(appointment):
+    """Événement 7 — rappel J-1 d'un rendez-vous : SMS au patient.
+
+    Appelé par ``apps.scheduling.services.send_appointment_reminders``
+    DANS la transaction qui pose ``reminder_sent_at`` : le on_commit de
+    ``_schedule`` garantit que le SMS ne part que si l'anti-doublon est
+    commité. L'heure est rendue en heure LOCALE (Indian/Comoro), format
+    « 09h30 » — rien d'autre n'est interpolé (contrat de contenu en tête
+    de module et sur la constante)."""
+    local = timezone.localtime(appointment.scheduled_at)
+    _schedule(
+        "rappel_rdv",
+        _patient_phone(appointment.patient),
+        SMS_APPOINTMENT_REMINDER.format(time=f"{local:%Hh%M}"),
     )

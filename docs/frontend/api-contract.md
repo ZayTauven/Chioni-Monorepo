@@ -29,6 +29,9 @@
 | `POST /auth/token/refresh/` | `{"refresh"}` | 200 `{"access","refresh"}` | **Rotation : le refresh est à usage unique** (l'ancien est blacklisté). Sérialiser les refresh (mutex single-flight) sinon 401. Access 30 min, refresh 7 j. |
 | `POST /auth/logout/` | `{"refresh"}` | **205**, corps vide | |
 | `GET /auth/me/` | — | 200 (voir ci-dessous) | Le routeur des 3 espaces. |
+| `PATCH /auth/me/` | `{"first_name"?, "last_name"?}` | 200 (payload `me` complet) | Nom d'affichage UNIQUEMENT — `phone` (pivot d'identité) et `username` ne sont jamais modifiables (valeurs soumises ignorées). |
+| `POST /auth/me/avatar/` | **multipart** `file` | 200 `{"avatar": "<url absolue>"}` | Photo de profil de l'utilisateur LUI-MÊME (toute casquette). JPEG/PNG/WebP réels seulement (jamais SVG), 2 Mo max, 2048×2048 max, EXIF strippé, nom de fichier régénéré. 400 : `["Image invalide : formats acceptés JPEG, PNG ou WebP (2 Mo maximum)."]` etc. Remplacement = l'ancien fichier est supprimé du serveur. |
+| `DELETE /auth/me/avatar/` | — | 200 `{"avatar": null}` | 400 si aucun avatar. Fichier physiquement supprimé. |
 
 ### `GET /auth/me/` — routeur des 3 espaces
 
@@ -36,14 +39,18 @@
 {
   "id": 12, "username": "user-2693390011", "first_name": "", "last_name": "",
   "phone": "+2693390011",
+  "avatar": "http://localhost:8000/media/avatars/12/3f2a….jpg",
   "staff_memberships": [
     {"id": 3, "center": {"id": 1, "name": "CHR El-Maarouf", "type": "hopital_public",
-                         "island": "ngazidja", "city": "Moroni"}, "role": "medecin"}
+                         "island": "ngazidja", "city": "Moroni",
+                         "logo": "http://localhost:8000/media/centers/1/logo/9b1c….png"}, "role": "medecin"}
   ],
   "patient_profile": {"id": 7, "first_name": "…", "last_name": "…", "claim_status": "actif"},
   "guardian_profile": {"id": 4, "country_of_residence": "FR", "preferred_currency": "EUR"}
 }
 ```
+
+- `avatar` et `center.logo` : **URL absolue ou `null`** — brancher directement dans `<img src>`. Le logo alimente la sidebar (et l'affichage écran des factures/reçus ; l'impression PDF viendra avec le chantier PDF).
 
 - **Espace centre** : `staff_memberships` non vide (memberships ACTIFS seulement). Rôles : `directeur, medecin, infirmier, sage_femme, secretaire, caissier, pharmacien`. Multi-centres possible → sélecteur ; `center.id` alimente tous les `/centers/{center_pk}/…`.
 - **Espace patient** : `patient_profile !== null` (toujours `claim_status: "actif"` quand présent). `null` → proposer `POST /patients/me/` (porte B).
@@ -106,17 +113,27 @@
 
 Rôles requis notables : BILLING = `directeur, secretaire, caissier` ; cliniques = `medecin, infirmier, sage_femme` (+ `pharmacien` lecture ordonnances) ; directeur seul : staff, litiges resolve, édition centre.
 
-- `GET /centers/` — mes centres. `GET|PATCH /centers/{pk}/` — `{id, name, type(hopital_public|clinique_privee|centre_sante|cabinet|pharmacie), island(ngazidja|ndzuwani|mwali), city, address, phone, email, kyc_status(en_attente|actif|suspendu, read-only), created_at}`. KYC ≠ actif → encaissement bloqué.
+- `GET /centers/` — mes centres. `GET|PATCH /centers/{pk}/` — `{id, name, type(hopital_public|clinique_privee|centre_sante|cabinet|pharmacie), island(ngazidja|ndzuwani|mwali), city, address, phone, email, kyc_status(en_attente|actif|suspendu, read-only), logo(url absolue|null, read-only), created_at}`. KYC ≠ actif → encaissement bloqué.
+- **Logo du centre** (directeur seul) : `POST /centers/{pk}/logo/` — **multipart** `file` → 200 `{"logo": "<url absolue>"}` ; `DELETE` → 200 `{"logo": null}` (400 si aucun logo). Mêmes règles d'upload que l'avatar (JPEG/PNG/WebP réels, 2 Mo, 2048² max, EXIF strippé) ; remplacement/suppression effacent physiquement l'ancien fichier. Jamais via le PATCH JSON du centre.
 - **Patients** : `GET(?q=)|POST /centers/{c}/patients/` ; item `{id, first_name, last_name, birth_date, sex, phone, city, claim_status(non_revendique|invite|actif), created_at}`. Création porte C : + `guardian_phone?`, `guardian_relationship?` (write-only → lien `invitation_envoyee`). PATCH d'un profil revendiqué → 400 (identité gérée par le patient). Fusion : `POST .../patients/merge/` `{"source_id","target_id"}`.
 - **Liens de tutelle d'un patient (routage du partage au guichet)** : `GET /centers/{c}/patients/{pk}/guardian-links/` (rôles BILLING ; patient hors périmètre → 404) → liste paginée `{id, guardian_name, relationship}` — liens **`actif` uniquement**, minimum administratif : jamais de téléphone (tuteur sans nom → nom d'affichage masqué `"+336••••••78"`), jamais de scopes ni d'historique. `id` alimente le `guardian_link` de `POST .../payment-requests/{pk}/share/` (cas Mariama : le patient désigne son tuteur au guichet).
-- **Consultations** : `GET|POST /centers/{c}/encounters/` (+`/{pk}/`). POST (cliniques) : `{patient*, reason*, diagnosis?, occurred_at?, tariff_items?[ids]}`. Lecture selon rôle : clinique → avec `reason`/`diagnosis` ; admin → **sans** (vue exploitation).
+- **Rendez-vous & file du jour** (tout staff actif — la file sert la secrétaire ET le médecin) :
+  - `GET /centers/{c}/appointments/` — **la file du jour** : `?date=YYYY-MM-DD` (défaut **aujourd'hui**, bornes en heure locale Comores), `?practitioner=<id>`, `?status=`. Tri `scheduled_at` croissant, paginé. Item : `{id, patient, patient_name, practitioner(nullable), practitioner_name(nullable), scheduled_at, duration_minutes, end_at, reason, status, reminder_sent_at(nullable), created_at}`. Filtre invalide → 400 par champ.
+  - `status` : `prevu → arrive → honore` ; `prevu → manque` ; `prevu|arrive → annule` (`honore`/`manque`/`annule` finaux).
+  - `reason` = note **opérationnelle** de guichet (visible de tout le staff) — jamais un contenu clinique.
+  - `POST /centers/{c}/appointments/` : `{patient*, scheduled_at*, duration_minutes?(défaut 20, 5–480), practitioner?(nullable — RDV « avec le centre »), reason?}` → 201. Réponse : item + **`overlaps: [ids]`** (chevauchements même praticien, **avertissement non bloquant** — le guichet décide). Passé (tolérance 5 min) → 400 ; patient hors périmètre → 400 `"Ce patient n'est pas connu de ce centre."` ; praticien d'un autre centre → 400 `"Ce praticien n'appartient pas à ce centre."`.
+  - `GET|PATCH /centers/{c}/appointments/{pk}/` — PATCH = déplacement/édition (**seulement si `prevu`**, sinon 400) : `{scheduled_at?, duration_minutes?, practitioner?(null = détacher), reason?}` → 200 + `overlaps`. Un déplacement ré-arme le rappel J-1 (`reminder_sent_at` → null).
+  - Actions (POST sans corps, → 200 item) : `.../check-in/` (→ `arrive`), `.../cancel/`, `.../no-show/` (→ `manque`), `.../honor/` (→ `honore`, exige `arrive`). Transition illégale → 400 `"Transition impossible : …"`.
+  - Rappel J-1 automatique : SMS au patient la veille à 18h (contenu minimal : heure seule — ni motif, ni praticien, ni nom de centre).
+- **Consultations** : `GET|POST /centers/{c}/encounters/` (+`/{pk}/`). POST (cliniques) : `{patient*, reason*, diagnosis?, occurred_at?, tariff_items?[ids], appointment?}` — `appointment` (id d'un RDV du centre, résolu dans son périmètre → 404 sinon) passe le RDV à `honore` automatiquement ; RDV d'un autre patient → 400, RDV déjà clos → 400. Lecture selon rôle : clinique → avec `reason`/`diagnosis` ; admin → **sans** (vue exploitation).
 - **Ordonnances** : `GET|POST /centers/{c}/encounters/{e}/prescriptions/` (POST : `medecin, sage_femme`). **Entrées carnet** : `GET|POST .../record-entries/` (non paginés).
 - **Factures** : `GET|POST /centers/{c}/invoices/` (+`/{pk}/`, `/{pk}/issue/`). Item : `{id, encounter, patient, total_kmf, status(brouillon|emise|payee|annulee), lines[{id,act,label,generic_category,amount_kmf}], created_at}`. Création : `{"encounter", "act_ids"?}`.
 - **Demandes de paiement** : `POST /centers/{c}/invoices/{pk}/payment-requests/` ; `GET /centers/{c}/payment-requests/` (+`/{pk}/`) → `{id, invoice, total_kmf, status, created_by, paid_at, patient_acknowledged_at, shares[{id,guardian_link,shared_at,shared_by}], created_at}` (`paid_at` : ISO-8601 nullable). Actions : `share/`+`unshare/` (`{"guardian_link"}`), `send/`, `confirm-care/` (rôles soins), `close/` → **201 reçu**.
 - **Litiges** : `GET /centers/{c}/disputes/` → `{id, payment_request, opened_by, reason, previous_status, status(ouvert|resolu), resolved_by, resolution_note, resolved_at, created_at}` ; `POST .../{pk}/resolve/` `{"resolution_note"}` (directeur).
-- **Personnel** : `GET|POST /centers/{c}/staff/` (directeur) → `{id, user{id,first_name,last_name,phone}, role, is_active, created_at}`. Création : `{phone*, role*, first_name?, last_name?}` (compte ombre si inconnu). `POST .../staff/{pk}/deactivate/`. Jamais de suppression ; dernier directeur indéactivable.
+- **Personnel** : `GET|POST /centers/{c}/staff/` (directeur) → `{id, user{id,first_name,last_name,phone,avatar(url|null)}, role, is_active, created_at}`. Création : `{phone*, role*, first_name?, last_name?}` (compte ombre si inconnu). `POST .../staff/{pk}/deactivate/`. Jamais de suppression ; dernier directeur indéactivable.
+- **Édition d'un membre** (directeur) : `GET|PATCH /centers/{c}/staff/{pk}/` — PATCH `{role?, first_name?, last_name?}` → 200 (item complet). Règles : membership **actif** seulement (sinon 400) ; `role` refuse un rôle déjà détenu dans ce centre et la rétrogradation du **dernier directeur actif** (400 explicites) ; `first_name`/`last_name` modifiables UNIQUEMENT tant que le compte est un compte ombre jamais revendiqué — compte activé (OTP ou mot de passe) → 400 `["Ce compte est activé : seule la personne concernée peut modifier son identité."]`, la personne passe par `PATCH /auth/me/`. Audité (`staff.membership_updated`).
 - **Tarifs** : `GET|POST /centers/{c}/tariffs/` (+`/{pk}/` PATCH) → `{id, code, label, generic_category*, price_kmf, is_active, created_at}` (écriture : directeur, caissier).
 - `generic_category` : `consultation, analyses_examens, medicaments, hospitalisation, acte_technique, soins_infirmiers, maternite, autre`.
 
 ## N'existe PAS côté API (ne pas construire d'écran branché dessus)
-Rendez-vous/agenda, module caisse, lecture du ledger, lecture d'audit, création de centre, reset de mot de passe, messagerie, upload de documents. Les écrans correspondants sont soit à exclure du MVP frontend, soit des placeholders « bientôt » clairement assumés.
+Agenda côté patient/tuteur (les rendez-vous sont une donnée d'exploitation du centre — seul le staff y accède), module caisse, lecture du ledger, lecture d'audit, création de centre, reset de mot de passe, messagerie, upload de documents du carnet (seuls le logo du centre et la photo de profil existent — voir sections Centre et Auth). La photo de profil n'apparaît JAMAIS dans les vues croisées patient/tuteur (le tuteur ne voit pas la photo du patient ni l'inverse) : ne pas prévoir d'emplacement pour. Les écrans correspondants sont soit à exclure du MVP frontend, soit des placeholders « bientôt » clairement assumés.

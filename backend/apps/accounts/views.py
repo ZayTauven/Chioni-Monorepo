@@ -11,6 +11,7 @@
 
 from drf_spectacular.utils import extend_schema
 from rest_framework import status
+from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.throttling import ScopedRateThrottle
@@ -20,12 +21,20 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
 from apps.accounts.serializers import (
+    AvatarUploadSerializer,
     LogoutSerializer,
     MeSerializer,
+    MeUpdateSerializer,
     OtpRequestSerializer,
     OtpVerifySerializer,
 )
-from apps.accounts.services import request_otp, verify_otp
+from apps.accounts.services import (
+    remove_user_avatar,
+    request_otp,
+    set_user_avatar,
+    update_own_identity,
+    verify_otp,
+)
 from apps.accounts.throttling import (
     OtpRequestPerIpThrottle,
     OtpRequestPerPhoneThrottle,
@@ -33,6 +42,7 @@ from apps.accounts.throttling import (
 )
 from apps.common.permissions import claimed_patient_profile, guardian_profile
 from apps.common.permissions import active_membership_qs
+from apps.common.uploads import media_url
 
 #: The ONE response body of `/auth/otp/request/` — byte-identical whether
 #: the phone matches an account, a shadow account or nothing (ADR 0010).
@@ -43,19 +53,29 @@ OTP_REQUEST_RESPONSE = {
 }
 
 
-def me_payload(user):
+def me_payload(user, request=None):
     """Identity + hats aggregate serialised by ``MeSerializer`` (`/auth/me/`
-    and the OTP verify response share this exact contract)."""
+    and the OTP verify response share this exact contract). ``request``
+    makes ``avatar`` (and nested center ``logo``, via serializer context)
+    an ABSOLUTE URL — pass it whenever one is available."""
     return {
         "id": user.pk,
         "username": user.username,
         "first_name": user.first_name,
         "last_name": user.last_name,
         "phone": user.phone,
+        "avatar": media_url(request, user.avatar),
         "staff_memberships": active_membership_qs(user).select_related("center"),
         "patient_profile": claimed_patient_profile(user),
         "guardian_profile": guardian_profile(user),
     }
+
+
+def me_response(user, request):
+    """The one `me` shape (context carried so nested URLs are absolute)."""
+    return MeSerializer(
+        me_payload(user, request), context={"request": request}
+    ).data
 
 
 class ThrottledTokenObtainPairView(TokenObtainPairView):
@@ -97,11 +117,45 @@ class LogoutView(APIView):
 
 
 class MeView(APIView):
-    """Identity + hats of the current user (routes the three spaces)."""
+    """Identity + hats of the current user (routes the three spaces).
+
+    PATCH edits the display name ONLY (any authenticated hat) — the phone
+    is the identity pivot and stays untouchable here.
+    """
 
     @extend_schema(responses=MeSerializer)
     def get(self, request):
-        return Response(MeSerializer(me_payload(request.user)).data)
+        return Response(me_response(request.user, request))
+
+    @extend_schema(request=MeUpdateSerializer, responses=MeSerializer)
+    def patch(self, request):
+        serializer = MeUpdateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        update_own_identity(user=request.user, **serializer.validated_data)
+        return Response(me_response(request.user, request))
+
+
+class MeAvatarView(APIView):
+    """`POST|DELETE /auth/me/avatar/` — the user's OWN profile photo.
+
+    Any authenticated user (staff, patient, guardian — the avatar belongs
+    to the account, not to a hat). Upload goes through the hardened
+    pipeline; replacement and removal leave no orphan file behind.
+    """
+
+    parser_classes = [MultiPartParser, FormParser]
+
+    @extend_schema(request=AvatarUploadSerializer, responses={200: None})
+    def post(self, request):
+        serializer = AvatarUploadSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        set_user_avatar(user=request.user, uploaded_file=serializer.validated_data["file"])
+        return Response({"avatar": media_url(request, request.user.avatar)})
+
+    @extend_schema(responses={200: None})
+    def delete(self, request):
+        remove_user_avatar(user=request.user)
+        return Response({"avatar": None})
 
 
 class OtpRequestView(APIView):
@@ -150,7 +204,7 @@ class OtpVerifyView(APIView):
             {
                 "access": str(refresh.access_token),
                 "refresh": str(refresh),
-                "me": MeSerializer(me_payload(user)).data,
+                "me": me_response(user, request),
             },
             status=status.HTTP_200_OK,
         )

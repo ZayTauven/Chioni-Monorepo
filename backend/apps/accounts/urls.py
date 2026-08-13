@@ -4,6 +4,7 @@ from django.urls import path
 
 from apps.accounts.views import (
     LogoutView,
+    MeAvatarView,
     MeView,
     OtpRequestView,
     OtpVerifyView,
@@ -22,4 +23,5 @@ urlpatterns = [
     ),
     path("logout/", LogoutView.as_view(), name="logout"),
     path("me/", MeView.as_view(), name="me"),
+    path("me/avatar/", MeAvatarView.as_view(), name="me_avatar"),
 ]

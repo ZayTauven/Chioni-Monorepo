@@ -5,7 +5,9 @@ from django.urls import path
 from apps.centers.views import (
     CenterDetailView,
     CenterListView,
+    CenterLogoView,
     StaffDeactivateView,
+    StaffDetailView,
     StaffListCreateView,
     TariffDetailView,
     TariffListCreateView,
@@ -16,7 +18,13 @@ app_name = "centers"
 urlpatterns = [
     path("", CenterListView.as_view(), name="center-list"),
     path("<int:pk>/", CenterDetailView.as_view(), name="center-detail"),
+    path("<int:pk>/logo/", CenterLogoView.as_view(), name="center-logo"),
     path("<int:center_pk>/staff/", StaffListCreateView.as_view(), name="staff-list"),
+    path(
+        "<int:center_pk>/staff/<int:pk>/",
+        StaffDetailView.as_view(),
+        name="staff-detail",
+    ),
     path(
         "<int:center_pk>/staff/<int:pk>/deactivate/",
         StaffDeactivateView.as_view(),

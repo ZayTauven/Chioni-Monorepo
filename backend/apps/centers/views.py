@@ -5,21 +5,29 @@ caller has no active membership answers 404, whatever their other hats.
 """
 
 from django.shortcuts import get_object_or_404
+from drf_spectacular.utils import extend_schema
 from rest_framework import generics, status
+from rest_framework.exceptions import NotFound
+from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.centers.models import HealthCenter, StaffMembership, TariffItem
 from apps.centers.serializers import (
     HealthCenterSerializer,
+    LogoUploadSerializer,
     StaffCreateSerializer,
     StaffMembershipSerializer,
+    StaffUpdateSerializer,
     TariffItemSerializer,
 )
 from apps.centers.services import (
     add_staff_member,
     deactivate_staff_member,
+    remove_center_logo,
+    set_center_logo,
     update_center,
+    update_staff_member,
     update_tariff,
     create_tariff,
 )
@@ -29,6 +37,7 @@ from apps.common.permissions import (
     StaffOfObjectCenter,
     user_centers_qs,
 )
+from apps.common.uploads import media_url
 
 DIRECTOR = StaffMembership.Role.DIRECTOR
 CASHIER = StaffMembership.Role.CASHIER
@@ -69,6 +78,44 @@ class CenterDetailView(generics.RetrieveUpdateAPIView):
         )
 
 
+class CenterLogoView(APIView):
+    """`POST|DELETE /centers/{pk}/logo/` — director only.
+
+    Same resolution semantics as `/centers/{pk}/`: the center is looked up
+    in the caller's membership perimeter (foreign center → deterministic
+    404), then ``StaffOfObjectCenter(directeur)`` answers 403 for any other
+    role. Upload is multipart, sanitised by the hardened pipeline; replace
+    and delete leave no orphan file on disk.
+    """
+
+    parser_classes = [MultiPartParser, FormParser]
+    permission_classes = [StaffOfObjectCenter(DIRECTOR)]
+
+    def _get_center(self, request, pk):
+        center = user_centers_qs(request.user).filter(pk=pk).first()
+        if center is None:
+            raise NotFound("Centre introuvable.")
+        self.check_object_permissions(request, center)
+        return center
+
+    @extend_schema(request=LogoUploadSerializer, responses={200: None})
+    def post(self, request, pk):
+        center = self._get_center(request, pk)
+        serializer = LogoUploadSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        set_center_logo(
+            actor=request.user, center=center,
+            uploaded_file=serializer.validated_data["file"],
+        )
+        return Response({"logo": media_url(request, center.logo)})
+
+    @extend_schema(responses={200: None})
+    def delete(self, request, pk):
+        center = self._get_center(request, pk)
+        remove_center_logo(actor=request.user, center=center)
+        return Response({"logo": None})
+
+
 class StaffListCreateView(CenterScopedViewMixin, generics.ListCreateAPIView):
     """GET/POST /centers/{center_pk}/staff/ — director only."""
 
@@ -93,8 +140,45 @@ class StaffListCreateView(CenterScopedViewMixin, generics.ListCreateAPIView):
             actor=request.user, center=self.center, **serializer.validated_data
         )
         return Response(
-            StaffMembershipSerializer(membership).data,
+            StaffMembershipSerializer(
+                membership, context=self.get_serializer_context()
+            ).data,
             status=status.HTTP_201_CREATED,
+        )
+
+
+class StaffDetailView(CenterScopedViewMixin, generics.RetrieveUpdateAPIView):
+    """GET|PATCH /centers/{center_pk}/staff/{pk}/ — director only.
+
+    PATCH: role change on an ACTIVE membership, and first/last name of the
+    person ONLY while their account is a never-claimed shadow (an activated
+    account manages its own identity — same rule as patient profiles,
+    R-API-2). Business guards (last director, duplicate role) live in
+    ``services.update_staff_member``.
+    """
+
+    permission_classes = [IsStaffOfCenter(DIRECTOR)]
+    http_method_names = ["get", "patch", "head", "options"]
+
+    def get_queryset(self):
+        return StaffMembership.objects.for_center(self.center).select_related("user")
+
+    def get_serializer_class(self):
+        if self.request.method == "PATCH":
+            return StaffUpdateSerializer
+        return StaffMembershipSerializer
+
+    def patch(self, request, *args, **kwargs):
+        membership = self.get_object()
+        serializer = StaffUpdateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        update_staff_member(
+            actor=request.user, membership=membership, **serializer.validated_data
+        )
+        return Response(
+            StaffMembershipSerializer(
+                membership, context=self.get_serializer_context()
+            ).data
         )
 
 
@@ -111,7 +195,11 @@ class StaffDeactivateView(CenterScopedViewMixin, APIView):
             StaffMembership.objects.for_center(self.center), pk=pk
         )
         deactivate_staff_member(actor=request.user, membership=membership)
-        return Response(StaffMembershipSerializer(membership).data)
+        return Response(
+            StaffMembershipSerializer(
+                membership, context={"request": request}
+            ).data
+        )
 
 
 class TariffListCreateView(CenterScopedViewMixin, generics.ListCreateAPIView):

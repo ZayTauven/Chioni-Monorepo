@@ -15,16 +15,26 @@ from rest_framework import serializers
 
 from apps.centers.models import HealthCenter, StaffMembership
 from apps.common.phones import normalize_phone
+from apps.common.uploads import media_url
 from apps.patients.models import GuardianProfile, PatientProfile
 
 
 class _CenterLabelSerializer(serializers.ModelSerializer):
-    """Minimal center label embedded in memberships (id + display data)."""
+    """Minimal center label embedded in memberships (id + display data).
+
+    ``logo`` rides along so the frontend can brand the sidebar as soon as
+    `/auth/me/` answers, without an extra center fetch.
+    """
+
+    logo = serializers.SerializerMethodField()
 
     class Meta:
         model = HealthCenter
-        fields = ["id", "name", "type", "island", "city"]
+        fields = ["id", "name", "type", "island", "city", "logo"]
         read_only_fields = fields
+
+    def get_logo(self, obj):
+        return media_url(self.context.get("request"), obj.logo)
 
 
 class _StaffMembershipSerializer(serializers.ModelSerializer):
@@ -51,16 +61,48 @@ class _OwnGuardianProfileSerializer(serializers.ModelSerializer):
 
 
 class MeSerializer(serializers.Serializer):
-    """Identity + hats of the current user (read-only aggregate)."""
+    """Identity + hats of the current user (read-only aggregate).
+
+    ``avatar`` is the pre-resolved absolute URL (or null) computed by
+    ``views.me_payload`` — the user's own photo, shown to themself here and
+    to colleagues through the staff directory, never in patient/guardian
+    cross views.
+    """
 
     id = serializers.IntegerField(read_only=True)
     username = serializers.CharField(read_only=True)
     first_name = serializers.CharField(read_only=True)
     last_name = serializers.CharField(read_only=True)
     phone = serializers.CharField(read_only=True, allow_null=True)
+    avatar = serializers.CharField(read_only=True, allow_null=True)
     staff_memberships = _StaffMembershipSerializer(many=True, read_only=True)
     patient_profile = _OwnPatientProfileSerializer(read_only=True, allow_null=True)
     guardian_profile = _OwnGuardianProfileSerializer(read_only=True, allow_null=True)
+
+
+class MeUpdateSerializer(serializers.Serializer):
+    """Body of `PATCH /auth/me/` — display name ONLY.
+
+    Neither ``phone`` (identity pivot, changed only through a dedicated
+    OTP-verified flow — future chantier) nor ``username`` (technical key)
+    is ever writable; unknown keys are ignored by DRF.
+    """
+
+    first_name = serializers.CharField(
+        max_length=150, required=False, allow_blank=True
+    )
+    last_name = serializers.CharField(
+        max_length=150, required=False, allow_blank=True
+    )
+
+
+class AvatarUploadSerializer(serializers.Serializer):
+    """Multipart body of `POST /auth/me/avatar/` — deep validation (real
+    format, size, dimensions) happens in the upload pipeline."""
+
+    file = serializers.FileField(
+        error_messages={"required": "Le fichier image est requis."},
+    )
 
 
 class LogoutSerializer(serializers.Serializer):

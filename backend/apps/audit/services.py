@@ -62,6 +62,9 @@ class AuditAction:
     # Center staff & money-adjacent configuration
     STAFF_CREATED = "staff.membership_created"
     STAFF_DEACTIVATED = "staff.membership_deactivated"
+    # Role change and/or shadow-account identity edit by the director
+    # (payload refs: old_role/role + comma-joined changed fields).
+    STAFF_UPDATED = "staff.membership_updated"
     CENTER_UPDATED = "center.updated"
     TARIFF_CREATED = "tariff.created"
     TARIFF_UPDATED = "tariff.updated"

@@ -33,6 +33,7 @@ from apps.medical.services import (
     create_record_entry,
 )
 from apps.patients.views import center_patients_qs
+from apps.scheduling.models import Appointment
 
 #: Roles allowed to produce AND read clinical content (R-API-1).
 CLINICAL_ROLES = (
@@ -109,6 +110,14 @@ class CenterEncounterListCreateView(CenterScopedViewMixin, generics.ListCreateAP
             get_object_or_404(TariffItem.objects.for_center(self.center), pk=pk)
             for pk in data["tariff_items"]
         ]
+        appointment = None
+        if data.get("appointment") is not None:
+            # Center-scoped resolution (IDOR → 404); the service then checks
+            # the appointment concerns the SAME patient (400) and honors it.
+            appointment = get_object_or_404(
+                Appointment.objects.for_center(self.center),
+                pk=data["appointment"],
+            )
         practitioner = (
             active_membership_qs(request.user, center=self.center, roles=CLINICAL_ROLES)
             .order_by("id")
@@ -123,6 +132,7 @@ class CenterEncounterListCreateView(CenterScopedViewMixin, generics.ListCreateAP
             diagnosis=data.get("diagnosis", ""),
             occurred_at=data.get("occurred_at"),
             tariff_items=tariffs,
+            appointment=appointment,
         )
         return Response(
             EncounterClinicalSerializer(encounter).data,  # creator IS clinical

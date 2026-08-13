@@ -10,6 +10,7 @@ from django.db import transaction
 
 from apps.audit.services import AuditAction, audit
 from apps.centers.models import StaffMembership, TariffItem
+from apps.common.uploads import clear_file, process_image_upload, replace_file
 from apps.patients.services import get_or_create_shadow_user
 
 
@@ -36,6 +37,22 @@ def add_staff_member(*, actor, center, phone, role, first_name="", last_name="")
     return membership
 
 
+def _is_last_active_director(membership):
+    """True when ``membership`` is the ONLY active director of its center.
+
+    Shared guard: losing the last director (by deactivation OR by demotion
+    to another role) would lock the tenant out of its own space.
+    """
+    if membership.role != StaffMembership.Role.DIRECTOR:
+        return False
+    return not (
+        StaffMembership.objects.for_center(membership.center)
+        .filter(role=StaffMembership.Role.DIRECTOR, is_active=True)
+        .exclude(pk=membership.pk)
+        .exists()
+    )
+
+
 @transaction.atomic
 def deactivate_staff_member(*, actor, membership):
     """Director deactivates a membership (never deleted — history stays).
@@ -45,16 +62,10 @@ def deactivate_staff_member(*, actor, membership):
     """
     if not membership.is_active:
         raise ValidationError("Ce membre est déjà désactivé.")
-    if membership.role == StaffMembership.Role.DIRECTOR:
-        other_directors = (
-            StaffMembership.objects.for_center(membership.center)
-            .filter(role=StaffMembership.Role.DIRECTOR, is_active=True)
-            .exclude(pk=membership.pk)
+    if _is_last_active_director(membership):
+        raise ValidationError(
+            "Impossible de désactiver le dernier directeur actif du centre."
         )
-        if not other_directors.exists():
-            raise ValidationError(
-                "Impossible de désactiver le dernier directeur actif du centre."
-            )
     membership.is_active = False
     membership.save(update_fields=["is_active", "updated_at"])
     audit(
@@ -62,6 +73,69 @@ def deactivate_staff_member(*, actor, membership):
         membership_id=membership.pk, center_id=membership.center_id,
         user_id=membership.user_id, role=membership.role,
     )
+    return membership
+
+
+@transaction.atomic
+def update_staff_member(*, actor, membership, role=None, first_name=None, last_name=None):
+    """Director edits an ACTIVE membership: role change and, for shadow
+    accounts only, the person's name.
+
+    Rules (tested in ``tests/test_staff_roles.py``):
+
+    - the membership must be active — a deactivated row is history, not an
+      editable record;
+    - role change refuses a role the user already holds in this center
+      (unique constraint surfaced as a clean French 400) and refuses to
+      demote the LAST active director (same lockout guard as deactivation);
+    - ``first_name``/``last_name`` are writable ONLY while the account is a
+      never-claimed shadow (no verified phone, unusable password) — same
+      rule as patient identity (R-API-2): an activated account manages its
+      own identity through ``PATCH /auth/me/``.
+    """
+    if not membership.is_active:
+        raise ValidationError(
+            "Ce membre est désactivé : seul un membre actif peut être modifié."
+        )
+
+    changed = []
+    if first_name is not None or last_name is not None:
+        user = membership.user
+        if user.phone_verified_at is not None or user.has_usable_password():
+            raise ValidationError(
+                "Ce compte est activé : seule la personne concernée peut "
+                "modifier son identité."
+            )
+        if first_name is not None and first_name != user.first_name:
+            user.first_name = first_name
+            changed.append("first_name")
+        if last_name is not None and last_name != user.last_name:
+            user.last_name = last_name
+            changed.append("last_name")
+        if changed:
+            user.save(update_fields=changed)
+
+    old_role = membership.role
+    if role is not None and role != membership.role:
+        if StaffMembership.objects.filter(
+            user=membership.user, center=membership.center, role=role
+        ).exists():
+            raise ValidationError("Ce membre a déjà ce rôle dans ce centre.")
+        if _is_last_active_director(membership):
+            raise ValidationError(
+                "Impossible de rétrograder le dernier directeur actif du centre."
+            )
+        membership.role = role
+        membership.save(update_fields=["role", "updated_at"])
+        changed.append("role")
+
+    if changed:
+        audit(
+            actor=actor, action=AuditAction.STAFF_UPDATED, target=membership,
+            membership_id=membership.pk, center_id=membership.center_id,
+            user_id=membership.user_id, old_role=old_role, role=membership.role,
+            fields=",".join(sorted(changed)),
+        )
     return membership
 
 
@@ -76,6 +150,38 @@ def update_center(*, actor, center, **fields):
     audit(
         actor=actor, action=AuditAction.CENTER_UPDATED, target=center,
         center_id=center.pk, fields=",".join(sorted(fields)),
+    )
+    return center
+
+
+@transaction.atomic
+def set_center_logo(*, actor, center, uploaded_file):
+    """Director sets/replaces the center logo.
+
+    The file goes through the hardened pipeline (apps/common/uploads.py:
+    JPEG/PNG/WebP by real content, 2 Mo, 2048², metadata stripped, uuid
+    name) BEFORE any write. Replacement is orphan-free: the row is saved
+    pointing at the new file, then the previous file is physically deleted
+    (``replace_file``). Audited as a center update — the logo appears on
+    receipts, so changing it is a trust-surface action.
+    """
+    content = process_image_upload(uploaded_file)
+    replace_file(center, "logo", content)
+    audit(
+        actor=actor, action=AuditAction.CENTER_UPDATED, target=center,
+        center_id=center.pk, fields="logo",
+    )
+    return center
+
+
+@transaction.atomic
+def remove_center_logo(*, actor, center):
+    """Director removes the logo — physical file deleted, no orphans."""
+    if not clear_file(center, "logo"):
+        raise ValidationError("Ce centre n'a pas de logo.")
+    audit(
+        actor=actor, action=AuditAction.CENTER_UPDATED, target=center,
+        center_id=center.pk, fields="logo", cleared=True,
     )
     return center
 

@@ -80,6 +80,33 @@ def make_link(guardian=None, patient=None, status=GuardianLink.Status.ACTIVE):
     )
 
 
+def make_appointment(
+    patient=None, center=None, practitioner=None, scheduled_at=None,
+    created_by=None, **kwargs,
+):
+    """Direct ORM creation (bypasses the service's past-guard on purpose:
+    tests need historical rows too). Default slot: tomorrow 10:00 local."""
+    from datetime import datetime, time, timedelta
+
+    from django.utils import timezone
+
+    from apps.scheduling.models import Appointment
+
+    center = center or make_center()
+    if scheduled_at is None:
+        scheduled_at = timezone.make_aware(
+            datetime.combine(timezone.localdate() + timedelta(days=1), time(10, 0))
+        )
+    return Appointment.objects.create(
+        center=center,
+        patient=patient or make_patient(),
+        practitioner=practitioner,
+        scheduled_at=scheduled_at,
+        created_by=created_by or make_user(),
+        **kwargs,
+    )
+
+
 def make_encounter(patient=None, center=None, practitioner=None, **kwargs):
     center = center or make_center()
     kwargs.setdefault("reason", "Céphalées et tension élevée")

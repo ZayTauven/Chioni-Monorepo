@@ -9,6 +9,7 @@ from django.contrib.auth import get_user_model
 from rest_framework import serializers
 
 from apps.centers.models import HealthCenter, StaffMembership, TariffItem
+from apps.common.uploads import media_url
 
 
 class HealthCenterSerializer(serializers.ModelSerializer):
@@ -16,24 +17,52 @@ class HealthCenterSerializer(serializers.ModelSerializer):
 
     ``kyc_status`` is read-only: KYC transitions belong to the Chioni
     back-office, a tenant must never self-activate its payment capability.
+    ``logo`` is read-only here too: writes go through the dedicated
+    multipart endpoint (`POST/DELETE /centers/{pk}/logo/` — hardened upload
+    pipeline), never through a JSON PATCH.
     """
+
+    logo = serializers.SerializerMethodField()
 
     class Meta:
         model = HealthCenter
         fields = [
             "id", "name", "type", "island", "city",
-            "address", "phone", "email", "kyc_status", "created_at",
+            "address", "phone", "email", "kyc_status", "logo", "created_at",
         ]
-        read_only_fields = ["id", "kyc_status", "created_at"]
+        read_only_fields = ["id", "kyc_status", "logo", "created_at"]
+
+    def get_logo(self, obj):
+        return media_url(self.context.get("request"), obj.logo)
+
+
+class LogoUploadSerializer(serializers.Serializer):
+    """Multipart body of `POST /centers/{pk}/logo/` — deep validation
+    (real format, size, dimensions) happens in the upload pipeline."""
+
+    file = serializers.FileField(
+        error_messages={"required": "Le fichier image est requis."},
+    )
 
 
 class StaffUserSerializer(serializers.ModelSerializer):
-    """Minimal staff identity embedded in memberships (no credentials)."""
+    """Minimal staff identity embedded in memberships (no credentials).
+
+    ``avatar`` is exposed here on purpose: the staff directory of a center
+    shows colleagues' photos. This serializer must NEVER be reused in
+    patient/guardian-facing views (the photo is personal data — it stays
+    inside the professional space).
+    """
+
+    avatar = serializers.SerializerMethodField()
 
     class Meta:
         model = get_user_model()
-        fields = ["id", "first_name", "last_name", "phone"]
+        fields = ["id", "first_name", "last_name", "phone", "avatar"]
         read_only_fields = fields
+
+    def get_avatar(self, obj):
+        return media_url(self.context.get("request"), obj.avatar)
 
 
 class StaffMembershipSerializer(serializers.ModelSerializer):
@@ -60,6 +89,26 @@ class StaffCreateSerializer(serializers.Serializer):
     )
     first_name = serializers.CharField(max_length=150, required=False, default="")
     last_name = serializers.CharField(max_length=150, required=False, default="")
+
+
+class StaffUpdateSerializer(serializers.Serializer):
+    """Audience: director — `PATCH /centers/{c}/staff/{pk}/`.
+
+    All fields optional (partial by nature). The business rules — active
+    membership only, no demotion of the last director, identity writable
+    on never-claimed shadow accounts only — live in
+    ``services.update_staff_member``, not here.
+    """
+
+    role = serializers.ChoiceField(
+        choices=StaffMembership.Role.choices, required=False
+    )
+    first_name = serializers.CharField(
+        max_length=150, required=False, allow_blank=True
+    )
+    last_name = serializers.CharField(
+        max_length=150, required=False, allow_blank=True
+    )
 
 
 class TariffItemSerializer(serializers.ModelSerializer):

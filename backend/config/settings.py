@@ -9,6 +9,7 @@ from datetime import timedelta
 from pathlib import Path
 
 import environ
+from celery.schedules import crontab
 from django.core.exceptions import ImproperlyConfigured
 
 # Build paths inside the project like this: BASE_DIR / "subdir".
@@ -48,6 +49,7 @@ INSTALLED_APPS = [
     "apps.centers",
     "apps.patients",
     "apps.medical",
+    "apps.scheduling",
     "apps.trustbridge",
     "apps.audit",
 ]
@@ -137,6 +139,17 @@ USE_TZ = True
 # ---------------------------------------------------------------------------
 
 STATIC_URL = "static/"
+
+# ---------------------------------------------------------------------------
+# Media — user uploads (center logos, profile avatars)
+# ---------------------------------------------------------------------------
+
+# Every uploaded file goes through apps/common/uploads.py (hardened pipeline:
+# real-format whitelist, Pillow verification, re-encode stripping metadata,
+# uuid filenames). Django serves MEDIA_URL itself ONLY in DEBUG (config/urls.py);
+# deployed environments must front it with the web server / object storage.
+MEDIA_URL = "/media/"
+MEDIA_ROOT = BASE_DIR / "media"
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
@@ -342,6 +355,14 @@ CELERY_BEAT_SCHEDULE = {
     "cancel-stale-payment-intents": {
         "task": "trustbridge.cancel_stale_intents",
         "schedule": timedelta(hours=1),
+    },
+    # J-1 appointment reminders (apps/scheduling/tasks.py — ADR 0013):
+    # daily at 18:00 COMOROS time (crontab is evaluated in CELERY_TIMEZONE,
+    # which follows TIME_ZONE = Indian/Comoro). SMS content per ADR 0012:
+    # never the reason, the practitioner, nor the center name.
+    "send-appointment-reminders": {
+        "task": "scheduling.send_appointment_reminders",
+        "schedule": crontab(hour=18, minute=0),
     },
 }
 

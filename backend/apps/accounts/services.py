@@ -32,6 +32,7 @@ from django.utils.crypto import constant_time_compare, salted_hmac
 from apps.accounts.models import OtpCode
 from apps.accounts.tasks import send_sms
 from apps.audit.services import AuditAction, audit
+from apps.common.uploads import clear_file, process_image_upload, replace_file
 from apps.patients.models import GuardianLink, PatientProfile
 from apps.patients.services import claim_profile
 
@@ -48,6 +49,50 @@ OTP_SMS_TEMPLATE = (
     "Chioni : votre code de connexion est {code}. "
     "Il expire dans 10 minutes. Ne le partagez avec personne."
 )
+
+
+# ---------------------------------------------------------------------------
+# Own profile — name and avatar (the user about THEMSELF, any hat)
+# ---------------------------------------------------------------------------
+
+
+def update_own_identity(*, user, first_name=None, last_name=None):
+    """`PATCH /auth/me/` — the user edits their OWN display name.
+
+    Deliberately narrow: first/last name ONLY. The phone is the identity
+    pivot (verified by OTP — ADR 0001/0010) and the username is a technical
+    key: neither is ever writable here. Not audited: renaming oneself is
+    not in the sensitive catalogue (money/medical/consents/roles) — a THIRD
+    PARTY writing someone's name (director on a shadow staff account) is,
+    and goes through ``update_staff_member`` which audits.
+    """
+    changed = []
+    if first_name is not None and first_name != user.first_name:
+        user.first_name = first_name
+        changed.append("first_name")
+    if last_name is not None and last_name != user.last_name:
+        user.last_name = last_name
+        changed.append("last_name")
+    if changed:
+        user.save(update_fields=changed)
+    return user
+
+
+def set_user_avatar(*, user, uploaded_file):
+    """Set/replace the user's profile photo — hardened pipeline first
+    (JPEG/PNG/WebP by real content, 2 Mo, 2048², metadata stripped, uuid
+    name), then orphan-free replacement (``replace_file``: row saved on the
+    new file, previous file physically deleted)."""
+    content = process_image_upload(uploaded_file)
+    replace_file(user, "avatar", content)
+    return user
+
+
+def remove_user_avatar(*, user):
+    """Remove the profile photo — physical file deleted, no orphans."""
+    if not clear_file(user, "avatar"):
+        raise ValidationError("Aucune photo de profil à retirer.")
+    return user
 
 
 # ---------------------------------------------------------------------------

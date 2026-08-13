@@ -16,6 +16,16 @@ def fast_password_hashing(settings):
 
 
 @pytest.fixture(autouse=True)
+def isolated_media_root(settings, tmp_path):
+    """Uploads land in a per-test temp directory, never in backend/media/.
+
+    Also what makes the « no orphan file » assertions deterministic: each
+    test starts from an empty storage root.
+    """
+    settings.MEDIA_ROOT = tmp_path / "media"
+
+
+@pytest.fixture(autouse=True)
 def isolated_throttle_cache():
     """DRF throttles (R-API-4) count hits in the default cache, which
     survives across tests in-process: clear it so a test's auth calls never

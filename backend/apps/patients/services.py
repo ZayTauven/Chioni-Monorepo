@@ -550,6 +550,11 @@ def merge_profiles(*, source, target, actor, center):
 
     - **Encounters and health record entries** → re-anchored on the target
       (the carnet belongs to the patient; fragments must reunite).
+    - **Appointments** → re-anchored on the target too (revue adversariale
+      vague 1) : un RDV laissé sur le tombstone enverrait le rappel J-1 au
+      téléphone déclaratif du doublon (potentiellement celui d'un tiers) et
+      rendrait le RDV inhonorable via la création d'encounter (le POST
+      résout le patient parmi les profils canoniques seulement).
     - **Guardian links** → moved to the target; when the same guardian
       already has a link on the target (or would become guardian of their
       own profile), the source link is REVOKED instead (its consents die
@@ -644,6 +649,17 @@ def merge_profiles(*, source, target, actor, center):
         entry.save(update_fields=["patient", "updated_at"])
         entries_moved += 1
 
+    # 2 bis. Appointments — same reunification as the carnet (whatever the
+    # center: encounters above move regardless of center too). Local import
+    # mirroring apps.medical.services: scheduling stays a leaf dependency.
+    from apps.scheduling.models import Appointment
+
+    appointments_moved = 0
+    for appointment in Appointment.objects.filter(patient=source):
+        appointment.patient = target
+        appointment.save(update_fields=["patient", "updated_at"])
+        appointments_moved += 1
+
     # 3. Claimed user transfer (at most one side claimed — checked above).
     user_transferred = False
     if source.user_id and not target.user_id:
@@ -685,6 +701,7 @@ def merge_profiles(*, source, target, actor, center):
         links_moved=moved_links, links_revoked=revoked_links,
         links_suspended=suspended_links,
         encounters_moved=encounters_moved, entries_moved=entries_moved,
+        appointments_moved=appointments_moved,
         user_transferred=user_transferred,
     )
     if suspended_links:
