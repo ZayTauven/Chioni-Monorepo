@@ -1,0 +1,202 @@
+"""Dev command ``seed_demo`` — the demo stage for the three spaces.
+
+Contract under test:
+
+- one run builds the WHOLE scenario through the legal write paths only:
+  KYC-active center, staff, tariffs, claimed patient, ACTIVE
+  patient-initiated guardian link, a second link parked behind the
+  claimant-confirmation gate, a SENT payment request shared with the
+  active guardian, a draft invoice, carnet entries and a prescription;
+- the command is IDEMPOTENT: a second run duplicates nothing;
+- DEBUG=False refuses to run (published demo password — dev only).
+
+NB: the test runner forces ``DEBUG=False`` (``setup_test_environment``),
+so nominal cases opt back in with ``override_settings(DEBUG=True)``.
+"""
+
+from decimal import Decimal
+from io import StringIO
+
+import pytest
+from django.contrib.auth import get_user_model
+from django.core.management import call_command
+from django.core.management.base import CommandError
+from django.test import override_settings
+
+from apps.centers.models import HealthCenter, StaffMembership, TariffItem
+from apps.common.models import ActCategory
+from apps.medical.models import Consent, Encounter, HealthRecordEntry, Prescription
+from apps.patients.models import GuardianLink, GuardianProfile, PatientProfile
+from apps.trustbridge.models import Invoice, PaymentRequest, PaymentRequestShare
+
+pytestmark = pytest.mark.django_db
+
+User = get_user_model()
+Role = StaffMembership.Role
+
+
+def run_command():
+    out = StringIO()
+    call_command("seed_demo", stdout=out)
+    return out.getvalue()
+
+
+class TestSeedDemoScenario:
+    @override_settings(DEBUG=True)
+    def test_creates_center_staff_and_tariffs(self):
+        run_command()
+
+        center = HealthCenter.objects.get(name="Clinique Ylang")
+        assert center.type == HealthCenter.Type.PRIVATE_CLINIC
+        assert center.island == HealthCenter.Island.NGAZIDJA
+        assert center.kyc_status == HealthCenter.KycStatus.ACTIVE
+
+        admin = User.objects.get(username="admin")
+        assert admin.is_superuser
+
+        memberships = {
+            m.role: m
+            for m in StaffMembership.objects.for_center(center).select_related("user")
+        }
+        assert set(memberships) == {
+            Role.DIRECTOR, Role.DOCTOR, Role.SECRETARY, Role.CASHIER
+        }
+        assert all(m.is_active for m in memberships.values())
+        assert memberships[Role.DIRECTOR].user.username == "directeur.demo"
+        assert memberships[Role.DOCTOR].user.username == "medecin.demo"
+        # Staff log in with the shared demo password (staff screen / admin).
+        assert memberships[Role.CASHIER].user.check_password("ChioniDemo!2026")
+
+        tariffs = {
+            t.code: t for t in TariffItem.objects.for_center(center)
+        }
+        assert tariffs["CONS01"].price_kmf == Decimal("5000")
+        assert tariffs["CONS01"].generic_category == ActCategory.CONSULTATION
+        assert tariffs["ANAL01"].price_kmf == Decimal("15000")
+        assert tariffs["ANAL01"].generic_category == ActCategory.ANALYSES_EXAMENS
+        assert tariffs["MEDI01"].price_kmf == Decimal("8000")
+        assert tariffs["MEDI01"].generic_category == ActCategory.MEDICAMENTS
+        assert tariffs["ECHO01"].price_kmf == Decimal("12000")
+        assert tariffs["ECHO01"].generic_category == ActCategory.ACTE_TECHNIQUE
+
+    @override_settings(DEBUG=True)
+    def test_patient_is_claimed_and_links_hold_the_right_states(self):
+        run_command()
+
+        patient_user = User.objects.get(username="patient.demo")
+        assert patient_user.phone == "+2693440001"
+        assert patient_user.phone_verified_at is not None
+        assert patient_user.check_password("ChioniDemo!2026")
+        profile = patient_user.patient_profile
+        assert profile.claim_status == PatientProfile.ClaimStatus.ACTIVE
+        assert profile.first_name == "Anfia"
+
+        # Nassim — patient-initiated invitation, accepted: ACTIVE, and the
+        # link carries exactly the minimal payments scope.
+        link1 = GuardianLink.objects.get(
+            guardian__user__username="tuteur.demo", patient=profile
+        )
+        assert link1.status == GuardianLink.Status.ACTIVE
+        assert link1.initiated_by == GuardianLink.InitiatedBy.PATIENT
+        assert Consent.objects.active_scopes(link1) == frozenset(
+            {Consent.Scope.PAYMENTS}
+        )
+
+        # Rachida — door-A creator whose link was suspended by the claim:
+        # the claimant-confirmation gate, with ZERO visibility meanwhile.
+        link2 = GuardianLink.objects.get(
+            guardian__user__username="tuteur2.demo", patient=profile
+        )
+        assert (
+            link2.status == GuardianLink.Status.PENDING_CLAIMANT_CONFIRMATION
+        )
+        assert Consent.objects.active_scopes(link2) == frozenset()
+
+        guardian = GuardianProfile.objects.get(user__username="tuteur.demo")
+        assert guardian.country_of_residence == "FR"
+        assert guardian.preferred_currency == "EUR"
+
+    @override_settings(DEBUG=True)
+    def test_money_scenario_is_sent_and_a_draft_invoice_remains(self):
+        run_command()
+
+        center = HealthCenter.objects.get(name="Clinique Ylang")
+        payment_request = PaymentRequest.objects.get(invoice__center=center)
+        assert payment_request.status == PaymentRequest.Status.SENT
+        assert payment_request.invoice.total_kmf == Decimal("20000.00")
+        assert payment_request.invoice.status == Invoice.Status.ISSUED
+
+        share = PaymentRequestShare.objects.get(payment_request=payment_request)
+        assert (
+            share.guardian_link.guardian.user.username == "tuteur.demo"
+        )
+
+        draft = Invoice.objects.get(center=center, status=Invoice.Status.DRAFT)
+        assert draft.total_kmf == Decimal("20000.00")  # écho + médicaments
+        assert Encounter.objects.for_center(center).count() == 2
+
+    @override_settings(DEBUG=True)
+    def test_health_record_and_prescription_are_seeded(self):
+        run_command()
+
+        profile = User.objects.get(username="patient.demo").patient_profile
+        entries = HealthRecordEntry.objects.for_patient(profile)
+        assert entries.count() == 2
+        assert set(entries.values_list("entry_type", flat=True)) == {
+            HealthRecordEntry.EntryType.HISTORY,
+            HealthRecordEntry.EntryType.CURRENT_TREATMENT,
+        }
+        prescription = Prescription.objects.get(encounter__patient=profile)
+        assert prescription.items.count() == 2
+
+    @override_settings(DEBUG=True)
+    def test_recap_output_names_the_accounts_and_the_demo_flow(self):
+        output = run_command()
+
+        assert "ChioniDemo!2026" in output
+        for username in (
+            "admin", "directeur.demo", "medecin.demo", "secretaire.demo",
+            "caissier.demo", "patient.demo", "tuteur.demo", "tuteur2.demo",
+        ):
+            assert username in output
+        assert "simulate_psp_payment --latest" in output
+        assert "20 000 KMF" in output
+
+
+class TestSeedDemoIdempotence:
+    @override_settings(DEBUG=True)
+    def test_running_twice_duplicates_nothing(self):
+        run_command()
+        counts = self._counts()
+        output = run_command()
+        assert self._counts() == counts
+        # The recap still prints in full on a re-run.
+        assert "ChioniDemo!2026" in output
+
+    @staticmethod
+    def _counts():
+        return {
+            "users": User.objects.count(),
+            "centers": HealthCenter.objects.count(),
+            "memberships": StaffMembership.objects.count(),
+            "tariffs": TariffItem.objects.count(),
+            "patients": PatientProfile.objects.count(),
+            "guardians": GuardianProfile.objects.count(),
+            "links": GuardianLink.objects.count(),
+            "encounters": Encounter.objects.count(),
+            "invoices": Invoice.objects.count(),
+            "payment_requests": PaymentRequest.objects.count(),
+            "shares": PaymentRequestShare.objects.count(),
+            "record_entries": HealthRecordEntry.objects.count(),
+            "prescriptions": Prescription.objects.count(),
+        }
+
+
+class TestSeedDemoGuards:
+    @override_settings(DEBUG=False)
+    def test_refuses_to_run_when_debug_is_false(self):
+        with pytest.raises(CommandError, match="DEBUG"):
+            call_command("seed_demo")
+        # Nothing was written before the guard fired.
+        assert User.objects.count() == 0
+        assert HealthCenter.objects.count() == 0

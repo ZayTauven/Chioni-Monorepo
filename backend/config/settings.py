@@ -285,3 +285,30 @@ CELERY_TASK_TRACK_STARTED = True
 # override via env to run through real workers.
 CELERY_TASK_ALWAYS_EAGER = env.bool("CELERY_TASK_ALWAYS_EAGER", default=DEBUG)
 CELERY_TASK_EAGER_PROPAGATES = CELERY_TASK_ALWAYS_EAGER
+
+# ---------------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------------
+
+# Without this block the "chioni.*" loggers propagate to a handler-less root
+# logger and Python only surfaces WARNING+: the console SMS backend's DEBUG
+# line carrying the OTP code (apps/common/sms.py) never showed anywhere, so
+# OTP login was impossible in dev. DEBUG level is what makes the code visible
+# in the runserver terminal — and only there (console/memory backends are
+# refused at boot when DEBUG=False; INFO+ lines never contain a body).
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "simple": {"format": "[{asctime}] {name} {levelname} {message}", "style": "{"},
+    },
+    "handlers": {
+        "console": {"class": "logging.StreamHandler", "formatter": "simple"},
+    },
+    "loggers": {
+        "chioni": {
+            "handlers": ["console"],
+            "level": "DEBUG" if DEBUG else "INFO",
+        },
+    },
+}
