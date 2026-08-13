@@ -28,6 +28,16 @@ class AuditAction:
     tests assert exhaustively that each sensitive service writes its entry.
     """
 
+    # Authentication — phone + OTP SMS (ADR 0010). Payload contract: NEVER
+    # the code, NEVER a clear phone number. Reference the user when one
+    # exists; otherwise `phone_ref` (keyed pseudonymous hash) correlates
+    # entries without storing PII (ADR 0007).
+    OTP_REQUESTED = "auth.otp_requested"
+    OTP_VERIFIED = "auth.otp_verified"
+    OTP_FAILED = "auth.otp_failed"
+    ACCOUNT_CREATED = "auth.account_created"
+    ACCOUNT_ACTIVATED = "auth.account_activated"
+
     # Patient identity
     PATIENT_CREATED = "patient_profile.created"
     PATIENT_CLAIMED = "patient_profile.claimed"

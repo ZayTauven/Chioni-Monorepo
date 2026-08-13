@@ -5,6 +5,8 @@ from django.urls import path
 from apps.accounts.views import (
     LogoutView,
     MeView,
+    OtpRequestView,
+    OtpVerifyView,
     ThrottledTokenObtainPairView,
     ThrottledTokenRefreshView,
 )
@@ -12,6 +14,8 @@ from apps.accounts.views import (
 app_name = "accounts"
 
 urlpatterns = [
+    path("otp/request/", OtpRequestView.as_view(), name="otp_request"),
+    path("otp/verify/", OtpVerifyView.as_view(), name="otp_verify"),
     path("token/", ThrottledTokenObtainPairView.as_view(), name="token_obtain_pair"),
     path(
         "token/refresh/", ThrottledTokenRefreshView.as_view(), name="token_refresh"

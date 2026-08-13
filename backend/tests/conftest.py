@@ -23,3 +23,19 @@ def isolated_throttle_cache():
     cache.clear()
     yield
     cache.clear()
+
+
+@pytest.fixture
+def sms_outbox(settings):
+    """Route SMS to the in-memory backend and expose its outbox.
+
+    Celery runs eager in tests (CELERY_TASK_ALWAYS_EAGER follows DEBUG), so
+    ``send_sms.delay`` lands here synchronously — the list contains
+    ``(phone_e164, message)`` tuples, like Django's mail outbox.
+    """
+    from apps.common.sms import MemorySmsBackend
+
+    settings.SMS_BACKEND = "memory"
+    MemorySmsBackend.sent.clear()
+    yield MemorySmsBackend.sent
+    MemorySmsBackend.sent.clear()

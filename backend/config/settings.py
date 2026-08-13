@@ -158,12 +158,16 @@ REST_FRAMEWORK = {
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
     # Domain services raise Django ValidationError — translate to HTTP 400.
     "EXCEPTION_HANDLER": "apps.common.exceptions.exception_handler",
-    # R-API-4 — scoped throttles for credential-bearing endpoints. The
-    # future OTP endpoints (request/verify) MUST declare their own scopes
-    # here with STRICT caps (SMS cost + brute-force surface).
+    # R-API-4 — scoped throttles for credential-bearing endpoints.
+    # OTP scopes (ADR 0010) are STRICT and multilayered: an SMS endpoint is
+    # both a cost hole and a harassment vector, so the request endpoint is
+    # capped per TARGET PHONE and per CALLER IP independently.
     "DEFAULT_THROTTLE_RATES": {
         "auth_token": env("THROTTLE_AUTH_TOKEN", default="10/min"),
         "auth_refresh": env("THROTTLE_AUTH_REFRESH", default="30/min"),
+        "otp_request_phone": env("THROTTLE_OTP_REQUEST_PHONE", default="3/hour"),
+        "otp_request_ip": env("THROTTLE_OTP_REQUEST_IP", default="10/hour"),
+        "otp_verify_ip": env("THROTTLE_OTP_VERIFY_IP", default="10/hour"),
     },
 }
 
@@ -235,6 +239,25 @@ FX_EUR_KMF_RATE = env("FX_EUR_KMF_RATE", default="491.9678")
 PSP_FEE_PERCENT = env("PSP_FEE_PERCENT", default="2.50")
 
 # ---------------------------------------------------------------------------
+# SMS — OTP login + notifications (ADR 0010, needs study §5.4)
+# ---------------------------------------------------------------------------
+
+# Active SMS backend: "console"/"memory" (dev/tests, nothing leaves the
+# machine) or "stub" (skeleton for the Comorian aggregators — dedicated
+# chantier, boots but refuses to send).
+SMS_BACKEND = env("SMS_BACKEND", default="console")
+
+# Boot guard, same posture as the PSP one above: a deployed instance with a
+# non-sending SMS backend would silently strand every OTP login (patients
+# and guardians locked out) while pretending to work. Fail fast at import.
+if SMS_BACKEND in {"console", "memory"} and not DEBUG:
+    raise ImproperlyConfigured(
+        f"SMS_BACKEND=\"{SMS_BACKEND}\" est interdit hors développement "
+        "(DEBUG=False) : configurez un fournisseur SMS réel (ex. \"stub\" en "
+        "attendant l'agrégateur comorien)."
+    )
+
+# ---------------------------------------------------------------------------
 # Celery (Redis broker)
 # ---------------------------------------------------------------------------
 
@@ -242,3 +265,8 @@ CELERY_BROKER_URL = env("REDIS_URL", default="redis://localhost:6379/0")
 CELERY_RESULT_BACKEND = env("REDIS_URL", default="redis://localhost:6379/0")
 CELERY_TIMEZONE = TIME_ZONE
 CELERY_TASK_TRACK_STARTED = True
+
+# Dev/tests execute tasks inline (no broker needed); deployed environments
+# override via env to run through real workers.
+CELERY_TASK_ALWAYS_EAGER = env.bool("CELERY_TASK_ALWAYS_EAGER", default=DEBUG)
+CELERY_TASK_EAGER_PROPAGATES = CELERY_TASK_ALWAYS_EAGER
