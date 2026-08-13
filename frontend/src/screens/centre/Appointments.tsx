@@ -14,6 +14,7 @@
  * (praticiens actifs sur les 12 derniers mois, contrat § Pilotage).
  */
 import { useEffect, useMemo, useState } from 'react';
+import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import { PageHead } from '@/components/shell/PageHead';
 import { useCenter } from '@/context/CenterContext';
@@ -68,6 +69,22 @@ import {
   useAsync,
   useDebounced,
 } from './shared';
+
+/*
+ * Vue « Calendrier » (grille mois adaptée de l'app Calendar de Vireo) —
+ * chargée à la demande : la file du jour, outil quotidien de la secrétaire,
+ * ne paie pas le poids de la grille.
+ */
+const AppointmentsCalendar = dynamic(() => import('./AppointmentsCalendar'), {
+  ssr: false,
+  loading: () => (
+    <div className="ax-dash-grid">
+      <section className="ax-card ax-col--12" role="region" aria-label="Calendrier des rendez-vous">
+        <CardSkeleton lines={6} />
+      </section>
+    </div>
+  ),
+});
 
 /* ── practitioner directory ── */
 
@@ -603,10 +620,18 @@ function ConfirmRowActionModal({
 export function Appointments() {
   const { centerId } = useCenter();
   const [date, setDate] = useState(todayIsoDate());
+  /** « File du jour » (pointage, vue par défaut) ou « Calendrier » (grille
+   *  mois). L'état de date est PARTAGÉ : choisir un jour dans la grille
+   *  ramène la file du jour sur ce jour. */
+  const [mode, setMode] = useState<'jour' | 'calendrier'>('jour');
   const [statusFilter, setStatusFilter] = useState<AppointmentStatus | ''>('');
   const [practitionerFilter, setPractitionerFilter] = useState<number | ''>('');
   const [page, setPage] = useState(1);
-  const [createOpen, setCreateOpen] = useState(false);
+  /** Date pré-remplie du modal de création (null = fermé) — le bouton
+   *  d'en-tête propose le jour affiché, la grille propose le jour cliqué. */
+  const [createFor, setCreateFor] = useState<string | null>(null);
+  /** Incrémenté après une création : la grille calendrier se recharge. */
+  const [calReload, setCalReload] = useState(0);
   const [editing, setEditing] = useState<Appointment | null>(null);
   const [confirming, setConfirming] = useState<{ appointment: Appointment; action: 'no-show' | 'cancel' } | null>(null);
   const [warning, setWarning] = useState<string | null>(null);
@@ -757,12 +782,38 @@ export function Appointments() {
     <>
       <PageHead
         title="Rendez-vous"
-        subtitle={`File du ${formatWeekdayDate(date)}`}
+        subtitle={
+          mode === 'jour'
+            ? `File du ${formatWeekdayDate(date)}`
+            : 'Vue calendrier — cliquez un jour pour ouvrir sa file'
+        }
         actions={
-          <button type="button" className="ax-btn ax-btn--primary" onClick={() => setCreateOpen(true)}>
-            <IconPlus />
-            <span className="ax-btn__label">Nouveau rendez-vous</span>
-          </button>
+          <>
+            <div className="ax-segment" role="radiogroup" aria-label="Mode d'affichage">
+              <button
+                type="button"
+                className={`ax-segment__option${mode === 'jour' ? ' is-active' : ''}`}
+                role="radio"
+                aria-checked={mode === 'jour'}
+                onClick={() => setMode('jour')}
+              >
+                File du jour
+              </button>
+              <button
+                type="button"
+                className={`ax-segment__option${mode === 'calendrier' ? ' is-active' : ''}`}
+                role="radio"
+                aria-checked={mode === 'calendrier'}
+                onClick={() => setMode('calendrier')}
+              >
+                Calendrier
+              </button>
+            </div>
+            <button type="button" className="ax-btn ax-btn--primary" onClick={() => setCreateFor(date)}>
+              <IconPlus />
+              <span className="ax-btn__label">Nouveau rendez-vous</span>
+            </button>
+          </>
         }
       />
 
@@ -785,6 +836,19 @@ export function Appointments() {
         </div>
       )}
 
+      {mode === 'calendrier' && (
+        <AppointmentsCalendar
+          selectedDate={date}
+          reloadKey={calReload}
+          onPickDay={(picked) => {
+            setDate(picked);
+            setMode('jour');
+          }}
+          onCreate={(picked) => setCreateFor(picked)}
+        />
+      )}
+
+      {mode === 'jour' && (
       <div className="ax-dash-grid">
         <section className="ax-card ax-col--12" role="region" aria-label="File du jour">
           <div className="ax-card__header" style={{ flexWrap: 'wrap', gap: 'var(--ax-space-3)' }}>
@@ -806,7 +870,7 @@ export function Appointments() {
                   : 'La journée est libre pour l’instant — créez le premier rendez-vous.'
               }
               action={
-                <button type="button" className="ax-btn ax-btn--secondary" onClick={() => setCreateOpen(true)}>
+                <button type="button" className="ax-btn ax-btn--secondary" onClick={() => setCreateFor(date)}>
                   <IconPlus />
                   <span className="ax-btn__label">Nouveau rendez-vous</span>
                 </button>
@@ -896,15 +960,17 @@ export function Appointments() {
           )}
         </section>
       </div>
+      )}
 
-      {createOpen && (
+      {createFor !== null && (
         <CreateAppointmentModal
-          defaultDate={date}
-          onClose={() => setCreateOpen(false)}
+          defaultDate={createFor}
+          onClose={() => setCreateFor(null)}
           onCreated={(fresh) => {
-            setCreateOpen(false);
+            setCreateFor(null);
             setWarning(overlapMessage(fresh.overlaps));
             list.reload();
+            setCalReload((k) => k + 1);
           }}
         />
       )}

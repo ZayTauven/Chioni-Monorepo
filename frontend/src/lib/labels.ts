@@ -335,6 +335,43 @@ export function formatShortDate(isoDate: string): string {
   return SHORT_DATE_FORMAT.format(date);
 }
 
+const MONTH_YEAR_FORMAT = new Intl.DateTimeFormat('fr-FR', { month: 'long', year: 'numeric' });
+
+/** "2026-08-01" → "août 2026" (calendar month heading). */
+export function formatMonthYear(isoDate: string): string {
+  const date = new Date(`${isoDate}T12:00:00`);
+  if (Number.isNaN(date.getTime())) return isoDate;
+  return MONTH_YEAR_FORMAT.format(date);
+}
+
+const WEEKDAY_SHORT_FORMAT = new Intl.DateTimeFormat('fr-FR', { weekday: 'short' });
+
+/** Monday-first short weekday names ("lun." … "dim.") — calendar grid header.
+    2024-01-01 is a Monday, so the names come from the locale, not from a
+    hard-coded list (single extraction point for the shikomori i18n). */
+export const WEEKDAY_SHORT_NAMES: string[] = Array.from({ length: 7 }, (_, i) =>
+  WEEKDAY_SHORT_FORMAT.format(new Date(`2024-01-0${1 + i}T12:00:00`)),
+);
+
+/** French plural forms of the appointment statuses, for day-cell counters. */
+const APPOINTMENT_STATUS_COUNT_FORMS: Record<AppointmentStatus, [string, string]> = {
+  prevu: ['prévu', 'prévus'],
+  arrive: ['arrivé', 'arrivés'],
+  honore: ['honoré', 'honorés'],
+  manque: ['manqué', 'manqués'],
+  annule: ['annulé', 'annulés'],
+};
+
+/** ("prevu", 3) → "3 prévus" — calendar day-cell counter. */
+export function appointmentCountLabel(status: AppointmentStatus, count: number): string {
+  return `${count} ${APPOINTMENT_STATUS_COUNT_FORMS[status][count > 1 ? 1 : 0]}`;
+}
+
+/** Overflow line of a calendar day cell: 1 → "+1 autre", 3 → "+3 autres". */
+export function moreAppointmentsLabel(count: number): string {
+  return count > 1 ? `+${count} autres` : '+1 autre';
+}
+
 /** Percentage string from the API ("66.7") → "66,7 %" ; null → "—". */
 export function formatPct(pct: string | null): string {
   if (pct === null) return '—';

@@ -1,1 +1,117 @@
 /* Chioni — screen-specific styles of the centre space. Owned by the centre feature. */
+
+/* ── Rendez-vous : grille calendrier ─────────────────────────────────────────
+   Adapted from the inline <style> block of the Vireo Calendar app
+   (vireo template/src/screens/apps/Calendar.tsx). Changes vs the template:
+   - the day cell is a <div> (it hosts real <button>s: day number, quick-add,
+     event pills — the template nested spans inside a button);
+   - `--c-ink` carries an AA-contrast ink for the small bold time inside a
+     pill (700 stops in light, auto-flipped by the dark primitives);
+   - the fake "now" line (static top:38px) is dropped — honest UI only;
+   - `.ax-cal-count` is new: per-status counters for days whose detail is not
+     loaded (the API is day-scoped — see AppointmentsCalendar.tsx). */
+
+.ax-cal-cell {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  align-items: stretch;
+  text-align: start;
+  min-height: 104px;
+  padding: var(--ax-space-2);
+  background: var(--ax-surface-solid);
+  border-inline-end: 1px solid var(--ax-border);
+  border-block-start: 1px solid var(--ax-border);
+  cursor: pointer;
+  transition: background var(--ax-motion-instant) var(--ax-ease-standard);
+}
+.ax-cal-cell:nth-child(7n) { border-inline-end: 0; }
+.ax-cal-cell:hover { background: var(--ax-fill-hover); }
+.ax-cal-cell--today { background: var(--ax-accent-wash); }
+.ax-cal-cell--selected { box-shadow: inset 0 0 0 2px var(--ax-accent); }
+
+.ax-cal-cell__top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ax-space-1);
+}
+.ax-cal-cell__n {
+  align-self: flex-start;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  font-family: var(--ax-font-mono);
+  font-size: var(--ax-text-xs);
+  color: var(--ax-text-strong);
+  padding: 1px 4px;
+  border-radius: var(--ax-radius-sm);
+}
+.ax-cal-cell__n:hover { background: var(--ax-fill-hover); }
+.ax-cal-cell__n--muted { color: var(--ax-text-subtle); }
+.ax-cal-cell__n--today {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 22px;
+  border-radius: var(--ax-radius-pill);
+  background: var(--ax-accent);
+  color: var(--ax-on-accent);
+  font-weight: 600;
+}
+
+/* Quick-add: revealed on hover / keyboard focus ; always visible on touch. */
+.ax-cal-cell__add { opacity: 0; }
+.ax-cal-cell:hover .ax-cal-cell__add,
+.ax-cal-cell__add:focus-visible { opacity: 1; }
+@media (hover: none) { .ax-cal-cell__add { opacity: 1; } }
+
+.ax-cal-event {
+  display: block;
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 2px 7px;
+  font: inherit;
+  font-size: var(--ax-text-xs);
+  text-align: start;
+  color: var(--ax-text-strong);
+  border: 0;
+  border-radius: var(--ax-radius-sm);
+  background: color-mix(in oklab, var(--c) 16%, transparent);
+  border-inline-start: 3px solid var(--c);
+  cursor: pointer;
+}
+.ax-cal-event b {
+  font-family: var(--ax-font-mono);
+  font-weight: 600;
+  color: var(--c-ink, var(--c));
+  margin-inline-end: 3px;
+}
+.ax-cal-event:hover { background: color-mix(in oklab, var(--c) 26%, transparent); }
+
+.ax-cal-more {
+  font-size: var(--ax-text-2xs);
+  color: var(--ax-text-muted);
+  padding: 1px 7px;
+  font-weight: var(--ax-weight-medium);
+}
+.ax-cal-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 1px 7px;
+  font-size: var(--ax-text-xs);
+  color: var(--ax-text);
+}
+.ax-cal-count i {
+  width: 9px;
+  height: 9px;
+  border-radius: 3px;
+  flex: 0 0 auto;
+}
+
+@media (max-width: 768px) { .ax-cal-cell { min-height: 74px; } }
