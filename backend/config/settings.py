@@ -9,6 +9,7 @@ from datetime import timedelta
 from pathlib import Path
 
 import environ
+from django.core.exceptions import ImproperlyConfigured
 
 # Build paths inside the project like this: BASE_DIR / "subdir".
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -157,6 +158,13 @@ REST_FRAMEWORK = {
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
     # Domain services raise Django ValidationError — translate to HTTP 400.
     "EXCEPTION_HANDLER": "apps.common.exceptions.exception_handler",
+    # R-API-4 — scoped throttles for credential-bearing endpoints. The
+    # future OTP endpoints (request/verify) MUST declare their own scopes
+    # here with STRICT caps (SMS cost + brute-force surface).
+    "DEFAULT_THROTTLE_RATES": {
+        "auth_token": env("THROTTLE_AUTH_TOKEN", default="10/min"),
+        "auth_refresh": env("THROTTLE_AUTH_REFRESH", default="30/min"),
+    },
 }
 
 SIMPLE_JWT = {
@@ -198,9 +206,24 @@ CORS_ALLOWED_ORIGINS = env.list(
 # chantier — skeleton only until API keys exist).
 PSP_BACKEND = env("PSP_BACKEND", default="fake")
 
-# Shared secret signing FakePSP webhooks (HMAC-SHA256 over the raw body).
-# Dev-only value; each deployed environment sets its own.
-PSP_WEBHOOK_SECRET = env("PSP_WEBHOOK_SECRET", default="fake-psp-webhook-secret-dev")
+# R-API-3 — boot guard: the FakePSP simulates money movements; letting it
+# run with DEBUG=False would let a deployed instance "collect" payments
+# that never happened. Fail fast, at import time, like a missing SECRET_KEY.
+if PSP_BACKEND == "fake" and not DEBUG:
+    raise ImproperlyConfigured(
+        "PSP_BACKEND=\"fake\" est interdit hors développement (DEBUG=False) : "
+        "configurez un PSP réel (ex. \"stripe\") dans l'environnement."
+    )
+
+# Shared secret signing PSP webhooks (HMAC-SHA256 over the raw body).
+# R-API-3 — REQUIRED from the environment, like SECRET_KEY: no default,
+# and an empty value is refused (a guessable secret = forgeable payments).
+PSP_WEBHOOK_SECRET = env("PSP_WEBHOOK_SECRET")
+if not PSP_WEBHOOK_SECRET:
+    raise ImproperlyConfigured(
+        "PSP_WEBHOOK_SECRET est requis (non vide) dans l'environnement — "
+        "il signe les webhooks de paiement."
+    )
 
 # EUR→KMF rate served by the dev FixedRateSource — the KMF is pegged to the
 # euro. Frozen per PaymentIntent at creation; shown to the guardian BEFORE

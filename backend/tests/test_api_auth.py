@@ -75,6 +75,80 @@ class TestTokenFlow:
         assert client.post(LOGOUT_URL, {"refresh": "garbage"}).status_code == 400
 
 
+class TestAuthThrottling:
+    """R-API-4 — scoped throttles on the credential endpoints.
+
+    Rates are lowered by patching ``SimpleRateThrottle.THROTTLE_RATES``
+    directly: it is a CLASS attribute frozen at import time, so runtime
+    ``settings.REST_FRAMEWORK`` overrides never reach it (verified — a
+    settings-fixture override silently tests nothing). The autouse
+    cache-clear fixture isolates the hit counters between tests.
+    """
+
+    def _set_rates(self, monkeypatch, **rates):
+        from rest_framework.throttling import SimpleRateThrottle
+
+        monkeypatch.setattr(
+            SimpleRateThrottle,
+            "THROTTLE_RATES",
+            {"auth_token": "10/min", "auth_refresh": "30/min", **rates},
+        )
+
+    def test_token_endpoint_returns_429_beyond_the_limit(self, monkeypatch):
+        self._set_rates(monkeypatch, auth_token="3/min")
+        user = make_user()
+        client = APIClient()
+
+        codes = [
+            client.post(
+                TOKEN_URL, {"username": user.username, "password": "mauvais"}
+            ).status_code
+            for _ in range(4)
+        ]
+
+        assert codes[:3] == [401, 401, 401]  # counted even when invalid
+        assert codes[3] == 429
+
+    def test_a_valid_login_is_throttled_too(self, monkeypatch):
+        """Credential stuffing does not stop being counted on success."""
+        self._set_rates(monkeypatch, auth_token="2/min")
+        user = make_user()
+        client = APIClient()
+
+        first = client.post(
+            TOKEN_URL, {"username": user.username, "password": "test-password"}
+        )
+        second = client.post(
+            TOKEN_URL, {"username": user.username, "password": "test-password"}
+        )
+        third = client.post(
+            TOKEN_URL, {"username": user.username, "password": "test-password"}
+        )
+
+        assert first.status_code == 200
+        assert second.status_code == 200
+        assert third.status_code == 429
+
+    def test_refresh_endpoint_has_its_own_scope(self, monkeypatch):
+        """Burning the refresh scope must not touch the obtain scope."""
+        self._set_rates(monkeypatch, auth_refresh="2/min")
+        client = APIClient()
+
+        codes = [
+            client.post(REFRESH_URL, {"refresh": "junk"}).status_code
+            for _ in range(3)
+        ]
+        assert codes[:2] == [401, 401]
+        assert codes[2] == 429
+
+        # The obtain scope is untouched by the refresh burn.
+        user = make_user()
+        obtain = client.post(
+            TOKEN_URL, {"username": user.username, "password": "test-password"}
+        )
+        assert obtain.status_code == 200
+
+
 class TestMe:
     def test_anonymous_is_401(self):
         assert APIClient().get(ME_URL).status_code == 401

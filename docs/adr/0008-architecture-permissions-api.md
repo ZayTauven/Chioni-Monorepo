@@ -1,6 +1,6 @@
 # ADR 0008 — Architecture des permissions API : une casquette par vue, cloisonnement par queryset
 
-- **Statut** : acté (phase A de la couche API)
+- **Statut** : acté (phase A de la couche API) — complété le 2026-08-13 (revue guardian : lecture clinique segmentée par rôle R-API-1, identité des profils revendiqués protégée R-API-2)
 - **Date** : 2026-08-13
 
 ## Contexte
@@ -24,6 +24,12 @@ Tout vit dans `apps/common/permissions.py` — les vues n'improvisent jamais :
 4. **Serializers par audience** (`PatientStaffSerializer` / `PatientSelfSerializer` / `PatientGuardianSerializer`…) : la vue tuteur d'un protégé est strictement administrative (nom, statut) — ni téléphone, ni date de naissance, ni rien de clinique. Aucun endpoint clinique tuteur en phase A : la portée `detail_clinique` sera branchée entière, jamais à moitié.
 
 5. **Écritures = services** (`apps/*/services.py`) : chaque service passe par `save()`/méthodes de modèle (règle CLAUDE.md), journalise dans l'AuditLog (`apps/audit/services.audit`, payload = références uniquement — ADR 0007) dans la même transaction, et lève des `ValidationError` Django traduites en 400 par le handler global (`apps/common/exceptions.py`).
+
+5 bis. **Lecture clinique segmentée par rôle DANS le tenant (R-API-1)** : au sein d'un centre, les LECTURES cliniques sont aussi des permissions, pas seulement les écritures. Rôles cliniques (médecin, infirmier, sage-femme) → `EncounterClinicalSerializer` (motif + diagnostic) et lecture des entrées de carnet produites par le centre ; ordonnances lisibles par rôles cliniques + pharmacien (il délivre) ; staff administratif (secrétaire, caissier, directeur) → `EncounterAdminSerializer` : la vue d'exploitation nécessaire à la facturation (date, patient, praticien, actes avec libellés tarifaires — donnée de facturation qu'ils gèrent déjà), SANS `diagnosis` ni `reason` (le motif peut révéler la pathologie), sans carnet ni ordonnances. Conséquence multi-casquettes : un tuteur qui détient un rôle administratif dans le centre traitant ne lit plus aucun diagnostic par sa casquette staff. Le choix du serializer vit dans `is_clinical_member()` (`apps/medical/views.py`), jamais dans le frontend.
+
+5 ter. **Identité des profils revendiqués (R-API-2)** : dès qu'un `PatientProfile` est revendiqué (`claim_status=actif`), ses champs d'identité (`first_name`, `last_name`, `birth_date`, `sex`, `phone`, `city`) n'appartiennent qu'au patient : toute modification par un tiers (guichet compris) → 400 « Ce profil est géré par le patient ». L'édition guichet reste libre sur les profils non revendiqués. La garde vit dans `update_patient_profile()` (service), pas dans les vues.
+
+5 quater. **Téléphones normalisés E.164 à la frontière (R-API-5)** : `apps/common/phones.normalize_phone(raw, region KM)` est appelé AVANT tout rapprochement ou création (guichet, invitations, comptes ombre, staff) — « +269… », « 269… » et formes nationales convergent vers un seul compte ; numéro invalide → 400 FR.
 
 6. **Fusion de doublons (R4 fermé)** : `merge_profiles()` résout la cible canonique par remontée **bornée** (20 sauts) avec détection de cycle, re-vérifie la cible, re-rattache liens/consentements/données médicales via `save()`, révoque les liens qui deviendraient des doublons ou de l'auto-tutelle, et laisse les factures ancrées sur le profil absorbé (anchors gelés par trigger — ADR 0006) qui subsiste en pierre tombale `merged_into`.
 

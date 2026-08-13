@@ -18,9 +18,10 @@ from apps.common.permissions import (
 )
 from apps.medical.models import Encounter, HealthRecordEntry, Prescription
 from apps.medical.serializers import (
+    EncounterAdminSerializer,
+    EncounterClinicalSerializer,
     EncounterCreateSerializer,
     EncounterPatientSerializer,
-    EncounterStaffSerializer,
     HealthRecordEntryCreateSerializer,
     HealthRecordEntrySerializer,
     PrescriptionCreateSerializer,
@@ -33,7 +34,7 @@ from apps.medical.services import (
 )
 from apps.patients.views import center_patients_qs
 
-#: Roles allowed to produce clinical content.
+#: Roles allowed to produce AND read clinical content (R-API-1).
 CLINICAL_ROLES = (
     StaffMembership.Role.DOCTOR,
     StaffMembership.Role.NURSE,
@@ -44,6 +45,19 @@ PRESCRIBER_ROLES = (
     StaffMembership.Role.DOCTOR,
     StaffMembership.Role.MIDWIFE,
 )
+#: Roles allowed to READ prescriptions: clinical + the pharmacist who
+#: delivers them (R-API-1).
+PRESCRIPTION_READ_ROLES = CLINICAL_ROLES + (StaffMembership.Role.PHARMACIST,)
+
+
+def is_clinical_member(user, center):
+    """Does ``user`` hold an active CLINICAL role in ``center``?
+
+    R-API-1 — clinical reads are segmented by role INSIDE the tenant: this
+    is the single test the encounter views use to pick the clinical vs the
+    administrative serializer.
+    """
+    return active_membership_qs(user, center=center, roles=CLINICAL_ROLES).exists()
 
 
 # ---------------------------------------------------------------------------
@@ -53,6 +67,11 @@ PRESCRIBER_ROLES = (
 
 class CenterEncounterListCreateView(CenterScopedViewMixin, generics.ListCreateAPIView):
     """GET /centers/{center_pk}/encounters/ (any staff) — POST (clinical roles).
+
+    R-API-1: the GET payload depends on the caller's ROLE — clinical staff
+    get the clinical serializer (reason, diagnosis), administrative staff
+    the operating one (date, patient, practitioner, acts). The queryset
+    stays center-scoped in both cases.
 
     The practitioner is ALWAYS the caller's own clinical membership in this
     center: a view can never attribute an act to someone else's hat.
@@ -66,7 +85,9 @@ class CenterEncounterListCreateView(CenterScopedViewMixin, generics.ListCreateAP
     def get_serializer_class(self):
         if self.request.method == "POST":
             return EncounterCreateSerializer
-        return EncounterStaffSerializer
+        if is_clinical_member(self.request.user, self.center):
+            return EncounterClinicalSerializer
+        return EncounterAdminSerializer
 
     def get_queryset(self):
         return (
@@ -104,15 +125,24 @@ class CenterEncounterListCreateView(CenterScopedViewMixin, generics.ListCreateAP
             tariff_items=tariffs,
         )
         return Response(
-            EncounterStaffSerializer(encounter).data, status=status.HTTP_201_CREATED
+            EncounterClinicalSerializer(encounter).data,  # creator IS clinical
+            status=status.HTTP_201_CREATED,
         )
 
 
 class CenterEncounterDetailView(CenterScopedViewMixin, generics.RetrieveAPIView):
-    """GET /centers/{center_pk}/encounters/{pk}/ — center-scoped (IDOR → 404)."""
+    """GET /centers/{center_pk}/encounters/{pk}/ — center-scoped (IDOR → 404).
+
+    R-API-1: clinical roles read the clinical view; administrative roles
+    the operating one (no diagnosis, no reason).
+    """
 
     permission_classes = [IsStaffOfCenter()]
-    serializer_class = EncounterStaffSerializer
+
+    def get_serializer_class(self):
+        if is_clinical_member(self.request.user, self.center):
+            return EncounterClinicalSerializer
+        return EncounterAdminSerializer
 
     def get_queryset(self):
         return (
@@ -122,8 +152,8 @@ class CenterEncounterDetailView(CenterScopedViewMixin, generics.RetrieveAPIView)
         )
 
 
-class _EncounterNestedCreateView(CenterScopedViewMixin, generics.GenericAPIView):
-    """Base for POSTing clinical content onto one of the center's encounters."""
+class _EncounterNestedView(CenterScopedViewMixin, generics.GenericAPIView):
+    """Base for clinical sub-routes of one of the center's encounters."""
 
     def get_encounter(self):
         return get_object_or_404(
@@ -132,11 +162,32 @@ class _EncounterNestedCreateView(CenterScopedViewMixin, generics.GenericAPIView)
         )
 
 
-class EncounterPrescriptionCreateView(_EncounterNestedCreateView):
-    """POST /centers/{center_pk}/encounters/{encounter_pk}/prescriptions/"""
+class EncounterPrescriptionView(_EncounterNestedView):
+    """GET/POST /centers/{center_pk}/encounters/{encounter_pk}/prescriptions/
 
-    permission_classes = [IsStaffOfCenter(*PRESCRIBER_ROLES)]
-    serializer_class = PrescriptionCreateSerializer
+    R-API-1 — prescriptions are clinical content: readable by clinical
+    roles AND the pharmacist (who delivers them); writable by prescribers
+    only. Administrative staff (secretary, cashier, director) get 403.
+    """
+
+    def get_permissions(self):
+        if self.request.method == "POST":
+            return [IsStaffOfCenter(*PRESCRIBER_ROLES)()]
+        return [IsStaffOfCenter(*PRESCRIPTION_READ_ROLES)()]
+
+    def get_serializer_class(self):
+        if self.request.method == "POST":
+            return PrescriptionCreateSerializer
+        return PrescriptionSerializer
+
+    def get(self, request, *args, **kwargs):
+        encounter = self.get_encounter()
+        prescriptions = (
+            Prescription.objects.filter(encounter=encounter)
+            .prefetch_related("items")
+            .order_by("-created_at")
+        )
+        return Response(PrescriptionSerializer(prescriptions, many=True).data)
 
     def post(self, request, *args, **kwargs):
         encounter = self.get_encounter()
@@ -152,11 +203,29 @@ class EncounterPrescriptionCreateView(_EncounterNestedCreateView):
         )
 
 
-class EncounterRecordEntryCreateView(_EncounterNestedCreateView):
-    """POST /centers/{center_pk}/encounters/{encounter_pk}/record-entries/"""
+class EncounterRecordEntryView(_EncounterNestedView):
+    """GET/POST /centers/{center_pk}/encounters/{encounter_pk}/record-entries/
+
+    R-API-1 — carnet entries are clinical content: read AND write are
+    reserved to clinical roles. The GET lists the entries of the
+    encounter's patient PRODUCED BY THIS CENTER (the staff view stays
+    tenant-scoped — the transversal carnet remains the patient's own
+    space, ADR 0002).
+    """
 
     permission_classes = [IsStaffOfCenter(*CLINICAL_ROLES)]
-    serializer_class = HealthRecordEntryCreateSerializer
+
+    def get_serializer_class(self):
+        if self.request.method == "POST":
+            return HealthRecordEntryCreateSerializer
+        return HealthRecordEntrySerializer
+
+    def get(self, request, *args, **kwargs):
+        encounter = self.get_encounter()
+        entries = HealthRecordEntry.objects.filter(
+            patient=encounter.patient, source_encounter__center=self.center
+        ).order_by("-created_at")
+        return Response(HealthRecordEntrySerializer(entries, many=True).data)
 
     def post(self, request, *args, **kwargs):
         encounter = self.get_encounter()

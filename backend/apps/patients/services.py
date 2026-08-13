@@ -15,6 +15,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from apps.audit.services import AuditAction, audit
+from apps.common.phones import normalize_phone
 from apps.medical.models import Consent, Encounter, HealthRecordEntry
 from apps.patients.models import GuardianLink, GuardianProfile, PatientProfile
 
@@ -37,15 +38,37 @@ def get_or_create_shadow_user(phone):
     ever open the app (needs study §3). The shadow account has an unusable
     password: it becomes loggable only through the OTP claim chantier —
     creating it grants NO access to anyone.
+
+    R-API-5: the phone is normalised to E.164 BEFORE any match or creation,
+    so « +269… » and « 269… » always converge to the same account.
     """
+    phone = normalize_phone(phone)
     User = get_user_model()
     user = User.objects.filter(phone=phone).first()
     if user is not None:
         return user, False
-    user = User.objects.create_user(
-        username=f"invite-{phone.lstrip('+')}", phone=phone, password=None
-    )
+    # Collision-safe username: a leftover account may squat the canonical
+    # « invite-… » name with a different (or cleared) phone — suffix instead
+    # of crashing with an IntegrityError.
+    base_username = f"invite-{phone.lstrip('+')}"
+    username = base_username
+    suffix = 1
+    while User.objects.filter(username=username).exists():
+        suffix += 1
+        username = f"{base_username}-{suffix}"
+    user = User.objects.create_user(username=username, phone=phone, password=None)
     return user, True
+
+
+def _normalize_identity(identity):
+    """Normalise the declarative ``phone`` of a patient identity dict.
+
+    Blank stays blank (the desk may not know the number); anything present
+    must be a real E.164-normalisable phone.
+    """
+    if identity.get("phone"):
+        identity = {**identity, "phone": normalize_phone(identity["phone"])}
+    return identity
 
 
 # ---------------------------------------------------------------------------
@@ -63,6 +86,7 @@ def create_patient_at_center(*, actor, center, guardian_phone=None,
     starts as ``invitation_envoyee`` (initiated_by=centre) — the guardian
     must accept before anything opens, even the minimal payments scope.
     """
+    identity = _normalize_identity(identity)
     profile = PatientProfile.objects.create(
         claim_status=PatientProfile.ClaimStatus.UNCLAIMED,
         created_by_user=actor,
@@ -94,6 +118,7 @@ def create_protege(*, guardian_user, relationship, **identity):
     protégé is invited to claim by OTP later, and can revoke once active).
     An active link only ever opens the minimal payments scope (ADR 0004).
     """
+    identity = _normalize_identity(identity)
     profile_obj = guardian_profile_required(guardian_user)
     profile = PatientProfile.objects.create(
         claim_status=PatientProfile.ClaimStatus.UNCLAIMED,
@@ -123,6 +148,7 @@ def create_protege(*, guardian_user, relationship, **identity):
 @transaction.atomic
 def create_own_profile(*, user, **identity):
     """Door B — the patient creates and owns their profile (claimed at birth)."""
+    identity = _normalize_identity(identity)
     if PatientProfile.objects.filter(user=user).exists():
         raise ValidationError("Vous avez déjà un profil patient.")
     profile = PatientProfile.objects.create(
@@ -138,9 +164,30 @@ def create_own_profile(*, user, **identity):
     return profile
 
 
+#: Fields a patient owns once the profile is claimed (R-API-2).
+IDENTITY_FIELDS = frozenset(
+    {"first_name", "last_name", "birth_date", "sex", "phone", "city"}
+)
+
+
 @transaction.atomic
 def update_patient_profile(*, actor, profile, **fields):
-    """Identity update (self or staff) — through ``save()``, audited."""
+    """Identity update — through ``save()``, audited.
+
+    R-API-2: once a profile is CLAIMED, its identity belongs to the patient.
+    Desk staff keep free editing on unclaimed profiles only; on a claimed
+    profile, any identity change by someone else than the owner is refused.
+    """
+    if (
+        profile.is_claimed
+        and actor.pk != profile.user_id
+        and IDENTITY_FIELDS & set(fields)
+    ):
+        raise ValidationError(
+            "Ce profil est géré par le patient : seule la personne concernée "
+            "peut modifier son identité."
+        )
+    fields = _normalize_identity(fields)
     for name, value in fields.items():
         setattr(profile, name, value)
     profile.save()

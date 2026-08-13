@@ -62,8 +62,13 @@ class PrescriptionCreateSerializer(serializers.Serializer):
         return value
 
 
-class EncounterStaffSerializer(serializers.ModelSerializer):
-    """Audience: staff of the PRODUCING center (full clinical view)."""
+class EncounterClinicalSerializer(serializers.ModelSerializer):
+    """Audience: CLINICAL staff of the PRODUCING center (doctor, nurse,
+    midwife) — full clinical view including ``reason`` and ``diagnosis``.
+
+    R-API-1: within a center, clinical READS are role-gated too. This
+    serializer must never serve an administrative role.
+    """
 
     acts = ActPerformedSerializer(many=True, read_only=True)
     practitioner_name = serializers.SerializerMethodField()
@@ -73,6 +78,34 @@ class EncounterStaffSerializer(serializers.ModelSerializer):
         fields = [
             "id", "patient", "practitioner", "practitioner_name",
             "occurred_at", "reason", "diagnosis", "status", "acts", "created_at",
+        ]
+        read_only_fields = fields
+
+    def get_practitioner_name(self, encounter) -> str:
+        user = encounter.practitioner.user
+        full = f"{user.first_name} {user.last_name}".strip()
+        return full or user.username
+
+
+class EncounterAdminSerializer(serializers.ModelSerializer):
+    """Audience: ADMINISTRATIVE staff of the center (secretary, cashier,
+    director) — the operating view needed for billing and scheduling:
+    date, patient, practitioner, acts with their tariff snapshots.
+
+    R-API-1: NO ``diagnosis`` and NO ``reason`` — the consultation motive
+    can itself reveal a pathology; billing needs the acts, not the story.
+    A cashier who happens to also be someone's guardian reads nothing
+    clinical through their staff hat.
+    """
+
+    acts = ActPerformedSerializer(many=True, read_only=True)
+    practitioner_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Encounter
+        fields = [
+            "id", "patient", "practitioner", "practitioner_name",
+            "occurred_at", "status", "acts", "created_at",
         ]
         read_only_fields = fields
 

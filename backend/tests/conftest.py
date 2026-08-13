@@ -7,8 +7,19 @@ nothing in any production code path and no test asserts hash strength.
 """
 
 import pytest
+from django.core.cache import cache
 
 
 @pytest.fixture(autouse=True)
 def fast_password_hashing(settings):
     settings.PASSWORD_HASHERS = ["django.contrib.auth.hashers.MD5PasswordHasher"]
+
+
+@pytest.fixture(autouse=True)
+def isolated_throttle_cache():
+    """DRF throttles (R-API-4) count hits in the default cache, which
+    survives across tests in-process: clear it so a test's auth calls never
+    bleed a 429 into its neighbours."""
+    cache.clear()
+    yield
+    cache.clear()

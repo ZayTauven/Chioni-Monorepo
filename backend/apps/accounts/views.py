@@ -9,13 +9,36 @@
 from drf_spectacular.utils import extend_schema
 from rest_framework import status
 from rest_framework.response import Response
+from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 from rest_framework_simplejwt.exceptions import TokenError
 from rest_framework_simplejwt.tokens import RefreshToken
+from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
 from apps.accounts.serializers import LogoutSerializer, MeSerializer
 from apps.common.permissions import claimed_patient_profile, guardian_profile
 from apps.common.permissions import active_membership_qs
+
+
+class ThrottledTokenObtainPairView(TokenObtainPairView):
+    """`/auth/token/` — R-API-4: anti brute-force scoped throttle.
+
+    Rates live in ``REST_FRAMEWORK["DEFAULT_THROTTLE_RATES"]`` (env-tunable
+    ``THROTTLE_AUTH_TOKEN``). The upcoming OTP endpoints (request/verify)
+    MUST follow this exact pattern with their own, STRICTER scopes — an
+    SMS-sending endpoint without a throttle is both a cost hole and a
+    harassment vector.
+    """
+
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "auth_token"
+
+
+class ThrottledTokenRefreshView(TokenRefreshView):
+    """`/auth/token/refresh/` — scoped throttle (blacklist probing)."""
+
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "auth_refresh"
 
 
 class LogoutView(APIView):

@@ -1,14 +1,16 @@
-"""Adversarial API probes (2e passe, chioni-health-data-guardian).
+"""Adversarial API probes (2e passe, chioni-health-data-guardian) — CLOSED.
 
-Kept because they DOCUMENT REAL residual permissive behaviours found while
-contre-verifying phase A/B (the guardrail-confirming probes of the same
-pass were dropped once verified green). Each test PASSES by asserting the
-current permissive behaviour — it is a finding, not a protection.
+These two probes used to PROVE residual permissive behaviours found while
+contre-verifying phases A/B. Both are now fixed (R-API-1, R-API-2): the
+same probes assert that the protections HOLD.
 
-- Intra-center clinical READ is open to ANY active role (a cashier reads a
-  diagnosis); only clinical WRITES are role-gated.
-- ANY active staff member can rewrite the identity of a CLAIMED, patient-
-  owned transversal profile (menu item A3).
+- R-API-1 — intra-center clinical READ is segmented by role: an
+  administrative member (cashier, secretary, director) gets the operating
+  payload only — no ``diagnosis``, no ``reason``. Composed with multi-hat:
+  a diaspora guardian holding a non-clinical staff role at the treating
+  center can no longer read their protégé's diagnosis without consent.
+- R-API-2 — the identity of a CLAIMED, patient-owned profile is frozen for
+  staff: desk editing stays free on unclaimed profiles only.
 """
 
 import json
@@ -24,13 +26,10 @@ pytestmark = pytest.mark.django_db
 
 
 class TestIntraCenterReadPolicy:
-    def test_cashier_can_read_patient_diagnosis(self):
-        """A CASHIER (non-clinical) of the center reads the full clinical
-        ``diagnosis`` of a patient seen there. Clinical WRITES are role-gated
-        (CLINICAL_ROLES) but clinical READS are open to any active member —
-        a secret-médical granularity gap within the tenant. Composes with
-        multi-hat: a diaspora guardian who also holds ANY staff role at the
-        treating center reads their protégé's diagnosis without consent."""
+    def test_cashier_can_no_longer_read_patient_diagnosis(self):
+        """R-API-1 CLOSED — the CASHIER still gets the operating view of the
+        encounter (date, patient, practitioner, acts: what billing needs)
+        but the clinical fields are structurally absent from the payload."""
         scn = build_scenario(status=Status.SENT)
         scn.encounter.diagnosis = "VIH positif — CD4 bas"
         scn.encounter.save(update_fields=["diagnosis", "updated_at"])
@@ -39,16 +38,41 @@ class TestIntraCenterReadPolicy:
         resp = client_for(cashier).get(
             f"/api/v1/centers/{scn.center.pk}/encounters/{scn.encounter.pk}/"
         )
+
+        assert resp.status_code == 200
+        payload = resp.json()
+        assert "diagnosis" not in payload
+        assert "reason" not in payload  # the motive can reveal the pathology
+        assert "CD4" not in json.dumps(payload)  # no diagnosis text anywhere
+        # The operating view keeps what billing actually needs — including
+        # the tariff label (décision actée : the admin staff already manage
+        # the grid; ADR 0005 gates that label for GUARDIANS, not for staff).
+        assert payload["id"] == scn.encounter.pk
+        assert payload["patient"] == scn.patient.pk
+        assert len(payload["acts"]) == 1
+
+    def test_the_doctor_still_reads_the_full_clinical_view(self):
+        """Counter-probe: segmentation must not blind the care team."""
+        scn = build_scenario(status=Status.SENT)
+        scn.encounter.diagnosis = "VIH positif — CD4 bas"
+        scn.encounter.save(update_fields=["diagnosis", "updated_at"])
+
+        resp = client_for(scn.doctor).get(
+            f"/api/v1/centers/{scn.center.pk}/encounters/{scn.encounter.pk}/"
+        )
+
         assert resp.status_code == 200
         assert resp.json()["diagnosis"] == "VIH positif — CD4 bas"
 
-    def test_any_staff_can_rewrite_a_claimed_patient_identity(self):
-        """A SECRETARY of a center the patient merely visited can PATCH the
-        identity (name, phone, birth date) of a CLAIMED, patient-owned
-        transversal profile — no ownership/role guard beyond 'active member'.
-        Audited (PATIENT_UPDATED), but not prevented."""
+
+class TestClaimedIdentityProtection:
+    def test_staff_can_no_longer_rewrite_a_claimed_patient_identity(self):
+        """R-API-2 CLOSED — a SECRETARY of a center the patient merely
+        visited gets a clear French 400; the profile is untouched."""
         scn = build_scenario(status=Status.SENT)
         assert scn.patient.claim_status == PatientProfile.ClaimStatus.ACTIVE
+        original_last_name = scn.patient.last_name
+        original_phone = scn.patient.phone
         secretary = make_staff_user(scn.center, role=Role.SECRETARY)
 
         resp = client_for(secretary).patch(
@@ -56,7 +80,30 @@ class TestIntraCenterReadPolicy:
             data=json.dumps({"last_name": "Rewritten", "phone": "+2699999999"}),
             content_type="application/json",
         )
-        assert resp.status_code == 200
+
+        assert resp.status_code == 400
+        assert "géré par le patient" in json.dumps(resp.json(), ensure_ascii=False)
         scn.patient.refresh_from_db()
-        assert scn.patient.last_name == "Rewritten"
-        assert scn.patient.phone == "+2699999999"
+        assert scn.patient.last_name == original_last_name
+        assert scn.patient.phone == original_phone
+
+    def test_desk_editing_stays_free_on_unclaimed_profiles(self):
+        """Counter-probe: the desk keeps correcting the profiles it owns
+        (unclaimed) — the guard targets claimed profiles only."""
+        scn = build_scenario(status=Status.SENT)
+        secretary = make_staff_user(scn.center, role=Role.SECRETARY)
+        unclaimed = PatientProfile.objects.create(
+            first_name="Nael", last_name="Bacar",
+            created_by_center=scn.center,
+        )
+
+        resp = client_for(secretary).patch(
+            f"/api/v1/centers/{scn.center.pk}/patients/{unclaimed.pk}/",
+            data=json.dumps({"city": "Moroni", "phone": "+2693312345"}),
+            content_type="application/json",
+        )
+
+        assert resp.status_code == 200
+        unclaimed.refresh_from_db()
+        assert unclaimed.city == "Moroni"
+        assert unclaimed.phone == "+2693312345"

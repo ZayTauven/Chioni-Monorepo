@@ -10,8 +10,8 @@ from django.urls import path
 from apps.medical.views import (
     CenterEncounterDetailView,
     CenterEncounterListCreateView,
-    EncounterPrescriptionCreateView,
-    EncounterRecordEntryCreateView,
+    EncounterPrescriptionView,
+    EncounterRecordEntryView,
     MyEncountersView,
     MyPrescriptionsView,
     MyRecordEntriesView,
@@ -33,12 +33,12 @@ urlpatterns = [
     ),
     path(
         "centers/<int:center_pk>/encounters/<int:encounter_pk>/prescriptions/",
-        EncounterPrescriptionCreateView.as_view(),
+        EncounterPrescriptionView.as_view(),
         name="encounter-prescriptions",
     ),
     path(
         "centers/<int:center_pk>/encounters/<int:encounter_pk>/record-entries/",
-        EncounterRecordEntryCreateView.as_view(),
+        EncounterRecordEntryView.as_view(),
         name="encounter-record-entries",
     ),
     # Audience: the patient (transversal carnet)
