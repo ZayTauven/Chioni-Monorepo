@@ -1,4 +1,4 @@
 /*
- * Chioni — /centre/factures (placeholder, phase 2 will build the real screen).
+ * Chioni — /centre/factures : factures du centre (création depuis une consultation).
  */
-export { Placeholder as default } from '@/screens/Placeholder';
+export { Invoices as default } from '@/screens/centre/Invoices';

@@ -1,8 +1,8 @@
 /*
- * Chioni — /tuteur/recus (placeholder, phase 2 will build the real screen).
+ * Chioni — /tuteur/recus (dual-currency receipts).
  */
-import { LitePlaceholder } from '@/screens/lite/LitePlaceholder';
+import { TuteurRecus } from '@/screens/tuteur/TuteurRecus';
 
 export default function Page() {
-  return <LitePlaceholder title="Mes reçus" />;
+  return <TuteurRecus />;
 }

@@ -1,4 +1,4 @@
 /*
- * Chioni — /centre/demandes (placeholder, phase 2 will build the real screen).
+ * Chioni — /centre/demandes : demandes de paiement (Pont de Confiance).
  */
-export { Placeholder as default } from '@/screens/Placeholder';
+export { PaymentRequests as default } from '@/screens/centre/PaymentRequests';

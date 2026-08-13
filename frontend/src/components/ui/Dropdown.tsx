@@ -18,7 +18,7 @@ interface DropdownProps {
     open: boolean;
     toggle: () => void;
     triggerProps: {
-      'aria-haspopup': 'menu' | 'dialog';
+      'aria-haspopup': 'dialog' | true;
       'aria-expanded': boolean;
       'aria-controls': string;
       onClick: () => void;
@@ -28,8 +28,12 @@ interface DropdownProps {
   children: ReactNode;
   /** Class on the panel element. */
   panelClassName?: string;
-  /** role of the panel: menu (default) or dialog. */
-  panelRole?: 'menu' | 'dialog';
+  /**
+   * role of the panel. Default: NONE — the panel is a plain disclosure of
+   * buttons/links. The ARIA `menu` composite is deliberately not offered:
+   * it would require full arrow-key/focus wiring to be honest.
+   */
+  panelRole?: 'dialog';
   panelAriaLabel?: string;
 }
 
@@ -38,7 +42,7 @@ export function Dropdown({
   trigger,
   children,
   panelClassName,
-  panelRole = 'menu',
+  panelRole,
   panelAriaLabel,
 }: DropdownProps) {
   const [open, setOpen] = useState(false);
@@ -54,7 +58,7 @@ export function Dropdown({
         open,
         toggle,
         triggerProps: {
-          'aria-haspopup': panelRole,
+          'aria-haspopup': panelRole ?? true,
           'aria-expanded': open,
           'aria-controls': panelId,
           onClick: toggle,

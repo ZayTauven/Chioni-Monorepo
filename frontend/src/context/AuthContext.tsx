@@ -19,7 +19,15 @@ import {
   type ReactNode,
 } from 'react';
 import { getMe, logout, otpVerify, tokenObtain } from '@/lib/endpoints/auth';
-import { clearTokens, getRefreshToken, hasTokens, storeTokens } from '@/lib/tokens';
+import {
+  ACCESS_TOKEN_KEY,
+  REFRESH_TOKEN_KEY,
+  clearPendingPhone,
+  clearTokens,
+  getRefreshToken,
+  hasTokens,
+  storeTokens,
+} from '@/lib/tokens';
 import type { Me } from '@/lib/types';
 
 export type Space = 'centre' | 'patient' | 'tuteur';
@@ -92,6 +100,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
+  // Cross-tab sign-out: if the tokens disappear from localStorage (the user
+  // signed out in another tab), purge the session here too and go to sign-in.
+  useEffect(() => {
+    const onStorage = (e: StorageEvent) => {
+      // e.key === null means the whole storage was cleared.
+      if (e.key !== null && e.key !== ACCESS_TOKEN_KEY && e.key !== REFRESH_TOKEN_KEY) return;
+      if (hasTokens()) return;
+      setMe(null);
+      setStatus('anonymous');
+      if (!window.location.pathname.startsWith('/auth')) {
+        window.location.assign('/auth/sign-in');
+      }
+    };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, []);
+
   const signInWithOtp = useCallback(async (phone: string, code: string): Promise<Me> => {
     const { access, refresh, me: freshMe } = await otpVerify(phone, code);
     storeTokens(access, refresh);
@@ -119,6 +144,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
     }
     clearTokens();
+    clearPendingPhone();
     setMe(null);
     setStatus('anonymous');
     window.location.assign('/auth/sign-in');

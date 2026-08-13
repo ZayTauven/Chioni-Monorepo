@@ -1,1 +1,320 @@
-/* Chioni — screen-specific styles of the patient space. Owned by the patient feature. */
+/*
+ * Chioni — screen-specific styles of the patient space. Owned by the patient
+ * feature. Everything sits on the --ax-* tokens ; this layer only adds the
+ * layout glue the mobile-first cards need (stacks, big actions, the
+ * confirmation gate, amount rows). No new color system.
+ */
+
+/* ── vertical rhythm ── */
+.pat-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ax-space-4);
+}
+
+.pat-section {
+  margin: 0;
+  padding-block-start: var(--ax-space-2);
+  font-size: var(--ax-text-xs);
+  font-weight: var(--ax-weight-semibold);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--ax-text-subtle);
+}
+
+/* ── greeting ── */
+.pat-hello {
+  margin: 0;
+  font-family: var(--ax-font-display);
+  font-size: var(--ax-text-2xl);
+  font-weight: var(--ax-weight-semibold);
+  letter-spacing: -0.015em;
+  color: var(--ax-text-strong);
+}
+
+.pat-hello-sub {
+  margin: var(--ax-space-1) 0 0;
+  font-size: var(--ax-text-sm);
+  color: var(--ax-text-muted);
+}
+
+/* ── the claimant-confirmation gate (the one loud element of the space) ── */
+.pat-gate {
+  border-inline-start: 4px solid var(--ax-warning-500);
+}
+
+.pat-gate__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ax-space-3);
+}
+
+.pat-gate__eyebrow {
+  margin: 0;
+  font-size: var(--ax-text-xs);
+  font-weight: var(--ax-weight-semibold);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  /* AA amber: #8A5D07 in light, #F0B35C in dark — carried by the token
+     (see tokens/_primitives.css, dark remap included). */
+  color: var(--ax-warning-700);
+}
+
+.pat-gate__question {
+  margin: 0;
+  font-family: var(--ax-font-display);
+  font-size: var(--ax-text-lg);
+  font-weight: var(--ax-weight-semibold);
+  line-height: 1.35;
+  color: var(--ax-text-strong);
+}
+
+.pat-gate__meta {
+  margin: 0;
+  font-size: var(--ax-text-sm);
+  color: var(--ax-text-muted);
+}
+
+/* ── stacked block actions (primary on top, escape below) ── */
+.pat-actions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ax-space-2);
+}
+
+.pat-actions .ax-btn {
+  min-height: 48px; /* ≥ 44px touch target */
+}
+
+/* ── generic card rows (payments list, receipts, guardians) ── */
+.pat-row {
+  display: flex;
+  align-items: center;
+  gap: var(--ax-space-3);
+  min-height: 48px;
+}
+
+.pat-row__main {
+  flex: 1 1 auto;
+  min-inline-size: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.pat-row__title {
+  font-weight: var(--ax-weight-semibold);
+  color: var(--ax-text-strong);
+  overflow-wrap: anywhere;
+}
+
+.pat-row__meta {
+  font-size: var(--ax-text-sm);
+  color: var(--ax-text-muted);
+}
+
+.pat-row__end {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--ax-space-1);
+}
+
+.pat-amount {
+  font-family: var(--ax-font-mono);
+  font-weight: var(--ax-weight-semibold);
+  color: var(--ax-text-strong);
+  white-space: nowrap;
+}
+
+/* ── invoice-like line list (payment request detail, encounter acts) ── */
+.pat-lines {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.pat-lines > li {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--ax-space-3);
+  padding-block: var(--ax-space-2);
+  border-block-end: 1px dashed var(--ax-border);
+}
+
+.pat-lines > li:last-child {
+  border-block-end: 0;
+}
+
+.pat-line__label {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-inline-size: 0;
+}
+
+.pat-line__name {
+  color: var(--ax-text);
+  overflow-wrap: anywhere;
+}
+
+.pat-line__cat {
+  font-size: var(--ax-text-xs);
+  color: var(--ax-text-subtle);
+}
+
+.pat-total {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--ax-space-3);
+  padding-block-start: var(--ax-space-3);
+  margin-block-start: var(--ax-space-1);
+  border-block-start: 1px solid var(--ax-border);
+  font-weight: var(--ax-weight-semibold);
+  color: var(--ax-text-strong);
+}
+
+.pat-total .pat-amount {
+  font-size: var(--ax-text-lg);
+}
+
+/* ── full-width friendly tabs (Carnet, Paiements) ── */
+.pat-tabs .ax-tabs__list {
+  display: flex;
+  inline-size: 100%;
+}
+
+.pat-tabs .ax-tabs__tab {
+  flex: 1 1 0;
+  justify-content: center;
+  min-height: 48px; /* ≥ 44px touch target */
+}
+
+/* ── quick links on the home screen ── */
+.pat-shortcut {
+  display: flex;
+  align-items: center;
+  gap: var(--ax-space-3);
+  min-height: 56px;
+  text-decoration: none;
+}
+
+.pat-shortcut__icon {
+  display: inline-grid;
+  place-items: center;
+  inline-size: 40px;
+  block-size: 40px;
+  flex: 0 0 auto;
+  border-radius: var(--ax-radius-md);
+  background: var(--ax-accent-wash);
+  color: var(--ax-accent);
+}
+
+.pat-shortcut__text {
+  flex: 1 1 auto;
+  min-inline-size: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.pat-shortcut__title {
+  font-weight: var(--ax-weight-semibold);
+  color: var(--ax-text-strong);
+}
+
+.pat-shortcut__sub {
+  font-size: var(--ax-text-sm);
+  color: var(--ax-text-muted);
+}
+
+.pat-shortcut__chevron {
+  flex: 0 0 auto;
+  color: var(--ax-text-subtle);
+}
+
+/* ── empty states ── */
+.pat-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--ax-space-2);
+  text-align: center;
+  padding-block: var(--ax-space-7);
+}
+
+.pat-empty__title {
+  margin: 0;
+  font-family: var(--ax-font-display);
+  font-size: var(--ax-text-md);
+  font-weight: var(--ax-weight-semibold);
+  color: var(--ax-text-strong);
+}
+
+.pat-empty__message {
+  margin: 0;
+  max-inline-size: 34ch;
+  font-size: var(--ax-text-sm);
+  color: var(--ax-text-muted);
+}
+
+.pat-empty .ax-btn {
+  margin-block-start: var(--ax-space-2);
+}
+
+/* ── skeletons ── */
+.pat-skeleton-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ax-space-3);
+}
+
+/* ── confirmation modal ── */
+.pat-confirm {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--ax-space-3);
+  text-align: center;
+}
+
+.pat-confirm__message {
+  margin: 0;
+  color: var(--ax-text-muted);
+}
+
+.pat-confirm__actions {
+  inline-size: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: var(--ax-space-2);
+  margin-block-start: var(--ax-space-2);
+}
+
+.pat-confirm__actions .ax-btn {
+  min-height: 48px;
+}
+
+.pat-confirm .ax-field {
+  inline-size: 100%;
+  text-align: start;
+}
+
+/* ── revoked-links history (discreet) ── */
+.pat-history summary {
+  cursor: pointer;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  font-size: var(--ax-text-sm);
+  color: var(--ax-text-subtle);
+}
+
+.pat-history[open] summary {
+  color: var(--ax-text-muted);
+}

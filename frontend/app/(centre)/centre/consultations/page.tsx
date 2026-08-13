@@ -1,4 +1,4 @@
 /*
- * Chioni — /centre/consultations (placeholder, phase 2 will build the real screen).
+ * Chioni — /centre/consultations : liste + création (rôles cliniques).
  */
-export { Placeholder as default } from '@/screens/Placeholder';
+export { Consultations as default } from '@/screens/centre/Consultations';

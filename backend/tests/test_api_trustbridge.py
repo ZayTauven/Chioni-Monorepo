@@ -595,6 +595,36 @@ class TestGuardianPaymentFlow:
             f"/api/v1/guardian/payment-requests/{scn.payment_request.pk}/pay/"
         )
         assert response.status_code == 400
+        assert "pas ouverte au paiement" in response.data[0]
+
+    def test_double_pay_within_guard_window_is_400_with_actionable_message(self):
+        # Anti-double-débit: the guardian pays, 3DS drags on, they retry —
+        # the SERVICE refuses (never the view alone), bare-array error body.
+        scn = build_scenario(status=Status.SENT)
+        client = client_for(scn.guardian_user)
+        url = f"/api/v1/guardian/payment-requests/{scn.payment_request.pk}/pay/"
+        first = client.post(url)
+        assert first.status_code == 201, first.content
+        second = client.post(url)
+        assert second.status_code == 400
+        assert second.data == [
+            "Un paiement est déjà en cours pour cette demande. "
+            "Attendez quelques minutes avant de réessayer."
+        ]
+        assert PaymentIntent.objects.count() == 1
+
+    def test_after_a_failed_webhook_the_guardian_can_retry_immediately(self):
+        scn = build_scenario(status=Status.SENT)
+        client = client_for(scn.guardian_user)
+        url = f"/api/v1/guardian/payment-requests/{scn.payment_request.pk}/pay/"
+        first = client.post(url)
+        payload, signature = signed_webhook(
+            first.data["psp_reference"], status="failed"
+        )
+        assert post_webhook(client_for(), payload, signature).status_code == 200
+        retry = client.post(url)
+        assert retry.status_code == 201, retry.content
+        assert retry.data["psp_reference"] != first.data["psp_reference"]
 
     def test_kyc_pending_center_cannot_be_paid_via_api(self):
         scn = build_scenario(status=Status.SENT)

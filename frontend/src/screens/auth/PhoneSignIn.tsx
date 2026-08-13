@@ -13,8 +13,10 @@ import { useRouter } from 'next/navigation';
 import { AuthStandalone, OffappTools, BrandCentered } from './authShared';
 import { otpRequest } from '@/lib/endpoints/auth';
 import { ApiError } from '@/lib/api';
+import { formatWait } from '@/lib/labels';
+import { PENDING_PHONE_KEY, clearPendingPhone } from '@/lib/tokens';
 
-export const PENDING_PHONE_KEY = 'chioni:pending-phone';
+export { PENDING_PHONE_KEY };
 
 export function PhoneSignIn() {
   const router = useRouter();
@@ -26,6 +28,8 @@ export function PhoneSignIn() {
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
+    // Landing back here invalidates any previous OTP journey.
+    clearPendingPhone();
     return () => {
       if (timer.current) clearInterval(timer.current);
     };
@@ -63,14 +67,12 @@ export function PhoneSignIn() {
       if (err instanceof ApiError && err.status === 429) {
         const wait = err.retryAfterSeconds ?? 60;
         setThrottleMsg(
-          `Trop de demandes pour le moment. Vous pourrez réessayer dans ${wait} seconde${wait > 1 ? 's' : ''}.`,
+          `Vous avez demandé plusieurs codes. Pour protéger votre compte, réessayez dans ${formatWait(wait)}.`,
         );
         startCooldown(wait);
       } else if (err instanceof ApiError && err.status === 400) {
         setPhoneErr(
-          err.fieldErrors.phone?.[0] ??
-            err.messages[0] ??
-            'Ce numéro ne semble pas valide. Vérifiez-le et réessayez.',
+          'Ce numéro ne semble pas valide. Si vous vivez à l’étranger, ajoutez l’indicatif du pays (ex. +33).',
         );
       } else {
         setThrottleMsg('Impossible de contacter le serveur. Vérifiez votre connexion et réessayez.');
@@ -125,7 +127,10 @@ export function PhoneSignIn() {
                   {phoneErr ? (
                     <p id="si-phone-msg" className="ax-field__message ax-field__message--error">{phoneErr}</p>
                   ) : (
-                    <p id="si-phone-msg" className="ax-field__message">Les numéros comoriens peuvent être saisis sans le +269.</p>
+                    <p id="si-phone-msg" className="ax-field__message">
+                      Numéro comorien&nbsp;: avec ou sans +269. Vous vivez à l&rsquo;étranger&nbsp;?
+                      Ajoutez l&rsquo;indicatif du pays (par exemple +33 pour la France).
+                    </p>
                   )}
                 </div>
 

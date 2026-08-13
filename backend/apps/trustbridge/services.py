@@ -27,8 +27,10 @@ transaction.
 """
 
 import uuid
+from datetime import timedelta
 from decimal import Decimal
 
+from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.utils import timezone
@@ -307,12 +309,49 @@ def _shared_active_link_for(payment_request, user):
     )
 
 
+def _refuse_if_recent_pending_intent(payment_request):
+    """Anti-double-débit guard (guardian review of the frontend, 2026-08-13).
+
+    With a real PSP, an intent can linger ``en_cours`` (3DS pending, card
+    declined after the fact) while the request stays ``envoyee``: without
+    this guard, a returning guardian could be charged TWICE for one
+    request, the second webhook landing on an already-paid request. So a
+    ``cree``/``en_cours`` intent more recent than
+    ``PSP_INTENT_GUARD_MINUTES`` blocks any new intent on the SAME request.
+    Older pending intents are considered abandoned and no longer block —
+    a 3DS never completed must not make the request unpayable forever
+    (its late webhook stays harmless: replay on the same intent is a
+    strict no-op, and success on a no-longer-SENT request writes nothing).
+
+    Callers hold the ``select_for_update`` row lock on the request
+    (:func:`_locked`), which serialises two concurrent ``pay/`` calls:
+    the second transaction only runs this check AFTER the first committed
+    its intent, and therefore sees it.
+    """
+    guard_minutes = settings.PSP_INTENT_GUARD_MINUTES
+    threshold = timezone.now() - timedelta(minutes=guard_minutes)
+    pending = payment_request.payment_intents.filter(
+        status__in=(
+            PaymentIntent.Status.CREATED,
+            PaymentIntent.Status.PROCESSING,
+        ),
+        created_at__gte=threshold,
+    )
+    if pending.exists():
+        raise ValidationError(
+            "Un paiement est déjà en cours pour cette demande. "
+            "Attendez quelques minutes avant de réessayer."
+        )
+
+
 @transaction.atomic
 def create_payment_intent(*, guardian_user, payment_request):
     """A shared guardian starts paying: rate and amounts FROZEN here.
 
     The destination is structurally ``invoice.center`` (never an input),
     and the center must be KYC-active BEFORE the guardian is charged.
+    A recent pending intent on the same request blocks a new one
+    (:func:`_refuse_if_recent_pending_intent` — anti-double-débit).
     """
     payment_request = _locked(payment_request)
     if payment_request.status != Status.SENT:
@@ -325,6 +364,7 @@ def create_payment_intent(*, guardian_user, payment_request):
         raise ValidationError(
             "Cette demande de paiement ne vous a pas été partagée."
         )
+    _refuse_if_recent_pending_intent(payment_request)
     _require_center_can_collect(payment_request.invoice.center)
     quote = quote_eur_for_kmf(payment_request.invoice.total_kmf)
     intent = PaymentIntent.objects.create(
@@ -354,8 +394,6 @@ def create_payment_intent(*, guardian_user, payment_request):
 
 def get_psp_choice():
     """Map the active backend onto the ``PaymentIntent.Psp`` choice."""
-    from django.conf import settings
-
     return (
         PaymentIntent.Psp.FAKE
         if settings.PSP_BACKEND == "fake"

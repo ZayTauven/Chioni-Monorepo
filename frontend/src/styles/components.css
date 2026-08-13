@@ -852,22 +852,27 @@
     opacity: 1;
   }
 
-  /* tones */
+  /* tones — the 700 step is the AA-on-50 TEXT color (soft badges) ;
+     500 stays for borders, icons and dots. */
   .ax-badge--success {
     --_badge-50: var(--ax-success-50);
     --_badge-500: var(--ax-success-500);
+    --_badge-700: var(--ax-success-700);
   }
   .ax-badge--warning {
     --_badge-50: var(--ax-warning-50);
     --_badge-500: var(--ax-warning-500);
+    --_badge-700: var(--ax-warning-700);
   }
   .ax-badge--danger {
     --_badge-50: var(--ax-danger-50);
     --_badge-500: var(--ax-danger-500);
+    --_badge-700: var(--ax-danger-700);
   }
   .ax-badge--info {
     --_badge-50: var(--ax-info-50);
     --_badge-500: var(--ax-info-500);
+    --_badge-700: var(--ax-info-700);
   }
   .ax-badge--accent {
     --_badge-50: var(--ax-accent-wash);
@@ -880,8 +885,14 @@
 
   /* styles */
   .ax-badge--soft {
-    color: var(--_badge-500);
+    /* Text at the 700 step (AA on the 50 background) ; tones without a 700
+       (neutral, accent) fall back to their 500. */
+    color: var(--_badge-700, var(--_badge-500));
     background: var(--_badge-50);
+  }
+  .ax-badge--soft .ax-badge__dot {
+    /* The dot keeps the brighter 500 tone. */
+    background: var(--_badge-500);
   }
   .ax-badge--solid {
     color: #fff;
@@ -3515,6 +3526,7 @@
   }
   .ax-otp__cell {
     width: 44px;
+    min-inline-size: 40px; /* never collapse below a usable tap target */
     height: 48px;
     text-align: center;
     font-family: var(--ax-font-mono);
@@ -3528,6 +3540,16 @@
     outline: none;
     border-color: var(--ax-accent);
     box-shadow: var(--ax-focus-shadow);
+  }
+  /* The OTP card (auth /verify): generous padding, tightened on the
+     narrowest Androids so the 6 cells always fit. */
+  .ax-otp-card .ax-card__body {
+    padding: var(--ax-space-8);
+  }
+  @media (max-width: 360px) {
+    .ax-otp-card .ax-card__body {
+      padding: var(--ax-space-5) var(--ax-space-4);
+    }
   }
 
   /* ========================================================================

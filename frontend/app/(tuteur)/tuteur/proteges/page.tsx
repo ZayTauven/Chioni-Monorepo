@@ -1,8 +1,8 @@
 /*
- * Chioni — /tuteur/proteges (placeholder, phase 2 will build the real screen).
+ * Chioni — /tuteur/proteges (protégés, invitations, porte A).
  */
-import { LitePlaceholder } from '@/screens/lite/LitePlaceholder';
+import { TuteurProteges } from '@/screens/tuteur/TuteurProteges';
 
 export default function Page() {
-  return <LitePlaceholder title="Mes protégés" />;
+  return <TuteurProteges />;
 }

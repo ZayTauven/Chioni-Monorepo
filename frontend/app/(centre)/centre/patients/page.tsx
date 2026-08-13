@@ -1,4 +1,4 @@
 /*
- * Chioni — /centre/patients (placeholder, phase 2 will build the real screen).
+ * Chioni — /centre/patients : registre des patients (recherche serveur, porte C).
  */
-export { Placeholder as default } from '@/screens/Placeholder';
+export { Patients as default } from '@/screens/centre/Patients';

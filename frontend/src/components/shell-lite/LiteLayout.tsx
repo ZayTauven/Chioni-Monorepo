@@ -64,6 +64,9 @@ export function LiteLayout({ tabs, children }: { tabs: LiteTab[]; children: Reac
 
   return (
     <div className="ax-lite">
+      <a href="#ax-main" className="visually-hidden-focusable ax-lite__skip">
+        Aller au contenu
+      </a>
       <header className="ax-lite__header" role="banner">
         <Link href={tabs[0]?.href ?? '/'} className="ax-lite__brand" aria-label="Accueil Chioni">
           <span className="ax-lite__brand-mark" aria-hidden="true">{HEX_LOGO}</span>
@@ -87,19 +90,20 @@ export function LiteLayout({ tabs, children }: { tabs: LiteTab[]; children: Reac
               <small>{me?.phone}</small>
             </span>
           </div>
-          <button type="button" className="ax-dropdown__item" role="menuitem" onClick={toggle}>
+          {/* Honest pattern: plain buttons/links in a disclosure panel — no
+              ARIA menu composite (it would demand full arrow-key wiring). */}
+          <button type="button" className="ax-dropdown__item" onClick={toggle}>
             {theme === 'dark' ? 'Mode clair' : 'Mode sombre'}
           </button>
           {multiSpace && (
-            <Link className="ax-dropdown__item" role="menuitem" href="/espaces">
+            <Link className="ax-dropdown__item" href="/espaces">
               Changer d&rsquo;espace
             </Link>
           )}
-          <div className="ax-dropdown__divider" role="separator"></div>
+          <div className="ax-dropdown__divider" aria-hidden="true"></div>
           <button
             type="button"
             className="ax-dropdown__item ax-dropdown__item--danger"
-            role="menuitem"
             onClick={() => void signOut()}
           >
             Se déconnecter

@@ -6,8 +6,14 @@
  * blocked storage) and these helpers must never crash the app for that.
  */
 
-const ACCESS_KEY = 'chioni:access';
-const REFRESH_KEY = 'chioni:refresh';
+export const ACCESS_TOKEN_KEY = 'chioni:access';
+export const REFRESH_TOKEN_KEY = 'chioni:refresh';
+
+/** sessionStorage key carrying the phone between /auth/sign-in and /auth/verify. */
+export const PENDING_PHONE_KEY = 'chioni:pending-phone';
+
+const ACCESS_KEY = ACCESS_TOKEN_KEY;
+const REFRESH_KEY = REFRESH_TOKEN_KEY;
 
 function safeGet(key: string): string | null {
   try {
@@ -56,4 +62,13 @@ export function clearTokens(): void {
 
 export function hasTokens(): boolean {
   return getAccessToken() !== null || getRefreshToken() !== null;
+}
+
+/** Forget a pending OTP phone (sign-out, or landing back on /auth/sign-in). */
+export function clearPendingPhone(): void {
+  try {
+    window.sessionStorage.removeItem(PENDING_PHONE_KEY);
+  } catch {
+    /* ignore */
+  }
 }

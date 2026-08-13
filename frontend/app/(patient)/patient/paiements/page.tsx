@@ -1,8 +1,8 @@
 /*
- * Chioni — /patient/paiements (placeholder, phase 2 will build the real screen).
+ * Chioni — /patient/paiements : payment requests and receipts.
  */
-import { LitePlaceholder } from '@/screens/lite/LitePlaceholder';
+import { PatientPaiements } from '@/screens/patient/PatientPaiements';
 
 export default function Page() {
-  return <LitePlaceholder title="Mes paiements" />;
+  return <PatientPaiements />;
 }

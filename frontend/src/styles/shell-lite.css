@@ -11,6 +11,27 @@
   flex-direction: column;
 }
 
+/* Global touch floor of the light chrome: every button reaches 44px. */
+.ax-lite .ax-btn {
+  min-height: 44px;
+}
+
+/* Skip link — visually hidden (utilities.css) until keyboard focus. */
+.ax-lite__skip {
+  position: fixed;
+  inset-block-start: var(--ax-space-2);
+  inset-inline-start: var(--ax-space-2);
+  z-index: 100;
+  padding: var(--ax-space-2) var(--ax-space-3);
+  border-radius: var(--ax-radius-sm);
+  border: 1px solid var(--ax-border);
+  background: var(--ax-surface);
+  color: var(--ax-text-strong);
+  font-size: var(--ax-text-sm);
+  font-weight: var(--ax-weight-medium);
+  text-decoration: none;
+}
+
 /* ── header ── */
 .ax-lite__header {
   position: sticky;
@@ -104,7 +125,7 @@
   padding: var(--ax-space-2) var(--ax-space-1);
   color: var(--ax-text-muted);
   text-decoration: none;
-  font-size: var(--ax-text-2xs);
+  font-size: var(--ax-text-xs); /* ≥ 12px — readable labels */
   font-weight: var(--ax-weight-medium);
   -webkit-tap-highlight-color: transparent;
 }

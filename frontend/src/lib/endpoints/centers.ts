@@ -7,7 +7,8 @@
 import { apiFetch } from '../api';
 import type {
   Dispute,
-  Encounter,
+  EncounterAct,
+  EncounterStatus,
   GenericCategory,
   HealthCenter,
   Invoice,
@@ -24,6 +25,28 @@ import type {
   StaffRole,
   TariffItem,
 } from '../types';
+
+/**
+ * Staff-side encounter (serializers `EncounterClinicalSerializer` /
+ * `EncounterAdminSerializer`, backend R-API-1) : `reason` and `diagnosis`
+ * are ABSENT for administrative roles — the UI must render both cases.
+ * Differs from the patient-side `Encounter` of types.ts (no center fields,
+ * patient as id, practitioner included).
+ */
+export interface EncounterStaff {
+  id: number;
+  patient: number;
+  practitioner: number;
+  practitioner_name: string;
+  occurred_at: string;
+  /** Absent pour les rôles administratifs (vue exploitation). */
+  reason?: string;
+  /** Absent pour les rôles administratifs (vue exploitation). */
+  diagnosis?: string;
+  status: EncounterStatus;
+  acts: EncounterAct[];
+  created_at: string;
+}
 
 /* ── centers ── */
 
@@ -69,6 +92,22 @@ export function createPatient(centerId: number, payload: CenterPatientPayload): 
   return apiFetch(`/centers/${centerId}/patients/`, { method: 'POST', body: payload });
 }
 
+export function getPatient(centerId: number, patientId: number): Promise<Patient> {
+  return apiFetch(`/centers/${centerId}/patients/${patientId}/`);
+}
+
+/**
+ * PATCH identity fields — the backend answers 400 (« Ce profil est géré par
+ * le patient… ») when the profile is claimed and the caller is not its owner.
+ */
+export function updatePatient(
+  centerId: number,
+  patientId: number,
+  payload: Partial<Pick<Patient, 'first_name' | 'last_name' | 'birth_date' | 'sex' | 'phone' | 'city'>>,
+): Promise<Patient> {
+  return apiFetch(`/centers/${centerId}/patients/${patientId}/`, { method: 'PATCH', body: payload });
+}
+
 export function mergePatients(
   centerId: number,
   sourceId: number,
@@ -90,15 +129,15 @@ export interface EncounterPayload {
   tariff_items?: number[];
 }
 
-export function listEncounters(centerId: number, page = 1): Promise<Paginated<Encounter>> {
+export function listEncounters(centerId: number, page = 1): Promise<Paginated<EncounterStaff>> {
   return apiFetch(`/centers/${centerId}/encounters/?page=${page}`);
 }
 
-export function getEncounter(centerId: number, encounterId: number): Promise<Encounter> {
+export function getEncounter(centerId: number, encounterId: number): Promise<EncounterStaff> {
   return apiFetch(`/centers/${centerId}/encounters/${encounterId}/`);
 }
 
-export function createEncounter(centerId: number, payload: EncounterPayload): Promise<Encounter> {
+export function createEncounter(centerId: number, payload: EncounterPayload): Promise<EncounterStaff> {
   return apiFetch(`/centers/${centerId}/encounters/`, { method: 'POST', body: payload });
 }
 

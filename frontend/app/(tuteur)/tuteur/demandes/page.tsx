@@ -1,8 +1,8 @@
 /*
- * Chioni — /tuteur/demandes (placeholder, phase 2 will build the real screen).
+ * Chioni — /tuteur/demandes (payment requests of my protégés).
  */
-import { LitePlaceholder } from '@/screens/lite/LitePlaceholder';
+import { TuteurDemandes } from '@/screens/tuteur/TuteurDemandes';
 
 export default function Page() {
-  return <LitePlaceholder title="Demandes de paiement" />;
+  return <TuteurDemandes />;
 }

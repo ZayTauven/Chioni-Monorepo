@@ -1,4 +1,4 @@
 /*
- * Chioni — /centre/parametres (placeholder, phase 2 will build the real screen).
+ * Chioni — /centre/parametres : coordonnées du centre, KYC, multi-centres.
  */
-export { Placeholder as default } from '@/screens/Placeholder';
+export { Settings as default } from '@/screens/centre/Settings';

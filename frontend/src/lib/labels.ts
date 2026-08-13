@@ -45,6 +45,41 @@ export const PAYMENT_REQUEST_STATUS_LABELS: Record<PaymentRequestStatus, string>
   litige: 'En litige',
 };
 
+/* Reader-oriented payment-request statuses. The generic labels above speak
+   from the centre's point of view ; the patient and guardian spaces speak
+   from THEIR reader's point of view — centralised here so wording stays
+   consistent and ready for the shikomori extraction. */
+
+/** Statuses as the PATIENT reads them. */
+export const PR_STATUS_PATIENT: Record<PaymentRequestStatus, string> = {
+  brouillon: 'En préparation',
+  envoyee: 'En attente de paiement',
+  payee: 'Payée',
+  soin_confirme: 'Soin confirmé',
+  cloturee: 'Terminée',
+  litige: 'Litige en cours',
+};
+
+/** Statuses as the GUARDIAN reads them (full sentences). */
+export const PR_STATUS_TUTEUR: Record<PaymentRequestStatus, string> = {
+  brouillon: 'En préparation', // defensive: drafts are never shared with guardians
+  envoyee: 'À payer',
+  payee: 'Payée — en attente de confirmation du soin',
+  soin_confirme: 'Soin confirmé',
+  cloturee: 'Terminée — reçu disponible',
+  litige: 'Litige en cours',
+};
+
+/** Short guardian variants for tight spots (badges in dense lists). */
+export const PR_STATUS_TUTEUR_SHORT: Record<PaymentRequestStatus, string> = {
+  brouillon: 'En préparation',
+  envoyee: 'À payer',
+  payee: 'Payée',
+  soin_confirme: 'Soin confirmé',
+  cloturee: 'Terminée',
+  litige: 'Litige',
+};
+
 export const INVOICE_STATUS_LABELS: Record<InvoiceStatus, string> = {
   brouillon: 'Brouillon',
   emise: 'Émise',
@@ -151,10 +186,18 @@ export const KYC_STATUS_LABELS: Record<KycStatus, string> = {
   suspendu: 'Suspendu',
 };
 
+/** Sex labels when speaking OF A THIRD PERSON (staff forms, protégé forms). */
 export const SEX_LABELS: Record<Sex, string> = {
   f: 'Féminin',
   m: 'Masculin',
   '': 'Non renseigné',
+};
+
+/** Sex labels when the user speaks OF THEMSELVES. */
+export const SEX_LABELS_SELF: Record<Sex, string> = {
+  f: 'Féminin',
+  m: 'Masculin',
+  '': 'Je préfère ne pas le dire',
 };
 
 /* ── formatters ── */
@@ -216,16 +259,61 @@ export function formatDateTime(iso: string): string {
 
 /**
  * Mask a phone number for display: '+2693390011' → '+269 ••• ••11'.
- * Keeps the +269 prefix and the last two digits; other formats keep only
- * the last two digits visible.
+ * The country prefix is ALWAYS kept whole (never truncated to '+3') and the
+ * last two digits stay visible ; everything else is masked.
  */
 export function maskPhone(phone: string): string {
   const cleaned = phone.trim();
   if (cleaned.startsWith('+269') && cleaned.length >= 8) {
     return `+269 ••• ••${cleaned.slice(-2)}`;
   }
+  if (cleaned.startsWith('+') && cleaned.length >= 6) {
+    // Foreign numbers: keep the country code whole. Zone 1/7 codes are one
+    // digit (+1, +7) ; zone 2 codes are mostly three digits (+261, +212…) ;
+    // the common diaspora codes elsewhere are two digits (+33, +32, +49…).
+    const prefixLen = /^\+[17]/.test(cleaned) ? 2 : /^\+2/.test(cleaned) ? 4 : 3;
+    return `${cleaned.slice(0, prefixLen)} ••• ••${cleaned.slice(-2)}`;
+  }
   if (cleaned.length >= 4) {
-    return `${cleaned.slice(0, 2)} ••• ••${cleaned.slice(-2)}`;
+    return `••• ••${cleaned.slice(-2)}`;
   }
   return cleaned;
+}
+
+/**
+ * Human wait duration for throttling messages: 45 → "45 secondes",
+ * 720 → "environ 12 minutes", 3900 → "environ une heure".
+ */
+export function formatWait(seconds: number): string {
+  const s = Math.max(1, Math.round(seconds));
+  if (s < 60) return s === 1 ? '1 seconde' : `${s} secondes`;
+  if (s < 3600) {
+    const m = Math.max(1, Math.round(s / 60));
+    return m === 1 ? 'environ une minute' : `environ ${m} minutes`;
+  }
+  const h = Math.max(1, Math.round(s / 3600));
+  return h === 1 ? 'environ une heure' : `environ ${h} heures`;
+}
+
+const RATE_FORMAT = new Intl.NumberFormat('fr-FR', {
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+});
+
+/** "491.967800" → "1 € = 491,97 KMF". */
+export function formatRate(rate: string): string {
+  const value = Number.parseFloat(rate);
+  if (!Number.isFinite(value)) return `1 € = ${rate} KMF`;
+  return `1 € = ${RATE_FORMAT.format(value)} KMF`;
+}
+
+/** ISO-3166 alpha-2 → French country name ("FR" → "France"). */
+export function countryName(code: string): string {
+  if (!code) return 'Non renseigné';
+  try {
+    const names = new Intl.DisplayNames(['fr'], { type: 'region' });
+    return names.of(code.toUpperCase()) ?? code;
+  } catch {
+    return code;
+  }
 }

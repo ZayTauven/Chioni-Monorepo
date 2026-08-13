@@ -1,8 +1,8 @@
 /*
- * Chioni — /patient/tuteurs (placeholder, phase 2 will build the real screen).
+ * Chioni — /patient/tuteurs : guardianship (confirmation gate, consents).
  */
-import { LitePlaceholder } from '@/screens/lite/LitePlaceholder';
+import { PatientTuteurs } from '@/screens/patient/PatientTuteurs';
 
 export default function Page() {
-  return <LitePlaceholder title="Mes tuteurs" />;
+  return <PatientTuteurs />;
 }

@@ -1,4 +1,4 @@
 /*
- * Chioni — /centre/personnel (placeholder, phase 2 will build the real screen).
+ * Chioni — /centre/personnel : équipe du centre (directeur uniquement).
  */
-export { Placeholder as default } from '@/screens/Placeholder';
+export { Staff as default } from '@/screens/centre/Staff';

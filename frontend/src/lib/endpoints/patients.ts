@@ -46,6 +46,24 @@ export function listGuardians(page = 1): Promise<Paginated<GuardianLinkPatient>>
   return apiFetch(`/patients/me/guardians/?page=${page}`);
 }
 
+/**
+ * Aggregate the FULL guardian-link history across pages. The claimant
+ * confirmation gate must never miss a pending link hidden on a later page,
+ * and the screens need the full set to tell actives / invitations / revoked
+ * apart — so we follow `next` to the end, no cap.
+ */
+export async function listAllGuardians(): Promise<GuardianLinkPatient[]> {
+  const all: GuardianLinkPatient[] = [];
+  let page = 1;
+  for (;;) {
+    const batch = await listGuardians(page);
+    all.push(...batch.results);
+    if (!batch.next) break;
+    page += 1;
+  }
+  return all;
+}
+
 export function inviteGuardian(
   phone: string,
   relationship: Relationship,

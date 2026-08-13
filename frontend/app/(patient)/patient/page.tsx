@@ -1,8 +1,8 @@
 /*
- * Chioni — /patient (placeholder, phase 2 will build the real screen).
+ * Chioni — /patient : home of the patient space.
  */
-import { LitePlaceholder } from '@/screens/lite/LitePlaceholder';
+import { PatientHome } from '@/screens/patient/PatientHome';
 
 export default function Page() {
-  return <LitePlaceholder title="Bienvenue" />;
+  return <PatientHome />;
 }

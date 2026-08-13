@@ -1,4 +1,4 @@
 /*
- * Chioni — /centre/tarifs (placeholder, phase 2 will build the real screen).
+ * Chioni — /centre/tarifs : grille tarifaire (écriture directeur/caissier).
  */
-export { Placeholder as default } from '@/screens/Placeholder';
+export { Tariffs as default } from '@/screens/centre/Tariffs';

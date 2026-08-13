@@ -240,17 +240,22 @@
   --ax-light-fill-2:    rgba(16, 22, 40, 0.08);     /* active/pressed bg */
 
   /* ── SEMANTIC ramps (spec 01 §3.3) — kept as-is, they coexist
-     with Aurora. Light literals; dark remap in block below. ── */
-  --ax-success-50: #E7F4EC; --ax-success-200: #A8D8BC; --ax-success-500: #2E9E5B;
-  --ax-warning-50: #FBF1DE; --ax-warning-200: #EBCF93; --ax-warning-500: #C8870F;
-  --ax-danger-50:  #FBE9E6; --ax-danger-200:  #EFB3AA; --ax-danger-500:  #D24535;
-  --ax-info-50:    #E6EFFA; --ax-info-200:    #A9C8EC; --ax-info-500:    #2D74C4;
+     with Aurora. Light literals; dark remap in block below.
+     The 700 step is Chioni's: AA text color on the matching 50
+     background (soft badges, eyebrows). Keep 500 for borders,
+     icons and dots. ── */
+  --ax-success-50: #E7F4EC; --ax-success-200: #A8D8BC; --ax-success-500: #2E9E5B; --ax-success-700: #1D6B3C;
+  --ax-warning-50: #FBF1DE; --ax-warning-200: #EBCF93; --ax-warning-500: #C8870F; --ax-warning-700: #8A5D07;
+  --ax-danger-50:  #FBE9E6; --ax-danger-200:  #EFB3AA; --ax-danger-500:  #D24535; --ax-danger-700:  #A2301F;
+  --ax-info-50:    #E6EFFA; --ax-info-200:    #A9C8EC; --ax-info-500:    #2D74C4; --ax-info-700:    #1F5590;
 }
 
 [data-ax-theme="dark"] {
-  /* dark semantic remaps (spec 01 §3.3 dark table) */
-  --ax-success-50: #16271C; --ax-success-200: #2C5C3D; --ax-success-500: #46B36F;
-  --ax-warning-50: #2A1F0A; --ax-warning-200: #5C4517; --ax-warning-500: #E0A53A;
-  --ax-danger-50:  #2A1512; --ax-danger-200:  #5C2C26; --ax-danger-500:  #E26A5B;
-  --ax-info-50:    #101F30; --ax-info-200:    #274A6E; --ax-info-500:    #5A95DA;
+  /* dark semantic remaps (spec 01 §3.3 dark table).
+     700 flips to LIGHT tones (300/400 range) so text stays AA
+     on the dark 50 backgrounds. */
+  --ax-success-50: #16271C; --ax-success-200: #2C5C3D; --ax-success-500: #46B36F; --ax-success-700: #7FD2A0;
+  --ax-warning-50: #2A1F0A; --ax-warning-200: #5C4517; --ax-warning-500: #E0A53A; --ax-warning-700: #F0B35C;
+  --ax-danger-50:  #2A1512; --ax-danger-200:  #5C2C26; --ax-danger-500:  #E26A5B; --ax-danger-700:  #F1998B;
+  --ax-info-50:    #101F30; --ax-info-200:    #274A6E; --ax-info-500:    #5A95DA; --ax-info-700:    #9CC3F0;
 }

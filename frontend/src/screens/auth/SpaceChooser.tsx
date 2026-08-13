@@ -16,10 +16,11 @@ import { homeOfSpace, spacesOf, useAuth } from '@/context/AuthContext';
 import { createPatientMe } from '@/lib/endpoints/patients';
 import { createGuardianProfile } from '@/lib/endpoints/guardian';
 import { ApiError } from '@/lib/api';
+import { SEX_LABELS_SELF } from '@/lib/labels';
 import type { Sex } from '@/lib/types';
 
 const COUNTRIES: Array<[string, string]> = [
-  ['FR', 'France'],
+  ['FR', 'France (y compris Mayotte et La Réunion)'],
   ['BE', 'Belgique'],
   ['CH', 'Suisse'],
   ['DE', 'Allemagne'],
@@ -200,12 +201,15 @@ export function SpaceChooser() {
                   {openForm === 'patient' ? (
                     <form onSubmit={submitPatient} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--ax-space-3)' }} noValidate>
                       <ErrorAlert message={formError} />
+                      <p style={{ margin: 0, fontSize: 'var(--ax-text-xs)', color: 'var(--ax-text-subtle)' }}>
+                        <span className="ax-field__required">*</span> champ obligatoire
+                      </p>
                       <div className="ax-field">
-                        <label className="ax-label" htmlFor="pt-first">Prénom *</label>
+                        <label className="ax-label" htmlFor="pt-first">Prénom <span className="ax-field__required">*</span></label>
                         <input id="pt-first" type="text" className="ax-input" autoComplete="given-name" value={firstName} onChange={(e) => setFirstName(e.target.value)} required />
                       </div>
                       <div className="ax-field">
-                        <label className="ax-label" htmlFor="pt-last">Nom *</label>
+                        <label className="ax-label" htmlFor="pt-last">Nom <span className="ax-field__required">*</span></label>
                         <input id="pt-last" type="text" className="ax-input" autoComplete="family-name" value={lastName} onChange={(e) => setLastName(e.target.value)} required />
                       </div>
                       <div className="ax-field">
@@ -215,9 +219,9 @@ export function SpaceChooser() {
                       <div className="ax-field">
                         <label className="ax-label" htmlFor="pt-sex">Sexe</label>
                         <select id="pt-sex" className="ax-input" value={sex} onChange={(e) => setSex(e.target.value as Sex)}>
-                          <option value="">Je préfère ne pas dire</option>
-                          <option value="f">Féminin</option>
-                          <option value="m">Masculin</option>
+                          <option value="">{SEX_LABELS_SELF['']}</option>
+                          <option value="f">{SEX_LABELS_SELF.f}</option>
+                          <option value="m">{SEX_LABELS_SELF.m}</option>
                         </select>
                       </div>
                       <div className="ax-field">
@@ -231,7 +235,7 @@ export function SpaceChooser() {
                     </form>
                   ) : (
                     <button type="button" className="ax-btn ax-btn--primary ax-btn--lg ax-btn--block" onClick={() => { setOpenForm('patient'); setFormError(''); }}>
-                      <span className="ax-btn__label">Continuer</span>
+                      <span className="ax-btn__label">Continuer comme patient</span>
                     </button>
                   )}
                 </div>
@@ -269,7 +273,7 @@ export function SpaceChooser() {
                     </form>
                   ) : (
                     <button type="button" className="ax-btn ax-btn--secondary ax-btn--lg ax-btn--block" onClick={() => { setOpenForm('tuteur'); setFormError(''); }}>
-                      <span className="ax-btn__label">Continuer</span>
+                      <span className="ax-btn__label">Continuer comme tuteur</span>
                     </button>
                   )}
                 </div>

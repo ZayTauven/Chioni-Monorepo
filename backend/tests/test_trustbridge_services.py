@@ -7,10 +7,14 @@ through closure, amounts reconciled with the ledger), plus KYC gating,
 webhook idempotency and dispute lifecycle.
 """
 
+import threading
+from datetime import timedelta
 from decimal import Decimal
 
 import pytest
 from django.core.exceptions import ValidationError
+from django.db import connections
+from django.utils import timezone
 
 from apps.centers.models import HealthCenter
 from apps.common.models import Currency
@@ -472,6 +476,177 @@ class TestCashIn:
         intent.refresh_from_db()
         assert intent.status == PaymentIntent.Status.PROCESSING
         assert intent.ledger_transaction_id is None
+
+
+# ---------------------------------------------------------------------------
+# Anti-double-débit — a recent pending intent blocks a second pay (guardian
+# review of the frontend, 2026-08-13). The guard lives in the SERVICE.
+# ---------------------------------------------------------------------------
+
+GUARD_MESSAGE = "Un paiement est déjà en cours pour cette demande"
+
+
+class TestDoublePaymentGuard:
+    def test_second_intent_within_the_guard_window_is_refused(self):
+        scn = build_scenario(status=Status.SENT)
+        services.create_payment_intent(
+            guardian_user=scn.guardian_user, payment_request=scn.payment_request
+        )
+        with pytest.raises(ValidationError, match=GUARD_MESSAGE):
+            services.create_payment_intent(
+                guardian_user=scn.guardian_user,
+                payment_request=scn.payment_request,
+            )
+        assert PaymentIntent.objects.filter(
+            payment_request=scn.payment_request
+        ).count() == 1
+
+    def test_the_guard_is_per_request_not_per_guardian(self):
+        # A SECOND shared guardian is blocked too: one payment per request,
+        # whoever in the family started it first.
+        scn = build_scenario(status=Status.SENT)
+        second = add_shared_guardian(scn)
+        services.create_payment_intent(
+            guardian_user=scn.guardian_user, payment_request=scn.payment_request
+        )
+        with pytest.raises(ValidationError, match=GUARD_MESSAGE):
+            services.create_payment_intent(
+                guardian_user=second.guardian_user,
+                payment_request=scn.payment_request,
+            )
+
+    def test_a_pending_intent_older_than_the_window_no_longer_blocks(
+        self, settings
+    ):
+        settings.PSP_INTENT_GUARD_MINUTES = 15
+        scn = build_scenario(status=Status.SENT)
+        stale = services.create_payment_intent(
+            guardian_user=scn.guardian_user, payment_request=scn.payment_request
+        )
+        # An abandoned 3DS: backdate the pending intent beyond the window.
+        PaymentIntent.objects.filter(pk=stale.pk).update(
+            created_at=timezone.now() - timedelta(minutes=16)
+        )
+        retry = services.create_payment_intent(
+            guardian_user=scn.guardian_user, payment_request=scn.payment_request
+        )
+        assert retry.pk != stale.pk
+        assert PaymentIntent.objects.filter(
+            payment_request=scn.payment_request
+        ).count() == 2
+
+    def test_a_failed_intent_allows_an_immediate_retry(self):
+        scn = build_scenario(status=Status.SENT)
+        first = services.create_payment_intent(
+            guardian_user=scn.guardian_user, payment_request=scn.payment_request
+        )
+        payload, signature = signed_webhook(first.psp_reference, status="failed")
+        services.handle_psp_webhook(payload=payload, signature=signature)
+        retry = services.create_payment_intent(
+            guardian_user=scn.guardian_user, payment_request=scn.payment_request
+        )
+        assert retry.status == PaymentIntent.Status.PROCESSING
+        assert retry.pk != first.pk
+
+    def test_a_paid_request_stays_refused_by_the_state_machine(self):
+        scn = build_scenario(status=Status.PAID)  # webhook succeeded
+        with pytest.raises(ValidationError, match="pas ouverte au paiement"):
+            services.create_payment_intent(
+                guardian_user=scn.guardian_user,
+                payment_request=scn.payment_request,
+            )
+
+    def test_late_success_of_a_stale_intent_writes_nothing_once_paid(
+        self, settings
+    ):
+        """The residual real-PSP race: the abandoned 3DS completes AFTER a
+        fresh intent already paid the request. The late success must be
+        refused WITHOUT writing a second ledger trace (refund handled at
+        the provider, outside the ledger)."""
+        settings.PSP_INTENT_GUARD_MINUTES = 15
+        scn = build_scenario(status=Status.SENT)
+        stale = services.create_payment_intent(
+            guardian_user=scn.guardian_user, payment_request=scn.payment_request
+        )
+        PaymentIntent.objects.filter(pk=stale.pk).update(
+            created_at=timezone.now() - timedelta(minutes=16)
+        )
+        fresh = services.create_payment_intent(
+            guardian_user=scn.guardian_user, payment_request=scn.payment_request
+        )
+        services.register_payment_success(intent=fresh)
+        payload, signature = signed_webhook(stale.psp_reference)
+        with pytest.raises(ValidationError, match="plus ouverte au paiement"):
+            services.handle_psp_webhook(payload=payload, signature=signature)
+        stale.refresh_from_db()
+        assert stale.status == PaymentIntent.Status.PROCESSING
+        assert stale.ledger_transaction_id is None
+        assert scn.payment_request.ledger_transactions.count() == 1
+
+    def test_stale_success_first_then_fresh_success_stays_consistent(
+        self, settings
+    ):
+        """Mirror of the race above: the abandoned intent's webhook lands
+        FIRST (paying the request), then the fresh intent's success arrives.
+        The second success must be refused without writing: exactly one
+        ledger transaction, one SUCCEEDED intent."""
+        settings.PSP_INTENT_GUARD_MINUTES = 15
+        scn = build_scenario(status=Status.SENT)
+        stale = services.create_payment_intent(
+            guardian_user=scn.guardian_user, payment_request=scn.payment_request
+        )
+        PaymentIntent.objects.filter(pk=stale.pk).update(
+            created_at=timezone.now() - timedelta(minutes=16)
+        )
+        fresh = services.create_payment_intent(
+            guardian_user=scn.guardian_user, payment_request=scn.payment_request
+        )
+        payload, signature = signed_webhook(stale.psp_reference)
+        services.handle_psp_webhook(payload=payload, signature=signature)
+        payload, signature = signed_webhook(fresh.psp_reference)
+        with pytest.raises(ValidationError, match="plus ouverte au paiement"):
+            services.handle_psp_webhook(payload=payload, signature=signature)
+        stale.refresh_from_db()
+        fresh.refresh_from_db()
+        assert stale.status == PaymentIntent.Status.SUCCEEDED
+        assert fresh.status == PaymentIntent.Status.PROCESSING
+        assert fresh.ledger_transaction_id is None
+        assert scn.payment_request.ledger_transactions.count() == 1
+
+    @pytest.mark.django_db(transaction=True)
+    def test_two_concurrent_pays_yield_exactly_one_intent(self):
+        """Two simultaneous ``pay/`` clicks: ``_locked`` serialises them on
+        the request row, the loser re-reads after commit and hits the
+        guard. Real threads, real connections, real commits."""
+        scn = build_scenario(status=Status.SENT)
+        second = add_shared_guardian(scn)
+        barrier = threading.Barrier(2, timeout=10)
+        outcomes = []
+
+        def attempt(user):
+            try:
+                barrier.wait()
+                services.create_payment_intent(
+                    guardian_user=user, payment_request=scn.payment_request
+                )
+                outcomes.append("created")
+            except ValidationError:
+                outcomes.append("refused")
+            finally:
+                connections.close_all()
+
+        threads = [
+            threading.Thread(target=attempt, args=(user,))
+            for user in (scn.guardian_user, second.guardian_user)
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=15)
+        assert sorted(outcomes) == ["created", "refused"]
+        assert PaymentIntent.objects.filter(
+            payment_request=scn.payment_request
+        ).count() == 1
 
 
 # ---------------------------------------------------------------------------

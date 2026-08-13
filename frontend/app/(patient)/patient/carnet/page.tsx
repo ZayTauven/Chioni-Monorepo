@@ -1,8 +1,8 @@
 /*
- * Chioni — /patient/carnet (placeholder, phase 2 will build the real screen).
+ * Chioni — /patient/carnet : the patient's health record.
  */
-import { LitePlaceholder } from '@/screens/lite/LitePlaceholder';
+import { PatientCarnet } from '@/screens/patient/PatientCarnet';
 
 export default function Page() {
-  return <LitePlaceholder title="Mon carnet de santé" />;
+  return <PatientCarnet />;
 }

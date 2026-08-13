@@ -144,8 +144,7 @@ export function Header({
               key={m.center.id}
               type="button"
               className={`ax-dropdown__item${m.center.id === center.id ? ' is-active' : ''}`}
-              role="menuitemradio"
-              aria-checked={m.center.id === center.id}
+              aria-pressed={m.center.id === center.id}
               onClick={() => switchCenter(m.center.id)}
             >
               <span>{m.center.name}</span>
@@ -238,15 +237,14 @@ export function Header({
           </span>
         </div>
         {multiSpace && (
-          <Link className="ax-dropdown__item" role="menuitem" href="/espaces">
+          <Link className="ax-dropdown__item" href="/espaces">
             Changer d&rsquo;espace
           </Link>
         )}
-        <div className="ax-dropdown__divider" role="separator"></div>
+        <div className="ax-dropdown__divider" aria-hidden="true"></div>
         <button
           type="button"
           className="ax-dropdown__item ax-dropdown__item--danger"
-          role="menuitem"
           onClick={() => void signOut()}
         >
           Se déconnecter

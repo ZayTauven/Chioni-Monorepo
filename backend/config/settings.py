@@ -238,6 +238,21 @@ FX_EUR_KMF_RATE = env("FX_EUR_KMF_RATE", default="491.9678")
 # the center always receives the full invoice amount in KMF.
 PSP_FEE_PERCENT = env("PSP_FEE_PERCENT", default="2.50")
 
+# Anti-double-débit (revue guardian du frontend, 2026-08-13) : tant qu'un
+# PaymentIntent cree/en_cours plus récent que cette fenêtre existe pour une
+# demande, aucun nouvel intent ne peut être créé sur la même demande (un
+# 3DS qui traîne ne doit pas permettre deux débits). Au-delà de la fenêtre,
+# l'intent en cours est considéré abandonné et ne bloque plus — sinon un
+# 3DS jamais terminé rendrait la demande impayable pour toujours.
+PSP_INTENT_GUARD_MINUTES = env.int("PSP_INTENT_GUARD_MINUTES", default=15)
+# Boot guard (same philosophy as PSP_BACKEND/SMS_BACKEND): a value < 1 would
+# silently disable the double-debit guard — refuse to boot instead.
+if PSP_INTENT_GUARD_MINUTES < 1:
+    raise ImproperlyConfigured(
+        "PSP_INTENT_GUARD_MINUTES doit être >= 1 : une valeur nulle ou "
+        "négative désactiverait silencieusement la garde anti-double-débit."
+    )
+
 # ---------------------------------------------------------------------------
 # SMS — OTP login + notifications (ADR 0010, needs study §5.4)
 # ---------------------------------------------------------------------------

@@ -48,6 +48,9 @@ class PaymentRequestShareInline(admin.TabularInline):
 class PaymentRequestAdmin(admin.ModelAdmin):
     list_display = ("id", "invoice", "status", "created_by", "created_at")
     list_filter = ("status",)
+    # State transitions live in the service layer (state machine + DB
+    # triggers); the admin must not offer a bypass.
+    readonly_fields = ("status",)
     search_fields = (
         "invoice__patient__last_name",
         "invoice__patient__first_name",
@@ -58,7 +61,11 @@ class PaymentRequestAdmin(admin.ModelAdmin):
 
 
 @admin.register(PaymentIntent)
-class PaymentIntentAdmin(admin.ModelAdmin):
+class PaymentIntentAdmin(AppendOnlyAdminMixin, admin.ModelAdmin):
+    """Money-path record: amounts and status feed the ledger on webhook
+    success, so nothing here may be edited, deleted, or hand-created —
+    intents only exist through ``create_payment_intent()``."""
+
     list_display = (
         "id",
         "payment_request",
@@ -73,6 +80,10 @@ class PaymentIntentAdmin(admin.ModelAdmin):
     list_filter = ("psp", "status")
     search_fields = ("psp_reference", "idempotency_key")
     autocomplete_fields = ("payment_request", "guardian")
+
+    def has_add_permission(self, request):
+        # Intents must be created through create_payment_intent().
+        return False
 
 
 class LedgerEntryInline(admin.TabularInline):

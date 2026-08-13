@@ -12,11 +12,11 @@ import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { AuthStandalone, OffappTools, BrandCentered } from './authShared';
-import { PENDING_PHONE_KEY } from './PhoneSignIn';
 import { routeAfterSignIn, useAuth } from '@/context/AuthContext';
 import { otpRequest } from '@/lib/endpoints/auth';
 import { ApiError } from '@/lib/api';
-import { maskPhone } from '@/lib/labels';
+import { formatWait } from '@/lib/labels';
+import { PENDING_PHONE_KEY, clearPendingPhone } from '@/lib/tokens';
 
 const RESEND_COOLDOWN_S = 60;
 
@@ -71,9 +71,21 @@ export function OtpVerify() {
   function onInput(i: number, e: React.ChangeEvent<HTMLInputElement>) {
     setErrorMsg('');
     const v = e.target.value.replace(/\D/g, '');
+    if (v.length > 1) {
+      // Android SMS autofill (or a fast paste) lands the whole code in one
+      // cell — distribute the digits like onPaste does.
+      const txt = v.slice(0, 6);
+      setDigits(() => {
+        const next = ['', '', '', '', '', ''];
+        for (let k = 0; k < 6; k += 1) next[k] = txt[k] || '';
+        return next;
+      });
+      focusCell(Math.min(txt.length, 5));
+      return;
+    }
     setDigits((d) => {
       const next = [...d];
-      next[i] = v.slice(-1) || '';
+      next[i] = v;
       return next;
     });
     if (v && i < 5) focusCell(i + 1);
@@ -112,22 +124,24 @@ export function OtpVerify() {
     setInfoMsg('');
     try {
       const me = await signInWithOtp(phone, digits.join(''));
-      try {
-        sessionStorage.removeItem(PENDING_PHONE_KEY);
-      } catch {
-        /* ignore */
-      }
+      clearPendingPhone();
       router.push(routeAfterSignIn(me));
     } catch (err) {
       setLoading(false);
       if (err instanceof ApiError && err.status === 429) {
         const wait = err.retryAfterSeconds ?? 60;
-        setErrorMsg(`Trop d'essais. Réessayez dans ${wait} seconde${wait > 1 ? 's' : ''}.`);
+        setErrorMsg(
+          `Vous avez fait plusieurs essais. Pour protéger votre compte, réessayez dans ${formatWait(wait)}.`,
+        );
+      } else if (err instanceof ApiError && err.status === 400) {
+        // Only a REAL server rejection empties the cells.
+        setErrorMsg('Code invalide ou expiré. Vérifiez les chiffres, ou touchez « Renvoyer le code ».');
+        setDigits(['', '', '', '', '', '']);
+        focusCell(0);
       } else {
-        setErrorMsg('Code invalide ou expiré.');
+        // Network failure (or unexpected status): keep the typed digits.
+        setErrorMsg('Connexion impossible. Vérifiez votre réseau et réessayez.');
       }
-      setDigits(['', '', '', '', '', '']);
-      focusCell(0);
     }
   }
 
@@ -137,12 +151,14 @@ export function OtpVerify() {
     setInfoMsg('');
     try {
       await otpRequest(phone);
-      setInfoMsg('Si ce numéro peut recevoir un code, un SMS vient de lui être envoyé.');
+      setInfoMsg('Un nouveau code vient d’être envoyé.');
       startCooldown();
     } catch (err) {
       if (err instanceof ApiError && err.status === 429) {
         const wait = err.retryAfterSeconds ?? RESEND_COOLDOWN_S;
-        setErrorMsg(`Trop de demandes. Réessayez dans ${wait} seconde${wait > 1 ? 's' : ''}.`);
+        setErrorMsg(
+          `Vous avez demandé plusieurs codes. Pour protéger votre compte, réessayez dans ${formatWait(wait)}.`,
+        );
         startCooldown(wait);
       } else {
         setErrorMsg('Impossible de renvoyer le code pour le moment. Réessayez plus tard.');
@@ -158,8 +174,8 @@ export function OtpVerify() {
         <div style={{ inlineSize: '100%', display: 'flex', flexDirection: 'column', gap: 'var(--ax-space-5)' }}>
           <BrandCentered />
 
-          <section className="ax-card" role="region" aria-label="Vérification du code" style={{ borderRadius: 'var(--ax-radius-xl)' }}>
-            <div className="ax-card__body" style={{ padding: 'var(--ax-space-8)', display: 'flex', flexDirection: 'column', gap: 'var(--ax-space-5)' }}>
+          <section className="ax-card ax-otp-card" role="region" aria-label="Vérification du code" style={{ borderRadius: 'var(--ax-radius-xl)' }}>
+            <div className="ax-card__body" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--ax-space-5)' }}>
               <header style={{ textAlign: 'center', display: 'flex', flexDirection: 'column', gap: 'var(--ax-space-3)', alignItems: 'center' }}>
                 <span className="ax-center" aria-hidden="true" style={{ inlineSize: 56, blockSize: 56, borderRadius: 'var(--ax-radius-pill)', background: 'var(--ax-accent-wash)', color: 'var(--ax-accent)' }}>
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.75} strokeLinecap="round" strokeLinejoin="round" width={26} height={26}><path d="M12 3a12 12 0 0 0 8.5 3a12 12 0 0 1 -8.5 15a12 12 0 0 1 -8.5 -15a12 12 0 0 0 8.5 -3" /><path d="M11 11a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" /><path d="M12 12l0 2.5" /></svg>
@@ -167,8 +183,8 @@ export function OtpVerify() {
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--ax-space-1)' }}>
                   <h1 style={{ margin: 0, fontFamily: 'var(--ax-font-display)', fontSize: 'var(--ax-text-2xl)', fontWeight: 'var(--ax-weight-semibold)', color: 'var(--ax-text-strong)', letterSpacing: '-.015em' }}>Code reçu par SMS</h1>
                   <p style={{ margin: 0, fontSize: 'var(--ax-text-sm)', color: 'var(--ax-text-muted)' }}>
-                    Si ce numéro peut recevoir un code, un SMS vient d&rsquo;être envoyé au{' '}
-                    <b style={{ color: 'var(--ax-text-strong)' }}>{phone ? maskPhone(phone) : '…'}</b>.
+                    Un code vient d&rsquo;être envoyé par SMS au{' '}
+                    <b style={{ color: 'var(--ax-text-strong)' }}>{phone ?? '…'}</b>.
                   </p>
                 </div>
               </header>
@@ -190,8 +206,9 @@ export function OtpVerify() {
                 <div>
                   <div className="ax-otp" role="group" aria-label="Saisissez le code à 6 chiffres" style={{ display: 'flex', justifyContent: 'space-between', gap: 'var(--ax-space-2)' }} onPaste={onPaste}>
                     {digits.map((d, i) => (
-                      <input key={i} type="text" inputMode="numeric" autoComplete="one-time-code" maxLength={1}
-                        className="ax-otp__cell" style={{ flex: '1 1 0', minInlineSize: 0, fontWeight: 600, ...(errorMsg ? { borderColor: 'var(--ax-danger-500)' } : {}) }}
+                      <input key={i} type="text" inputMode="numeric"
+                        autoComplete={i === 0 ? 'one-time-code' : 'off'}
+                        className="ax-otp__cell" style={{ flex: '1 1 0', fontWeight: 600, ...(errorMsg ? { borderColor: 'var(--ax-danger-500)' } : {}) }}
                         aria-label={`Chiffre ${i + 1} sur 6`} ref={(el) => { cells.current[i] = el; }} value={d}
                         onChange={(e) => onInput(i, e)} onKeyDown={(e) => onKey(i, e)} onFocus={(e) => e.target.select()} />
                     ))}

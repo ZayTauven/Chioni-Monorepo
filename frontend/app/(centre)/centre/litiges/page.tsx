@@ -1,4 +1,4 @@
 /*
- * Chioni — /centre/litiges (placeholder, phase 2 will build the real screen).
+ * Chioni — /centre/litiges : contestations (résolution directeur).
  */
-export { Placeholder as default } from '@/screens/Placeholder';
+export { Disputes as default } from '@/screens/centre/Disputes';

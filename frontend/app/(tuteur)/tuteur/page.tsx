@@ -1,8 +1,8 @@
 /*
- * Chioni — /tuteur (placeholder, phase 2 will build the real screen).
+ * Chioni — /tuteur (guardian home).
  */
-import { LitePlaceholder } from '@/screens/lite/LitePlaceholder';
+import { TuteurHome } from '@/screens/tuteur/TuteurHome';
 
 export default function Page() {
-  return <LitePlaceholder title="Bienvenue" />;
+  return <TuteurHome />;
 }
