@@ -4,7 +4,7 @@
  * a member without the right role is a 403.
  */
 
-import { apiFetch } from '../api';
+import { apiDownload, apiFetch } from '../api';
 import type {
   ActivityStats,
   Appointment,
@@ -27,6 +27,10 @@ import type {
   MobileMoneyOperator,
   Paginated,
   Patient,
+  PatientDocumentStaff,
+  PatientDocumentType,
+  PatientInsurance,
+  PatientMedicalFile,
   PaymentRequestStaff,
   Practitioner,
   Prescription,
@@ -40,6 +44,7 @@ import type {
   TariffItem,
   UnpaidInvoice,
   UnpaidOrdering,
+  VitalSignsStaff,
 } from '../types';
 
 /**
@@ -104,6 +109,13 @@ export interface CenterPatientPayload {
   sex?: Sex;
   phone?: string;
   city?: string;
+  /* S3 — extended identity, also accepted at desk creation (ADR 0016 add. 8). */
+  address?: string;
+  phone_alt?: string;
+  national_id?: string;
+  emergency_contact_name?: string;
+  emergency_contact_phone?: string;
+  emergency_contact_relationship?: string;
   /** Porte C — optional guardian invitation at desk-creation time (write-only). */
   guardian_phone?: string;
   guardian_relationship?: Relationship;
@@ -133,9 +145,221 @@ export function getPatient(centerId: number, patientId: number): Promise<Patient
 export function updatePatient(
   centerId: number,
   patientId: number,
-  payload: Partial<Pick<Patient, 'first_name' | 'last_name' | 'birth_date' | 'sex' | 'phone' | 'city'>>,
+  payload: Partial<
+    Pick<
+      Patient,
+      | 'first_name'
+      | 'last_name'
+      | 'birth_date'
+      | 'sex'
+      | 'phone'
+      | 'city'
+      | 'address'
+      | 'phone_alt'
+      | 'national_id'
+      | 'emergency_contact_name'
+      | 'emergency_contact_phone'
+      | 'emergency_contact_relationship'
+    >
+  >,
 ): Promise<Patient> {
   return apiFetch(`/centers/${centerId}/patients/${patientId}/`, { method: 'PATCH', body: payload });
+}
+
+/* ── S3 — duplicate detection at desk creation (every staff member) ── */
+
+export interface SimilarPatientsQuery {
+  /** Matched against `phone` OR `phone_alt` (E.164-normalised server-side). */
+  phone?: string;
+  /** Name criterion requires last_name AND birth_date TOGETHER. */
+  last_name?: string;
+  /** Optional refinement of the name criterion. */
+  first_name?: string;
+  birth_date?: string;
+}
+
+/**
+ * Look-alike patients of the center's perimeter — NON-blocking by design:
+ * the desk is informed, the desk decides (create anyway / open the record /
+ * merge). No usable criterion → 400 ; invalid phone or date → 400 per field.
+ */
+export function listSimilarPatients(
+  centerId: number,
+  { phone, last_name, first_name, birth_date }: SimilarPatientsQuery,
+): Promise<Paginated<Patient>> {
+  const query = new URLSearchParams();
+  if (phone) query.set('phone', phone);
+  if (last_name) query.set('last_name', last_name);
+  if (first_name) query.set('first_name', first_name);
+  if (birth_date) query.set('birth_date', birth_date);
+  return apiFetch(`/centers/${centerId}/patients/similar/?${query.toString()}`);
+}
+
+/* ── S3 — insurance/mutual lines (read all staff, write BILLING) ── */
+
+export interface InsurancePayload {
+  insurer_name: string;
+  member_number: string;
+  valid_until?: string | null;
+  notes?: string;
+  is_active?: boolean;
+}
+
+export function listPatientInsurances(
+  centerId: number,
+  patientId: number,
+  page = 1,
+): Promise<Paginated<PatientInsurance>> {
+  return apiFetch(`/centers/${centerId}/patients/${patientId}/insurances/?page=${page}`);
+}
+
+export function createPatientInsurance(
+  centerId: number,
+  patientId: number,
+  payload: InsurancePayload,
+): Promise<PatientInsurance> {
+  return apiFetch(`/centers/${centerId}/patients/${patientId}/insurances/`, {
+    method: 'POST',
+    body: payload,
+  });
+}
+
+export function updatePatientInsurance(
+  centerId: number,
+  patientId: number,
+  insuranceId: number,
+  payload: Partial<InsurancePayload>,
+): Promise<PatientInsurance> {
+  return apiFetch(`/centers/${centerId}/patients/${patientId}/insurances/${insuranceId}/`, {
+    method: 'PATCH',
+    body: payload,
+  });
+}
+
+/* ── S3 — medical file (clinical roles ONLY, read AND write) ── */
+
+/**
+ * Constant empty shape before the first write (`updated_at: null`), created
+ * on first PATCH. Administrative staff and pharmacist get a 403 — never call
+ * this outside a clinical-role gate.
+ */
+export function getPatientMedicalFile(
+  centerId: number,
+  patientId: number,
+): Promise<PatientMedicalFile> {
+  return apiFetch(`/centers/${centerId}/patients/${patientId}/medical-file/`);
+}
+
+export function updatePatientMedicalFile(
+  centerId: number,
+  patientId: number,
+  payload: Partial<Pick<PatientMedicalFile, 'blood_group' | 'notes'>>,
+): Promise<PatientMedicalFile> {
+  return apiFetch(`/centers/${centerId}/patients/${patientId}/medical-file/`, {
+    method: 'PATCH',
+    body: payload,
+  });
+}
+
+/* ── S3 — attached documents (clinical roles of the producing center) ── */
+
+export function listPatientDocuments(
+  centerId: number,
+  patientId: number,
+  page = 1,
+): Promise<Paginated<PatientDocumentStaff>> {
+  return apiFetch(`/centers/${centerId}/patients/${patientId}/documents/?page=${page}`);
+}
+
+/**
+ * Multipart upload — real JPEG/PNG/WebP only (photos of documents ; the PDF
+ * is deferred), 2 MB max, EXIF stripped server-side. Throttle scope
+ * `uploads` (20/h shared with avatar/logo) → map the 429 to French.
+ */
+export function uploadPatientDocument(
+  centerId: number,
+  patientId: number,
+  {
+    file,
+    doc_type,
+    title,
+    source_encounter,
+  }: { file: File; doc_type: PatientDocumentType; title: string; source_encounter?: number },
+): Promise<PatientDocumentStaff> {
+  const form = new FormData();
+  form.append('file', file);
+  form.append('doc_type', doc_type);
+  form.append('title', title);
+  if (source_encounter !== undefined) form.append('source_encounter', String(source_encounter));
+  return apiFetch(`/centers/${centerId}/patients/${patientId}/documents/`, {
+    method: 'POST',
+    body: form,
+  });
+}
+
+/** Authenticated download — bytes never flow through a static /media/ URL. */
+export function downloadPatientDocument(
+  centerId: number,
+  patientId: number,
+  documentId: number,
+): Promise<void> {
+  return apiDownload(
+    `/centers/${centerId}/patients/${patientId}/documents/${documentId}/download/`,
+    `document-${documentId}`,
+  );
+}
+
+/**
+ * Archive (definitive) — correction WITHOUT destruction: the patient no
+ * longer sees the document, the producing center's clinical staff keeps the
+ * line and the download. Already archived → 400.
+ */
+export function archivePatientDocument(
+  centerId: number,
+  patientId: number,
+  documentId: number,
+): Promise<PatientDocumentStaff> {
+  return apiFetch(`/centers/${centerId}/patients/${patientId}/documents/${documentId}/archive/`, {
+    method: 'POST',
+  });
+}
+
+/* ── S3 — vital signs of an encounter (clinical roles) ── */
+
+/** Bare NON-paginated array, like prescriptions/record entries. */
+export function listVitalSigns(
+  centerId: number,
+  encounterId: number,
+): Promise<VitalSignsStaff[]> {
+  return apiFetch(`/centers/${centerId}/encounters/${encounterId}/vital-signs/`);
+}
+
+export interface VitalSignsPayload {
+  /** Values as typed (strings) — DRF coerces and answers 400 per field on
+      implausible bounds. At least one measure is required. */
+  systolic_bp?: string;
+  diastolic_bp?: string;
+  heart_rate?: string;
+  spo2?: string;
+  temperature_c?: string;
+  respiratory_rate?: string;
+  weight_kg?: string;
+  height_cm?: string;
+}
+
+/**
+ * `measured_by` is ALWAYS the caller's clinical hat (never sent). Closed
+ * encounter → 400 (same `_require_open_encounter` rule as the carnet).
+ */
+export function createVitalSigns(
+  centerId: number,
+  encounterId: number,
+  payload: VitalSignsPayload,
+): Promise<VitalSignsStaff> {
+  return apiFetch(`/centers/${centerId}/encounters/${encounterId}/vital-signs/`, {
+    method: 'POST',
+    body: payload,
+  });
 }
 
 /**

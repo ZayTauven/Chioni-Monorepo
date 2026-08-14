@@ -5,9 +5,49 @@ from .models import (
     Consent,
     Encounter,
     HealthRecordEntry,
+    PatientDocument,
+    PatientMedicalFile,
     Prescription,
     PrescriptionItem,
+    VitalSigns,
 )
+
+
+@admin.register(PatientMedicalFile)
+class PatientMedicalFileAdmin(admin.ModelAdmin):
+    list_display = ("patient", "blood_group", "updated_by", "updated_at")
+    list_filter = ("blood_group",)
+    search_fields = ("patient__last_name", "patient__first_name")
+    autocomplete_fields = ("patient", "updated_by")
+
+
+@admin.register(VitalSigns)
+class VitalSignsAdmin(admin.ModelAdmin):
+    list_display = (
+        "encounter", "measured_at", "measured_by",
+        "systolic_bp", "diastolic_bp", "heart_rate", "spo2",
+        "temperature_c", "respiratory_rate", "weight_kg", "height_cm",
+    )
+    autocomplete_fields = ("encounter", "measured_by")
+    date_hierarchy = "measured_at"
+
+
+@admin.register(PatientDocument)
+class PatientDocumentAdmin(admin.ModelAdmin):
+    # The « file » field is deliberately ABSENT everywhere: the private
+    # storage has NO URL (ADR 0016 §5) and the admin widget would try to
+    # render one. The bytes are only reachable through the authenticated
+    # download endpoints.
+    list_display = (
+        "patient", "center", "doc_type", "title", "source_encounter",
+        "archived_at", "created_at",
+    )
+    list_filter = ("doc_type", "center")
+    search_fields = ("patient__last_name", "patient__first_name", "title")
+    autocomplete_fields = (
+        "patient", "center", "source_encounter", "uploaded_by", "archived_by",
+    )
+    exclude = ("file",)
 
 
 class ActPerformedInline(admin.TabularInline):

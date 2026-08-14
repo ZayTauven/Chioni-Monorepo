@@ -1,6 +1,17 @@
 from django.contrib import admin
 
-from .models import GuardianLink, GuardianProfile, PatientProfile
+from .models import GuardianLink, GuardianProfile, PatientInsurance, PatientProfile
+
+
+@admin.register(PatientInsurance)
+class PatientInsuranceAdmin(admin.ModelAdmin):
+    list_display = (
+        "patient", "insurer_name", "member_number", "valid_until",
+        "is_active", "created_at",
+    )
+    list_filter = ("is_active",)
+    search_fields = ("patient__last_name", "patient__first_name", "insurer_name")
+    autocomplete_fields = ("patient", "created_by")
 
 
 @admin.register(PatientProfile)

@@ -2,23 +2,34 @@
 /*
  * Chioni — /patient/carnet : the patient's health record.
  *
- * Three pill tabs (Consultations / Ordonnances / Ma santé), each loading
- * lazily on first visit to keep the page light on a weak connection.
- * The intro line states the ownership rule in one sentence.
+ * Four pill tabs (Consultations / Ordonnances / Documents / Ma santé), each
+ * loading lazily on first visit to keep the page light on a weak connection.
+ * S3 additions: the « Documents » tab (photos of results, authenticated
+ * download — never a static file URL), the medical file at the top of
+ * « Ma santé » (blood group in plain words), the vital-signs readings, and
+ * the three new record-entry shelves. The intro line states the ownership
+ * rule in one sentence.
  */
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
+  downloadMyDocument,
+  getMyMedicalFile,
   listEncounters,
+  listMyDocuments,
+  listMyVitalSigns,
   listPrescriptions,
   listRecordEntries,
 } from '@/lib/endpoints/patients';
 import {
+  BLOOD_GROUP_LABELS,
+  DOC_TYPE_LABELS,
   formatDate,
   formatKmf,
   GENERIC_CATEGORY_LABELS,
   RECORD_ENTRY_TYPE_LABELS,
+  vitalSummary,
 } from '@/lib/labels';
-import type { RecordEntry, RecordEntryType } from '@/lib/types';
+import type { PatientMedicalFile, RecordEntry, RecordEntryType } from '@/lib/types';
 import { useLoadMore } from './useLoadMore';
 import {
   EmptyState,
@@ -29,20 +40,24 @@ import {
   SkeletonCards,
 } from './ui';
 
-type TabKey = 'consultations' | 'ordonnances' | 'sante';
+type TabKey = 'consultations' | 'ordonnances' | 'documents' | 'sante';
 
 const TABS: { key: TabKey; label: string }[] = [
   { key: 'consultations', label: 'Consultations' },
   { key: 'ordonnances', label: 'Ordonnances' },
+  { key: 'documents', label: 'Documents' },
   { key: 'sante', label: 'Ma santé' },
 ];
 
-/** Display order of « Ma santé » groups (per the needs study). */
+/** Display order of « Ma santé » groups (per the needs study, S3 extended). */
 const ENTRY_ORDER: RecordEntryType[] = [
   'antecedent',
   'allergie',
   'traitement_en_cours',
   'vaccination',
+  'chirurgie',
+  'antecedent_familial',
+  'observation',
 ];
 
 function ConsultationsTab({ enabled }: { enabled: boolean }) {
@@ -151,8 +166,25 @@ function OrdonnancesTab({ enabled }: { enabled: boolean }) {
   );
 }
 
-function SanteTab({ enabled }: { enabled: boolean }) {
-  const list = useLoadMore(listRecordEntries, enabled);
+/* ── S3 — « Documents » : photos de résultats, téléchargement authentifié ── */
+
+function DocumentsTab({ enabled }: { enabled: boolean }) {
+  const list = useLoadMore(listMyDocuments, enabled);
+  const [busyId, setBusyId] = useState<number | null>(null);
+  // The failure message lives IN the card whose button was pressed — on a
+  // small screen an alert at the top of the list would be off-screen.
+  const [failed, setFailed] = useState<{ id: number; error: unknown } | null>(null);
+
+  const download = async (id: number) => {
+    setBusyId(id);
+    setFailed(null);
+    try {
+      await downloadMyDocument(id);
+    } catch (err) {
+      setFailed({ id, error: err });
+    }
+    setBusyId(null);
+  };
 
   if (list.loading) return <SkeletonCards />;
   if (list.error != null && list.items.length === 0)
@@ -160,13 +192,86 @@ function SanteTab({ enabled }: { enabled: boolean }) {
   if (list.items.length === 0)
     return (
       <EmptyState
-        title="Rien pour le moment"
-        message="Les soignants noteront ici vos allergies, traitements et vaccins au fil de vos visites."
+        title="Aucun document pour le moment"
+        message="Les photos de vos résultats d'analyses et comptes rendus ajoutées par les centres apparaîtront ici."
       />
     );
 
+  return (
+    <div className="pat-stack">
+      {list.items.map((doc) => (
+        <section key={doc.id} className="ax-card" role="region" aria-label="Document">
+          <div className="ax-card__body pat-gate__body">
+            <div className="pat-row" style={{ minHeight: 0 }}>
+              <div className="pat-row__main">
+                <span className="pat-row__title">{doc.title}</span>
+                <span className="pat-row__meta">
+                  {DOC_TYPE_LABELS[doc.doc_type]} · {doc.center_name} · {formatDate(doc.created_at)}
+                </span>
+              </div>
+            </div>
+            <button
+              type="button"
+              className={`ax-btn ax-btn--secondary ax-btn--lg ax-btn--block${busyId === doc.id ? ' is-loading' : ''}`}
+              onClick={() => void download(doc.id)}
+              disabled={busyId === doc.id}
+              aria-busy={busyId === doc.id}
+            >
+              <span className="ax-btn__spinner" aria-hidden="true"></span>
+              <span className="ax-btn__label">Télécharger</span>
+            </button>
+            {failed?.id === doc.id && <ErrorAlert error={failed.error} />}
+          </div>
+        </section>
+      ))}
+      {list.error != null && <ErrorAlert error={list.error} />}
+      <LoadMoreButton hasMore={list.hasMore} loading={list.loadingMore} onClick={list.loadMore} />
+    </div>
+  );
+}
+
+/* ── « Ma santé » : fiche santé + carnet + mesures ── */
+
+function SanteTab({ enabled }: { enabled: boolean }) {
+  const entries = useLoadMore(listRecordEntries, enabled);
+  const vitals = useLoadMore(listMyVitalSigns, enabled);
+
+  // The medical file is one small read-only object: fetched once when the tab
+  // opens, shown when it holds something. On failure the card simply stays
+  // away — the record list below carries the connectivity error if any.
+  const [file, setFile] = useState<PatientMedicalFile | null>(null);
+  useEffect(() => {
+    if (!enabled || file !== null) return;
+    let cancelled = false;
+    getMyMedicalFile()
+      .then((data) => {
+        if (!cancelled) setFile(data);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [enabled, file]);
+
+  if (entries.loading || vitals.loading) return <SkeletonCards />;
+  if (entries.error != null && entries.items.length === 0)
+    return <ErrorAlert error={entries.error} onRetry={entries.reload} />;
+
+  const hasFileInfo = file !== null && (file.blood_group !== '' || file.notes !== '');
+  if (entries.items.length === 0 && vitals.items.length === 0 && !hasFileInfo) {
+    // Nothing else to show and the measures failed to load: say so honestly
+    // instead of pretending the record is empty.
+    if (vitals.error != null) return <ErrorAlert error={vitals.error} onRetry={vitals.reload} />;
+    return (
+      <EmptyState
+        title="Rien pour le moment"
+        message="Les soignants noteront ici vos allergies, traitements, vaccins et mesures au fil de vos visites."
+      />
+    );
+  }
+
   const groups = new Map<RecordEntryType, RecordEntry[]>();
-  for (const entry of list.items) {
+  for (const entry of entries.items) {
     const group = groups.get(entry.entry_type);
     if (group) group.push(entry);
     else groups.set(entry.entry_type, [entry]);
@@ -174,6 +279,28 @@ function SanteTab({ enabled }: { enabled: boolean }) {
 
   return (
     <div className="pat-stack">
+      {/* S3 — la fiche santé en tête, en mots simples. */}
+      {hasFileInfo && file !== null && (
+        <section className="ax-card" role="region" aria-label="Ma fiche santé">
+          <div className="ax-card__body pat-gate__body">
+            <h3 className="pat-row__title" style={{ margin: 0 }}>Ma fiche santé</h3>
+            {file.blood_group !== '' && (
+              <p className="pat-row__meta" style={{ margin: 0 }}>
+                <b>Groupe sanguin&nbsp;:</b>{' '}
+                <span style={{ color: 'var(--ax-text-strong)', fontWeight: 'var(--ax-weight-semibold)' }}>
+                  {BLOOD_GROUP_LABELS[file.blood_group]}
+                </span>
+              </p>
+            )}
+            {file.notes !== '' && (
+              <p className="pat-row__meta" style={{ margin: 0, whiteSpace: 'pre-wrap' }}>
+                {file.notes}
+              </p>
+            )}
+          </div>
+        </section>
+      )}
+
       {ENTRY_ORDER.filter((type) => groups.has(type)).map((type) => (
         <section key={type} className="ax-card" role="region" aria-label={RECORD_ENTRY_TYPE_LABELS[type]}>
           <div className="ax-card__body pat-gate__body">
@@ -193,8 +320,42 @@ function SanteTab({ enabled }: { enabled: boolean }) {
           </div>
         </section>
       ))}
-      {list.error != null && <ErrorAlert error={list.error} />}
-      <LoadMoreButton hasMore={list.hasMore} loading={list.loadingMore} onClick={list.loadMore} />
+
+      {/* S3 — les mesures prises en consultation (tension, poids…). */}
+      {vitals.items.length > 0 && (
+        <section className="ax-card" role="region" aria-label="Mes mesures">
+          <div className="ax-card__body pat-gate__body">
+            <h3 className="pat-row__title" style={{ margin: 0 }}>Mes mesures</h3>
+            <ul className="pat-lines">
+              {vitals.items.map((reading) => (
+                <li key={reading.id}>
+                  <span className="pat-line__label">
+                    {/* plain: « Tension 120/80 », « Oxygène 96 % » — pas de jargon. */}
+                    <span className="pat-line__name">{vitalSummary(reading, { plain: true }).join(' · ')}</span>
+                    <span className="pat-line__cat">{formatDate(reading.measured_at)}</span>
+                  </span>
+                </li>
+              ))}
+            </ul>
+            <LoadMoreButton
+              hasMore={vitals.hasMore}
+              loading={vitals.loadingMore}
+              onClick={vitals.loadMore}
+            />
+          </div>
+        </section>
+      )}
+
+      {/* Les mesures n'ont pas pu charger (ou charger plus) : on le dit,
+          sans faire disparaître la carte en silence. */}
+      {vitals.error != null && <ErrorAlert error={vitals.error} onRetry={vitals.reload} />}
+
+      {entries.error != null && <ErrorAlert error={entries.error} />}
+      <LoadMoreButton
+        hasMore={entries.hasMore}
+        loading={entries.loadingMore}
+        onClick={entries.loadMore}
+      />
     </div>
   );
 }
@@ -205,6 +366,7 @@ export function PatientCarnet() {
   const [visited, setVisited] = useState<Record<TabKey, boolean>>({
     consultations: true,
     ordonnances: false,
+    documents: false,
     sante: false,
   });
 
@@ -221,7 +383,7 @@ export function PatientCarnet() {
 
       {/* Honest pattern: plain toggle buttons (aria-pressed), not an
           incomplete ARIA tabs composite. Same choice as PatientPaiements. */}
-      <nav className="ax-tabs ax-tabs--pill pat-tabs" aria-label="Sections du carnet">
+      <nav className="ax-tabs ax-tabs--pill pat-tabs pat-tabs--wrap" aria-label="Sections du carnet">
         <div className="ax-tabs__list">
           {TABS.map((t) => (
             <button
@@ -242,6 +404,9 @@ export function PatientCarnet() {
       </div>
       <div hidden={tab !== 'ordonnances'}>
         <OrdonnancesTab enabled={visited.ordonnances} />
+      </div>
+      <div hidden={tab !== 'documents'}>
+        <DocumentsTab enabled={visited.documents} />
       </div>
       <div hidden={tab !== 'sante'}>
         <SanteTab enabled={visited.sante} />

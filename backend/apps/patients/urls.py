@@ -13,8 +13,11 @@ from apps.patients.views import (
     CenterPatientClinicalConsentView,
     CenterPatientDetailView,
     CenterPatientGuardianLinksView,
+    CenterPatientInsuranceDetailView,
+    CenterPatientInsuranceListCreateView,
     CenterPatientListCreateView,
     CenterPatientMergeView,
+    CenterPatientSimilarView,
     ClinicalConsentView,
     DeclineInvitationView,
     GuardianInvitationListView,
@@ -23,6 +26,7 @@ from apps.patients.views import (
     InviteGuardianView,
     MyGuardianLinksView,
     MyGuardianProfileView,
+    MyInsurancesView,
     MyPatientProfileView,
     PatientConfirmLinkView,
     PatientDeclineLinkView,
@@ -45,6 +49,21 @@ urlpatterns = [
         name="center-patient-merge",
     ),
     path(
+        "centers/<int:center_pk>/patients/similar/",
+        CenterPatientSimilarView.as_view(),
+        name="center-patient-similar",
+    ),
+    path(
+        "centers/<int:center_pk>/patients/<int:pk>/insurances/",
+        CenterPatientInsuranceListCreateView.as_view(),
+        name="center-patient-insurances",
+    ),
+    path(
+        "centers/<int:center_pk>/patients/<int:pk>/insurances/<int:insurance_pk>/",
+        CenterPatientInsuranceDetailView.as_view(),
+        name="center-patient-insurance-detail",
+    ),
+    path(
         "centers/<int:center_pk>/patients/<int:pk>/",
         CenterPatientDetailView.as_view(),
         name="center-patient-detail",
@@ -61,6 +80,11 @@ urlpatterns = [
     ),
     # Audience: the patient (porte B)
     path("patients/me/", MyPatientProfileView.as_view(), name="my-profile"),
+    path(
+        "patients/me/insurances/",
+        MyInsurancesView.as_view(),
+        name="my-insurances",
+    ),
     path(
         "patients/me/guardians/",
         MyGuardianLinksView.as_view(),

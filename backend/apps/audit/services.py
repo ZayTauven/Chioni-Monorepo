@@ -78,6 +78,12 @@ class AuditAction:
     TARIFF_CREATED = "tariff.created"
     TARIFF_UPDATED = "tariff.updated"
 
+    # Patient administrative-financial data (S3, ADR 0016) — payloads:
+    # ids and comma-joined FIELD NAMES only, never an insurer name or a
+    # member number.
+    PATIENT_INSURANCE_CREATED = "patient_insurance.created"
+    PATIENT_INSURANCE_UPDATED = "patient_insurance.updated"
+
     # Medical data production
     ENCOUNTER_CREATED = "encounter.created"
     # Closure of a consultation (clinical roles, S1) : « terminee » —
@@ -85,6 +91,13 @@ class AuditAction:
     ENCOUNTER_CLOSED = "encounter.closed"
     PRESCRIPTION_CREATED = "prescription.created"
     RECORD_ENTRY_CREATED = "health_record_entry.created"
+    # S3 (ADR 0016) — enriched patient record. Payload contract: ids,
+    # doc_type codes and FIELD NAMES only — NEVER a measured value, a
+    # document title, a blood group or any clinical text (ADR 0007).
+    PATIENT_MEDICAL_FILE_UPDATED = "patient_medical_file.updated"
+    VITAL_SIGNS_RECORDED = "vital_signs.recorded"
+    PATIENT_DOCUMENT_CREATED = "patient_document.created"
+    PATIENT_DOCUMENT_ARCHIVED = "patient_document.archived"
 
     # Trust Bridge — money (phase B). Payloads: references, amounts and
     # currencies ONLY — never an act label (ADR 0005/0007).

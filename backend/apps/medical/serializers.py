@@ -13,8 +13,11 @@ from apps.medical.models import (
     ActPerformed,
     Encounter,
     HealthRecordEntry,
+    PatientDocument,
+    PatientMedicalFile,
     Prescription,
     PrescriptionItem,
+    VitalSigns,
 )
 
 
@@ -183,4 +186,156 @@ class HealthRecordEntryCreateSerializer(serializers.Serializer):
     )
     content = serializers.CharField(
         error_messages={"required": "Le contenu est requis."}
+    )
+
+
+# ---------------------------------------------------------------------------
+# S3 (ADR 0016) — medical file, vital signs, documents.
+# Audiences: CLINICAL staff of the perimeter, and the PATIENT owner.
+# NOTHING here ever serves a guardian (sprint lock, decision cadre n° 1).
+# ---------------------------------------------------------------------------
+
+
+class PatientMedicalFileSerializer(serializers.ModelSerializer):
+    """The structured medical file — clinical staff AND the patient.
+
+    No ``id`` (the patient IS the key — OneToOne) and no ``updated_by``
+    (internal trace): serialising an UNSAVED instance yields the uniform
+    empty shape ``{"blood_group": "", "notes": "", "updated_at": null}``
+    that the views answer before the first write.
+    """
+
+    class Meta:
+        model = PatientMedicalFile
+        fields = ["blood_group", "notes", "updated_at"]
+        read_only_fields = fields
+
+
+class PatientMedicalFileWriteSerializer(serializers.Serializer):
+    """PATCH body — clinical roles of the perimeter only."""
+
+    blood_group = serializers.ChoiceField(
+        choices=PatientMedicalFile.BloodGroup.choices,
+        required=False,
+        allow_blank=True,
+        error_messages={
+            "invalid_choice": (
+                "Groupe sanguin invalide : A+, A-, B+, B-, AB+, AB-, O+ ou O-."
+            ),
+        },
+    )
+    notes = serializers.CharField(required=False, allow_blank=True)
+
+
+class VitalSignsStaffSerializer(serializers.ModelSerializer):
+    """A vital-signs row for CLINICAL staff of the producing center."""
+
+    measured_by_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = VitalSigns
+        fields = [
+            "id", "encounter", "measured_at", "measured_by",
+            "measured_by_name", "systolic_bp", "diastolic_bp", "heart_rate",
+            "spo2", "temperature_c", "respiratory_rate", "weight_kg",
+            "height_cm", "created_at",
+        ]
+        read_only_fields = fields
+
+    def get_measured_by_name(self, vital_signs) -> str:
+        user = vital_signs.measured_by.user
+        full = f"{user.first_name} {user.last_name}".strip()
+        return full or user.username
+
+
+class VitalSignsPatientSerializer(serializers.ModelSerializer):
+    """The PATIENT reads their own measures (transversal, all centers).
+
+    No ``measured_by`` — staff membership internals never cross into the
+    patient payload (same posture as ``EncounterPatientSerializer``, which
+    exposes the center, not the practitioner row).
+    """
+
+    class Meta:
+        model = VitalSigns
+        fields = [
+            "id", "encounter", "measured_at", "systolic_bp", "diastolic_bp",
+            "heart_rate", "spo2", "temperature_c", "respiratory_rate",
+            "weight_kg", "height_cm", "created_at",
+        ]
+        read_only_fields = fields
+
+
+class VitalSignsCreateSerializer(serializers.Serializer):
+    """POST body — typing only; the plausibility bounds, the « at least
+    one measure » rule and the practitioner invariant live in the MODEL
+    (single source, ``VITAL_SIGNS_BOUNDS``) and answer explicit 400s."""
+
+    measured_at = serializers.DateTimeField(required=False, allow_null=True)
+    systolic_bp = serializers.IntegerField(required=False, allow_null=True)
+    diastolic_bp = serializers.IntegerField(required=False, allow_null=True)
+    heart_rate = serializers.IntegerField(required=False, allow_null=True)
+    spo2 = serializers.IntegerField(required=False, allow_null=True)
+    temperature_c = serializers.DecimalField(
+        max_digits=4, decimal_places=1, required=False, allow_null=True
+    )
+    respiratory_rate = serializers.IntegerField(required=False, allow_null=True)
+    weight_kg = serializers.DecimalField(
+        max_digits=6, decimal_places=2, required=False, allow_null=True
+    )
+    height_cm = serializers.IntegerField(required=False, allow_null=True)
+
+
+class PatientDocumentStaffSerializer(serializers.ModelSerializer):
+    """A carnet document for CLINICAL staff of the PRODUCING center.
+
+    Deliberately NO file field and NO URL (ADR 0016 §5 — private
+    diffusion): the id feeds the authenticated ``download/`` endpoint,
+    nothing else. ``archived_at`` shows the correction state.
+    """
+
+    class Meta:
+        model = PatientDocument
+        fields = [
+            "id", "patient", "doc_type", "title", "source_encounter",
+            "archived_at", "created_at",
+        ]
+        read_only_fields = fields
+
+
+class PatientDocumentPatientSerializer(serializers.ModelSerializer):
+    """The PATIENT reads their own documents (transversal; archived rows
+    are excluded by the queryset, so no ``archived_at`` here). Same
+    no-URL contract as the staff serializer."""
+
+    center_name = serializers.CharField(source="center.name", read_only=True)
+
+    class Meta:
+        model = PatientDocument
+        fields = [
+            "id", "center", "center_name", "doc_type", "title",
+            "source_encounter", "created_at",
+        ]
+        read_only_fields = fields
+
+
+class PatientDocumentCreateSerializer(serializers.Serializer):
+    """Multipart POST body — clinical staff attaching a document."""
+
+    file = serializers.FileField(
+        error_messages={"required": "Le fichier est requis."}
+    )
+    doc_type = serializers.ChoiceField(
+        choices=PatientDocument.DocType.choices,
+        error_messages={"required": "Le type de document est requis."},
+    )
+    title = serializers.CharField(
+        max_length=255,
+        error_messages={
+            "required": "Le titre est requis.",
+            "blank": "Le titre est requis.",
+        },
+    )
+    source_encounter = serializers.IntegerField(
+        required=False, allow_null=True, default=None
     )

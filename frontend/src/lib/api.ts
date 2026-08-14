@@ -191,3 +191,49 @@ export async function apiFetch<T>(path: string, options: ApiFetchOptions = {}): 
   if (!text) return undefined as T;
   return JSON.parse(text) as T;
 }
+
+/* ── authenticated binary download (S3 — patient documents, ADR 0016) ── */
+
+/** The only formats the backend serves (photos of documents — no PDF, no SVG). */
+const EXT_BY_MIME: Record<string, string> = {
+  'image/jpeg': 'jpg',
+  'image/png': 'png',
+  'image/webp': 'webp',
+};
+
+/**
+ * Download a protected binary through the AUTHENTICATED endpoint (Bearer +
+ * single-flight refresh, same as apiFetch) — medical documents are never
+ * served from a static /media/ URL. Fetches the blob, creates an object URL,
+ * triggers the save, revokes the URL. The filename comes from the neutral
+ * `Content-Disposition` header when CORS exposes it; otherwise from
+ * `fallbackName` + the extension of the real MIME type.
+ */
+export async function apiDownload(path: string, fallbackName: string): Promise<void> {
+  let res = await rawFetch(path, {});
+  if (res.status === 401 && getRefreshToken()) {
+    const refreshed = await refreshTokens();
+    if (!refreshed) {
+      redirectToSignIn();
+      throw await toApiError(res);
+    }
+    res = await rawFetch(path, {});
+  }
+  if (!res.ok) {
+    throw await toApiError(res);
+  }
+  const blob = await res.blob();
+  const disposition = res.headers.get('Content-Disposition');
+  const fromHeader = disposition ? /filename="?([^";]+)"?/.exec(disposition)?.[1] : undefined;
+  const ext = EXT_BY_MIME[blob.type];
+  const filename = fromHeader ?? (ext ? `${fallbackName}.${ext}` : fallbackName);
+
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+}

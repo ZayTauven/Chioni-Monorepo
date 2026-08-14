@@ -151,6 +151,15 @@ STATIC_URL = "static/"
 MEDIA_URL = "/media/"
 MEDIA_ROOT = BASE_DIR / "media"
 
+# S3 (ADR 0016) — PRIVATE media root for medical documents (PatientDocument).
+# NEVER exposed under MEDIA_URL: these files are clinical content and are
+# served EXCLUSIVELY by authenticated download endpoints that replay the
+# exact list permissions (FileResponse; X-Accel-Redirect at deployment).
+# The storage lives in apps/common/private_storage.py and refuses .url().
+PRIVATE_MEDIA_ROOT = Path(
+    env("PRIVATE_MEDIA_ROOT", default=str(BASE_DIR / "private_media"))
+)
+
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 # ---------------------------------------------------------------------------
@@ -245,6 +254,9 @@ CORS_ALLOWED_ORIGINS = env.list(
     "CORS_ALLOWED_ORIGINS",
     default=["http://localhost:3000"],
 )
+
+# Let the browser read download filenames (patient documents, ADR 0016).
+CORS_EXPOSE_HEADERS = ["Content-Disposition"]
 
 # ---------------------------------------------------------------------------
 # Pont de Confiance — PSP abstraction & EUR→KMF conversion (étude §4.5)

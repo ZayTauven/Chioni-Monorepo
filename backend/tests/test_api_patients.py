@@ -211,7 +211,17 @@ class TestDoorAGuardian:
         (row,) = response.data["results"]
         assert set(row.keys()) == GUARDIAN_LINK_FIELDS
         assert set(row["patient"].keys()) == GUARDIAN_PATIENT_FIELDS
-        forbidden = {"birth_date", "phone", "city", "diagnosis", "reason", "sex"}
+        # S3 (ADR 0016, décision cadre n° 1) — NEGATIVE assertion extended
+        # with every new identity field: none may EVER appear in a guardian
+        # payload, even with full clinical consent.
+        forbidden = {
+            "birth_date", "phone", "city", "diagnosis", "reason", "sex",
+            "address", "phone_alt", "national_id",
+            "emergency_contact_name", "emergency_contact_phone",
+            "emergency_contact_relationship",
+            "blood_group", "notes", "insurances", "documents",
+            "medical_file", "vital_signs",
+        }
         assert forbidden.isdisjoint(row["patient"].keys())
 
     def test_guardian_only_lists_their_own_proteges(self):

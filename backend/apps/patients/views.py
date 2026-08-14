@@ -8,9 +8,11 @@ because no queryset here is derived from "any right the user holds".
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db.models import Q
 from django.shortcuts import get_object_or_404
+from django.utils.dateparse import parse_date
 from drf_spectacular.utils import extend_schema
 from rest_framework import generics, status
 from rest_framework.exceptions import NotFound
+from rest_framework.exceptions import ValidationError as DrfValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -24,9 +26,10 @@ from apps.common.permissions import (
     guardian_links_with_scope,
     guardian_profile,
 )
+from apps.common.phones import normalize_phone
 from apps.common.roles import BILLING_ROLES
 from apps.medical.models import Consent
-from apps.patients.models import GuardianLink, PatientProfile
+from apps.patients.models import GuardianLink, PatientInsurance, PatientProfile
 from apps.patients.serializers import (
     CenterClinicalConsentReceiptSerializer,
     CenterClinicalConsentRevokeSerializer,
@@ -38,6 +41,8 @@ from apps.patients.serializers import (
     GuardianLinkStaffRoutingSerializer,
     GuardianProfileSerializer,
     MergeRequestSerializer,
+    PatientInsuranceSerializer,
+    PatientInsuranceWriteSerializer,
     PatientSelfSerializer,
     PatientStaffCreateSerializer,
     PatientStaffSerializer,
@@ -50,6 +55,7 @@ from apps.patients.services import (
     create_guardian_profile,
     create_own_profile,
     create_patient_at_center,
+    create_patient_insurance,
     create_protege,
     decline_guardian_link,
     decline_invitation,
@@ -62,6 +68,7 @@ from apps.patients.services import (
     revoke_clinical_consent_at_center,
     revoke_link,
     update_guardian_profile,
+    update_patient_insurance,
     update_patient_profile,
 )
 from apps.patients.throttling import (
@@ -147,6 +154,163 @@ class CenterPatientDetailView(CenterScopedViewMixin, generics.RetrieveUpdateAPIV
             profile=serializer.instance,
             **serializer.validated_data,
         )
+
+
+class CenterPatientSimilarView(CenterScopedViewMixin, generics.ListAPIView):
+    """GET /centers/{c}/patients/similar/?last_name=&first_name=&birth_date=&phone=
+
+    S3 (ADR 0016 §2) — duplicate detection at creation time, NON blocking:
+    the desk is informed, the desk decides (create anyway, open the
+    existing record, or merge). Any staff of the perimeter (same door as
+    creation). Candidates come from THIS center's perimeter only.
+
+    Matching rule (deliberately simple): same E.164-normalised phone, OR
+    same birth date + approaching last name (``icontains`` — a typo-exact
+    engine is out of scope; ``first_name`` refines when provided). At
+    least one usable criterion is required (400 per field otherwise).
+    Payload = ``PatientStaffSerializer`` (no new data); not audited
+    (read of exploitation data, project convention).
+    """
+
+    permission_classes = [IsStaffOfCenter()]
+    serializer_class = PatientStaffSerializer
+
+    def get_queryset(self):
+        params = self.request.query_params
+        phone = (params.get("phone") or "").strip()
+        last_name = (params.get("last_name") or "").strip()
+        first_name = (params.get("first_name") or "").strip()
+        raw_birth_date = (params.get("birth_date") or "").strip()
+
+        birth_date = None
+        if raw_birth_date:
+            try:
+                birth_date = parse_date(raw_birth_date)
+            except ValueError:
+                birth_date = None
+            if birth_date is None:
+                raise DrfValidationError(
+                    {"birth_date": ["Format attendu : AAAA-MM-JJ."]}
+                )
+
+        criteria = Q(pk__in=[])
+        usable = False
+        if phone:
+            try:
+                normalized = normalize_phone(phone)
+            except DjangoValidationError:
+                raise DrfValidationError(
+                    {"phone": ["Numéro de téléphone invalide."]}
+                )
+            criteria |= Q(phone=normalized) | Q(phone_alt=normalized)
+            usable = True
+        if birth_date is not None and last_name:
+            name_q = Q(birth_date=birth_date, last_name__icontains=last_name)
+            if first_name:
+                name_q &= Q(first_name__icontains=first_name)
+            criteria |= name_q
+            usable = True
+        if not usable:
+            raise DrfValidationError(
+                ["Au moins un critère est requis : téléphone, ou nom + "
+                 "date de naissance."]
+            )
+        return (
+            center_patients_qs(self.center)
+            .filter(criteria)
+            .order_by("last_name", "first_name", "id")
+        )
+
+
+class CenterPatientInsuranceListCreateView(
+    CenterScopedViewMixin, generics.ListCreateAPIView
+):
+    """GET/POST /centers/{c}/patients/{pk}/insurances/ — S3 (ADR 0016 §6).
+
+    Administrative-FINANCIAL data, transversal to centers (ADR 0002): the
+    list shows EVERY insurance line of the patient, whatever center typed
+    it — an insurance card follows the person. Read: any staff of the
+    perimeter; write: billing roles (it is billing data). Patient outside
+    this center's perimeter → 404 (URL ref).
+    """
+
+    def get_permissions(self):
+        if self.request.method == "POST":
+            return [IsStaffOfCenter(*BILLING_ROLES)()]
+        return [IsStaffOfCenter()()]
+
+    def get_serializer_class(self):
+        if self.request.method == "POST":
+            return PatientInsuranceWriteSerializer
+        return PatientInsuranceSerializer
+
+    def _patient(self):
+        return get_object_or_404(
+            center_patients_qs(self.center), pk=self.kwargs["pk"]
+        )
+
+    def get_queryset(self):
+        return PatientInsurance.objects.filter(patient=self._patient())
+
+    def create(self, request, *args, **kwargs):
+        patient = self._patient()
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        insurance = create_patient_insurance(
+            actor=request.user,
+            center=self.center,
+            patient=patient,
+            **serializer.validated_data,
+        )
+        return Response(
+            PatientInsuranceSerializer(insurance).data,
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class CenterPatientInsuranceDetailView(
+    CenterScopedViewMixin, generics.RetrieveUpdateAPIView
+):
+    """GET/PATCH /centers/{c}/patients/{pk}/insurances/{insurance_pk}/
+
+    Same audience split as the list (read any staff, write billing).
+    Both references travel in the URL: a foreign patient OR an insurance
+    line of another patient answers a deterministic 404 (S1 norm).
+    """
+
+    lookup_url_kwarg = "insurance_pk"
+    http_method_names = ["get", "patch", "head", "options"]
+
+    def get_permissions(self):
+        if self.request.method == "PATCH":
+            return [IsStaffOfCenter(*BILLING_ROLES)()]
+        return [IsStaffOfCenter()()]
+
+    def get_serializer_class(self):
+        if self.request.method == "PATCH":
+            return PatientInsuranceWriteSerializer
+        return PatientInsuranceSerializer
+
+    def get_queryset(self):
+        patient = get_object_or_404(
+            center_patients_qs(self.center), pk=self.kwargs["pk"]
+        )
+        return PatientInsurance.objects.filter(patient=patient)
+
+    def update(self, request, *args, **kwargs):
+        partial = kwargs.pop("partial", False)
+        insurance = self.get_object()
+        serializer = PatientInsuranceWriteSerializer(
+            insurance, data=request.data, partial=partial
+        )
+        serializer.is_valid(raise_exception=True)
+        update_patient_insurance(
+            actor=request.user,
+            center=self.center,
+            insurance=insurance,
+            **serializer.validated_data,
+        )
+        return Response(PatientInsuranceSerializer(insurance).data)
 
 
 class CenterPatientGuardianLinksView(CenterScopedViewMixin, generics.ListAPIView):
@@ -332,6 +496,20 @@ class MyPatientProfileView(APIView):
             actor=request.user, profile=profile, **serializer.validated_data
         )
         return Response(PatientSelfSerializer(profile).data)
+
+
+class MyInsurancesView(generics.ListAPIView):
+    """GET /patients/me/insurances/ — my insurance lines, all centers (S3).
+
+    Transversal read (ADR 0002): the rows belong to the patient. Read-only
+    from this space in S3 — the desk records the card (billing data)."""
+
+    permission_classes = [IsPatientSelf]
+    serializer_class = PatientInsuranceSerializer
+
+    def get_queryset(self):
+        profile = claimed_patient_profile(self.request.user)
+        return PatientInsurance.objects.filter(patient=profile)
 
 
 class MyGuardianLinksView(generics.ListAPIView):

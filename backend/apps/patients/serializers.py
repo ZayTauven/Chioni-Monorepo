@@ -17,11 +17,26 @@ Audiences:
 from rest_framework import serializers
 
 from apps.medical.models import Consent
-from apps.patients.models import GuardianLink, GuardianProfile, PatientProfile
+from apps.patients.models import (
+    GuardianLink,
+    GuardianProfile,
+    PatientInsurance,
+    PatientProfile,
+)
 
 # ---------------------------------------------------------------------------
 # Audience: staff of a center (porte C)
 # ---------------------------------------------------------------------------
+
+
+#: S3 (ADR 0016 §1) — extended ADMINISTRATIVE identity, shared verbatim by
+#: the staff and self serializers. NEVER added to
+#: ``PatientGuardianSerializer`` (frozen by a negative field test).
+EXTENDED_IDENTITY_FIELDS = [
+    "address", "phone_alt", "national_id",
+    "emergency_contact_name", "emergency_contact_phone",
+    "emergency_contact_relationship",
+]
 
 
 class PatientStaffSerializer(serializers.ModelSerializer):
@@ -31,7 +46,8 @@ class PatientStaffSerializer(serializers.ModelSerializer):
         model = PatientProfile
         fields = [
             "id", "first_name", "last_name", "birth_date", "sex",
-            "phone", "city", "claim_status", "created_at",
+            "phone", "city", *EXTENDED_IDENTITY_FIELDS,
+            "claim_status", "created_at",
         ]
         read_only_fields = ["id", "claim_status", "created_at"]
 
@@ -142,8 +158,55 @@ class PatientStaffCreateSerializer(serializers.ModelSerializer):
         model = PatientProfile
         fields = [
             "first_name", "last_name", "birth_date", "sex", "phone", "city",
+            *EXTENDED_IDENTITY_FIELDS,
             "guardian_phone", "guardian_relationship",
         ]
+
+
+class PatientInsuranceSerializer(serializers.ModelSerializer):
+    """An insurance line — read by any staff of the perimeter AND the
+    patient (S3, ADR 0016 §6). ``created_by`` stays internal (trace)."""
+
+    class Meta:
+        model = PatientInsurance
+        fields = [
+            "id", "insurer_name", "member_number", "valid_until",
+            "notes", "is_active", "created_at",
+        ]
+        read_only_fields = fields
+
+
+class PatientInsuranceWriteSerializer(serializers.ModelSerializer):
+    """POST/PATCH body — billing roles only (enforced by the view).
+
+    ``is_active`` is declared explicitly with ``default=True``: without it,
+    DRF's HTML-form semantics (checkboxes absent = False) would silently
+    DEACTIVATE a line created through a multipart/form POST — the model
+    default must win when the field is simply not sent.
+    """
+
+    is_active = serializers.BooleanField(required=False, default=True)
+
+    class Meta:
+        model = PatientInsurance
+        fields = [
+            "insurer_name", "member_number", "valid_until", "notes",
+            "is_active",
+        ]
+        extra_kwargs = {
+            "insurer_name": {
+                "error_messages": {
+                    "required": "Le nom de l'assureur est requis.",
+                    "blank": "Le nom de l'assureur est requis.",
+                }
+            },
+            "member_number": {
+                "error_messages": {
+                    "required": "Le numéro d'adhérent est requis.",
+                    "blank": "Le numéro d'adhérent est requis.",
+                }
+            },
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -158,7 +221,8 @@ class PatientSelfSerializer(serializers.ModelSerializer):
         model = PatientProfile
         fields = [
             "id", "first_name", "last_name", "birth_date", "sex",
-            "phone", "city", "claim_status", "created_at",
+            "phone", "city", *EXTENDED_IDENTITY_FIELDS,
+            "claim_status", "created_at",
         ]
         read_only_fields = ["id", "claim_status", "created_at"]
 

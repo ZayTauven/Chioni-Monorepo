@@ -8,14 +8,19 @@ acts at creation (ADR 0005) — later grid changes never rewrite history.
 
 from django.core.exceptions import ValidationError
 from django.db import transaction
+from django.utils import timezone
 
 from apps.audit.services import AuditAction, audit
+from apps.common.uploads import process_image_upload
 from apps.medical.models import (
     ActPerformed,
     Encounter,
     HealthRecordEntry,
+    PatientDocument,
+    PatientMedicalFile,
     Prescription,
     PrescriptionItem,
+    VitalSigns,
 )
 
 
@@ -153,3 +158,126 @@ def create_record_entry(*, actor, encounter, entry_type, content):
         entry_type=str(entry_type),
     )
     return entry
+
+
+# ---------------------------------------------------------------------------
+# S3 (ADR 0016) — enriched patient record: medical file, vital signs,
+# documents. Clinical sphere: the VIEWS gate the roles (CLINICAL_ROLES,
+# pharmacist excluded); the services own the invariants and the audit.
+# ---------------------------------------------------------------------------
+
+
+@transaction.atomic
+def update_patient_medical_file(*, actor, center, patient, **fields):
+    """Clinical staff writes the patient's structured medical file.
+
+    Created lazily at the first write (``get_or_create`` — ADR 0016 §3);
+    every later write goes through ``save()`` (blood-group guard included).
+    Audited with FIELD NAMES only — never a blood group value nor a note.
+    """
+    medical_file, _created = PatientMedicalFile.objects.get_or_create(
+        patient=patient, defaults={"updated_by": actor}
+    )
+    for name, value in fields.items():
+        setattr(medical_file, name, value)
+    medical_file.updated_by = actor
+    medical_file.save()
+    audit(
+        actor=actor, action=AuditAction.PATIENT_MEDICAL_FILE_UPDATED,
+        target=medical_file, medical_file_id=medical_file.pk,
+        patient_id=patient.pk, center_id=center.pk,
+        fields=",".join(sorted(fields)),
+    )
+    return medical_file
+
+
+@transaction.atomic
+def record_vital_signs(*, actor, encounter, measured_by, measured_at=None,
+                       **measures):
+    """Record one set of vital signs on an OPEN encounter.
+
+    ``measured_by`` is the acting staff membership (clinical role, resolved
+    by the view from the caller's OWN membership — same rule as
+    ``create_encounter``); the model re-imposes the practitioner-of-the-
+    center invariant and the plausibility bounds in ``save()``.
+
+    Audit payload: references and measured FIELD NAMES only — NEVER the
+    values (a blood pressure is clinical data, ADR 0007).
+    """
+    _require_open_encounter(encounter, "une mesure de signes vitaux")
+    extra = {"measured_at": measured_at} if measured_at else {}
+    vital_signs = VitalSigns.objects.create(
+        encounter=encounter,
+        measured_by=measured_by,
+        **extra,
+        **measures,
+    )
+    recorded = sorted(
+        name for name, value in measures.items() if value is not None
+    )
+    audit(
+        actor=actor, action=AuditAction.VITAL_SIGNS_RECORDED,
+        target=vital_signs, vital_signs_id=vital_signs.pk,
+        encounter_id=encounter.pk, patient_id=encounter.patient_id,
+        center_id=encounter.center_id, fields=",".join(recorded),
+    )
+    return vital_signs
+
+
+@transaction.atomic
+def create_patient_document(*, actor, center, patient, uploaded_file,
+                            doc_type, title, source_encounter=None):
+    """Attach a document (photo of a medical paper) to the patient's carnet.
+
+    The bytes pass through the ADR 0014 hardened pipeline UNCHANGED
+    (JPEG/PNG/WebP by real content — the PDF is explicitly deferred, ADR
+    0016 §5 —, 2 MB cap, re-encode stripping EXIF/GPS, uuid name), then
+    land under the PRIVATE storage (never /media/). ``source_encounter``,
+    when given, must belong to this center AND this patient (model
+    invariant; the view resolves it in the center perimeter first). An
+    encounter may be closed: lab results routinely arrive after the visit
+    — attaching a document is not clinical production ON the encounter.
+
+    Audit payload: ids + doc_type code — NEVER the title (free clinical
+    text, ADR 0007).
+    """
+    if doc_type not in PatientDocument.DocType.values:
+        raise ValidationError("Type de document invalide.")
+    content = process_image_upload(uploaded_file)
+    document = PatientDocument.objects.create(
+        patient=patient,
+        center=center,
+        source_encounter=source_encounter,
+        doc_type=doc_type,
+        title=title,
+        file=content,
+        uploaded_by=actor,
+    )
+    audit(
+        actor=actor, action=AuditAction.PATIENT_DOCUMENT_CREATED,
+        target=document, document_id=document.pk, patient_id=patient.pk,
+        center_id=center.pk, doc_type=str(doc_type),
+    )
+    return document
+
+
+@transaction.atomic
+def archive_patient_document(*, actor, document):
+    """Archive a document — error correction WITHOUT destruction (ADR 0002).
+
+    The file and the row stay (the producing center's clinical staff keeps
+    seeing the archived state); the patient no longer sees it. Final: the
+    model refuses any un-archiving.
+    """
+    if document.is_archived:
+        raise ValidationError("Ce document est déjà archivé.")
+    document.archived_at = timezone.now()
+    document.archived_by = actor
+    document.save(update_fields=["archived_at", "archived_by", "updated_at"])
+    audit(
+        actor=actor, action=AuditAction.PATIENT_DOCUMENT_ARCHIVED,
+        target=document, document_id=document.pk,
+        patient_id=document.patient_id, center_id=document.center_id,
+        doc_type=str(document.doc_type),
+    )
+    return document

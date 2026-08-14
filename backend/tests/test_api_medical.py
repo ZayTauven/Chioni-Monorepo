@@ -221,6 +221,22 @@ class TestPrescriptionsAndRecordEntries:
         assert entry.patient == encounter.patient
         assert entry.source_encounter == encounter
 
+    def test_s3_extended_entry_types_are_accepted(self):
+        """S3 (ADR 0016 §3) — chirurgie, antécédent familial, observation:
+        same endpoint, same permissions, three more free-text types."""
+        center, _ = make_center_with_director()
+        doctor = make_staff_user(center, role=Role.DOCTOR)
+        encounter = make_encounter(center=center)
+
+        for entry_type in ("chirurgie", "antecedent_familial", "observation"):
+            response = client_for(doctor).post(
+                f"/api/v1/centers/{center.pk}/encounters/{encounter.pk}/record-entries/",
+                {"entry_type": entry_type, "content": "Contenu de test."},
+                format="json",
+            )
+            assert response.status_code == 201, (entry_type, response.content)
+            assert response.data["entry_type"] == entry_type
+
 
 class TestClinicalReadSegmentation:
     """R-API-1 — intra-center clinical READS are segmented by role.

@@ -13,7 +13,13 @@ import { useRouter } from 'next/navigation';
 import { PageHead } from '@/components/shell/PageHead';
 import { useCenter } from '@/context/CenterContext';
 import type { ApiError } from '@/lib/api';
-import { createPatient, listPatients, type CenterPatientPayload } from '@/lib/endpoints/centers';
+import {
+  createPatient,
+  listPatients,
+  listSimilarPatients,
+  type CenterPatientPayload,
+  type SimilarPatientsQuery,
+} from '@/lib/endpoints/centers';
 import { CLAIM_STATUS_LABELS, RELATIONSHIP_LABELS, SEX_LABELS, formatDate } from '@/lib/labels';
 import type { Relationship, Sex } from '@/lib/types';
 import {
@@ -66,6 +72,28 @@ function CreatePatientModal({ onClose, onCreated }: { onClose: () => void; onCre
   const set = <K extends keyof PatientForm>(key: K, value: PatientForm[K]) =>
     setForm((f) => ({ ...f, [key]: value }));
 
+  /* S3 — détection de doublons, NON bloquante par conception : dès que
+     téléphone OU nom+date de naissance sont posés (debounce), `similar/`
+     est interrogé et un bandeau informe le guichet — qui décide. Une
+     erreur pendant la frappe (téléphone incomplet → 400) reste muette. */
+  const similarKey = useDebounced(
+    [form.phone.trim(), form.last_name.trim(), form.first_name.trim(), form.birth_date].join('|'),
+    500,
+  );
+  const similar = useAsync(() => {
+    const [phone, lastName, firstName, birthDate] = similarKey.split('|');
+    const query: SimilarPatientsQuery = {};
+    if (/^\+?\d{6,}$/.test(phone.replace(/[\s.\-()]/g, ''))) query.phone = phone;
+    if (lastName && birthDate) {
+      query.last_name = lastName;
+      query.birth_date = birthDate;
+      if (firstName) query.first_name = firstName;
+    }
+    if (!query.phone && !query.last_name) return Promise.resolve(null);
+    return listSimilarPatients(centerId, query).catch(() => null);
+  }, [centerId, similarKey]);
+  const lookalikes = similar.data?.results ?? [];
+
   const submit = async () => {
     setSaving(true);
     setError(null);
@@ -115,7 +143,9 @@ function CreatePatientModal({ onClose, onCreated }: { onClose: () => void; onCre
       >
         {error && error.messages.length > 0 && <ErrorAlert error={error} />}
 
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--ax-space-4)' }}>
+        {/* auto-fit : sur un écran étroit (tablette de guichet), la grille
+            retombe en une colonne au lieu d'écraser les champs. */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 'var(--ax-space-4)' }}>
           <div className="ax-field">
             <label className="ax-label" htmlFor="np-first">
               Prénom <span className="ax-field__required" aria-hidden="true">*</span>
@@ -146,7 +176,7 @@ function CreatePatientModal({ onClose, onCreated }: { onClose: () => void; onCre
           </div>
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--ax-space-4)' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 'var(--ax-space-4)' }}>
           <div className="ax-field">
             <label className="ax-label" htmlFor="np-birth">Date de naissance</label>
             <input
@@ -168,7 +198,7 @@ function CreatePatientModal({ onClose, onCreated }: { onClose: () => void; onCre
           </div>
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--ax-space-4)' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 'var(--ax-space-4)' }}>
           <div className="ax-field">
             <label className="ax-label" htmlFor="np-phone">Téléphone</label>
             <input
@@ -188,6 +218,36 @@ function CreatePatientModal({ onClose, onCreated }: { onClose: () => void; onCre
           </div>
         </div>
 
+        {/* S3 — bandeau doublons : informe, ne bloque jamais la création. */}
+        {lookalikes.length > 0 && (
+          <div className="ax-alert ax-alert--warning" role="status">
+            <div className="ax-alert__content">
+              <p className="ax-alert__title">Des dossiers ressemblants existent</p>
+              <p className="ax-alert__message">
+                Vérifiez avant de créer un doublon : ouvrez une fiche existante, ou continuez la
+                création si c&apos;est bien une autre personne.
+              </p>
+              <ul style={{ margin: 'var(--ax-space-2) 0 0', paddingInlineStart: 'var(--ax-space-5)', display: 'flex', flexDirection: 'column', gap: 'var(--ax-space-1)' }}>
+                {lookalikes.slice(0, 5).map((p) => (
+                  <li key={p.id} style={{ fontSize: 'var(--ax-text-sm)' }}>
+                    <Link href={`/centre/patients/${p.id}`} className="ax-link" style={{ fontWeight: 500 }}>
+                      {`${p.first_name} ${p.last_name}`.trim()}
+                    </Link>{' '}
+                    <span style={{ color: 'var(--ax-text-muted)', fontSize: 'var(--ax-text-xs)' }}>
+                      {p.birth_date ? formatDate(p.birth_date) : 'Naissance inconnue'} · {p.phone || 'Sans téléphone'} · {CLAIM_STATUS_LABELS[p.claim_status]}
+                    </span>
+                  </li>
+                ))}
+                {lookalikes.length > 5 && (
+                  <li style={{ fontSize: 'var(--ax-text-xs)', color: 'var(--ax-text-muted)', listStyle: 'none' }}>
+                    … et {lookalikes.length - 5} autre{lookalikes.length - 5 > 1 ? 's' : ''} — affinez le nom ou le téléphone.
+                  </li>
+                )}
+              </ul>
+            </div>
+          </div>
+        )}
+
         <div style={{ border: '1px solid var(--ax-border)', borderRadius: 'var(--ax-radius-md)' }}>
           <button
             type="button"
@@ -206,7 +266,7 @@ function CreatePatientModal({ onClose, onCreated }: { onClose: () => void; onCre
               <p style={{ margin: 0, fontSize: 'var(--ax-text-xs)', color: 'var(--ax-text-muted)' }}>
                 Une invitation sera envoyée par SMS à ce proche pour l&apos;aider à suivre et payer les soins du patient.
               </p>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--ax-space-4)' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 'var(--ax-space-4)' }}>
                 <div className="ax-field">
                   <label className="ax-label" htmlFor="np-gphone">Téléphone du proche</label>
                   <input

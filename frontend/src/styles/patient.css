@@ -195,6 +195,16 @@
   min-height: 48px; /* ≥ 44px touch target */
 }
 
+/* S3 — 4 onglets : sur écran étroit la rangée s'enveloppe en 2×2, les
+   libellés restent entiers et les cibles ≥ 48px. */
+.pat-tabs--wrap .ax-tabs__list {
+  flex-wrap: wrap;
+}
+
+.pat-tabs--wrap .ax-tabs__tab {
+  flex: 1 1 40%;
+}
+
 /* ── quick links on the home screen ── */
 .pat-shortcut {
   display: flex;

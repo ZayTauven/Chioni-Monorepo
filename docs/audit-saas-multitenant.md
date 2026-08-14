@@ -199,3 +199,59 @@ Consolidation audit (A–E) + remarques PO (F). Ordre proposé selon les dépend
 | **Chantiers à clés (parallèles)**        | Stripe réel (`psp/stripe.py`), SMS agrégateur comorien (+ retry borné, dead-letter, art. 14), i18n shikomori, PWA/offline + mode dégradé caisse, étude paiement partenaire local, étude IA reprise du papier                                                                                                                                                                                                                                                                                                   | D.5–D.8            | selon chantier                        |
 
 Règles transverses maintenues sur tous les sprints : cadrage avant code sur les modules neufs (S3, S4, S5, S6, S7, S9 = ADR dédiés), revue `chioni-health-data-guardian` sur tout ce qui touche argent/médical/consentements, `chioni-ux-care` sur tout parcours utilisateur, assets Vireo adaptés jamais codés en dur, aucune PII dans les payloads d'audit, le contenu d'un SMS suit la visibilité dans l'app.
+
+---
+
+## SV — Sprint de validation finale (consigné le 14/08/2026, décisions PO)
+
+Sprint de clôture du plan : il implémente les arbitrages tranchés par le PO et solde TOUTES les exceptions non bloquantes accumulées par les revues (chaque ligne = traitée, ou explicitement assumée au procès-verbal de clôture). Il se termine par une régression complète (suite backend, build, campagne guardian de synthèse, UX care de synthèse) et le test manuel de bout en bout final.
+
+### SV.1 Arbitrages PO tranchés (revue guardian S2) — à implémenter
+
+1. **Consentement guichet : interdit sur un lien initié par le centre lui-même** (option b actée). Un lien de tutelle né d'une invitation porte A/porte C émise par un staff du centre ne peut PAS recevoir de consentement clinique guichet de ce même centre — la provenance du lien doit être tracée/dérivable (invitation créée par quel user/centre) et la garde posée dans le service avec test adversarial (y compris : staff multi-centres, lien créé par le centre A et consentement tenté par le centre B). Ferme la chaîne « le centre fabrique le tuteur » AVANT toute lecture clinique tuteur — **si une lecture clinique tuteur devait arriver avant SV, cette garde devient un pré-requis bloquant de ce chantier-là.**
+2. **Papier signé obligatoire pour le consentement clinique guichet** (mode `oral` supprimé, acté). Retirer `oral` des choix côté service ET UI (les consentements `oral` déjà enregistrés d'ici là : révoqués à la migration avec AuditLog, jamais requalifiés en silence — à confirmer au moment de SV s'il en existe). Motivation PO : trace opposable, éviter les litiges des consentements oraux.
+
+### SV.2 Inventaire des exceptions non bloquantes à solder (source : revues guardian/UX care, vagues 1–3 + S1 + S2)
+
+**Backend / durcissements**
+
+- `ConsentAdmin` sans `readonly_fields` (un superuser peut éditer un consentement hors service/audit) — à durcir avec le lot admin de S4 s'il arrive avant SV, sinon ici.
+- TOCTOU mineur `close_encounter` × `create_prescription` (une ordonnance peut se glisser dans la seconde de la clôture — sans enjeu d'argent aujourd'hui, à fermer si la clôture gagne des effets financiers).
+- `CashPayment` non fenêtré comme `LedgerEntry` (E4) — contrat de revue permanent ADR 0015 : re-vérifier qu'aucun code introduit depuis ne crée de `CashPayment` hors service.
+- Compte ombre partagé entre tenants : identité éditable par chaque directeur (à trancher si le cas apparaît en réel ; sinon assumer au procès-verbal).
+- Rappel J-1 : RDV annulé/déplacé après l'envoi → pas de SMS correctif (assumé produit ADR 0013 — confirmer l'assomption).
+- Encaissement contre-passé retiré rétroactivement de sa journée dans les séries (piste de rapprochement = champ `reversals`) — retraité par l'export comptable figé de S10 ; si S10 n'est pas passé, assumer ici.
+- Endpoint de lecture de l'état persistant du consentement clinique côté centre (aujourd'hui l'UI n'affiche que le résultat de la session ; nécessaire aussi pour auditer la garde SV.1).
+- **S3 (guardian, 14/08/2026)** : pas de triggers PostgreSQL append-only sur les 4 nouvelles tables cliniques (`VitalSigns`, `PatientDocument`, `PatientMedicalFile`, `PatientInsurance`) — invariants en `save()`/`clean()` seulement, durcissement DB à trancher avec le lot S4/SV.
+- **S3 (guardian)** : admins des nouveaux modèles S3 sans `readonly_fields` — même lot de durcissement que `ConsentAdmin`.
+- **S3 (guardian)** : écriture d'assurance transversale — un BILLING de tout centre du périmètre du patient peut modifier/désactiver une ligne saisie ailleurs (audité, conforme ADR 0016 §6) ; à re-trancher à l'arrivée du tiers-payant.
+- **S3 (guardian)** : `VitalSigns.measured_at` librement fixable (passé/futur, hors fenêtre de la consultation) — qualité de données, pas sécurité ; borner si le besoin apparaît.
+- **S3 (guardian)** : après fusion de doublons, un document produit par le centre A sur un doublon sans consultation à A devient invisible de A (il reste au patient) — perte de visibilité assumée, jamais de gain.
+
+**Frontend / UX**
+
+- Titre du chrome lite à surcharger par page (`LiteLayout` : « Accueil » affiché sur `/patient/rendez-vous`).
+- Modales du centre en grille figée `1fr 1fr` (`Appointments.tsx` création/édition) → `auto-fit` comme ProfileSettings.
+- Label orphelin `ne-patient` quand `lockedPatient` (micro-a11y, `Consultations.tsx`).
+- Suppression logo / photo de profil sans confirmation (Settings, ProfileDialog→ProfileSettings).
+- Sidebar `role="tree"` sans roving-tabindex (ARIA impur — envisager `<nav>` simple).
+- Raccourci ⌘K affiché tel quel sous Windows (cosmétique).
+- Vue « semaine » du calendrier non construite (stub du template — à décider : construire proprement ou assumer mois+jour).
+- Bascule File du jour ↔ Calendrier jamais passée en revue UX care dédiée.
+- Pagination des liens tuteur en attente au-delà de la page 1 (cas limite, `TuteurProteges`).
+- Double message d'annulation patient (« Prévenez le centre » puis « Merci d'avoir prévenu ») — trancher la formulation de la modale ou assumer.
+- Journal de caisse : contre-passations non navigables (item `reversal` sans id de facture — endpoint à enrichir) ; `received_by`/`reversed_by` en ids bruts sans résolution de nom pour non-directeur ; `StaffUser` sans état d'activation (griser l'identité proactivement).
+- `frontend/tsconfig.tsbuildinfo` suivi par git (churn de build) — à ignorer ou assumer.
+
+**Déploiement (check-list de mise en production — à exécuter, pas seulement relire)**
+
+- `/media/` servi par le front web server avec `X-Content-Type-Options: nosniff` (contrat ADR 0014).
+- **S3** : `PRIVATE_MEDIA_ROOT` (documents médicaux) hors document-root du serveur web, JAMAIS servi statiquement ; téléchargement via `X-Accel-Redirect`/`sendfile` derrière l'endpoint authentifié (ADR 0016 §5).
+- `NUM_PROXIES`/configuration proxy correcte pour les throttles par IP derrière le reverse-proxy.
+- CSP posée (tokens en localStorage — vigilance permanente) ; jamais de HTML dynamique.
+- Garde-fous boot déjà en place à re-vérifier en config prod : PSP fake interdit, SMS console interdit, Swagger admin-only.
+- Contrainte DB tarif : audit one-shot des lignes fractionnaires AVANT migration en prod (la migration refuse s'il en existe).
+
+### SV.3 Critère de sortie
+
+Chaque ligne de SV.1/SV.2 : implémentée + testée, OU assumée explicitement au procès-verbal signé PO. Régression complète (suite backend, build + tsc, campagne guardian de synthèse sur les zones touchées, UX care de synthèse sur les parcours modifiés), test manuel de bout en bout des 4 espaces (centre, patient, tuteur, + pharmacie si S9 passé), CLAUDE.md final.

@@ -3,14 +3,18 @@
  * All routes require the caller to be the claimed patient (IsPatientSelf).
  */
 
-import { apiFetch } from '../api';
+import { apiDownload, apiFetch } from '../api';
 import type {
   Encounter,
   GuardianLinkPatient,
   Paginated,
   PatientAppointment,
   PatientCashReceipt,
+  PatientDocumentMine,
+  PatientInsurance,
   PatientMe,
+  PatientMedicalFile,
+  PatientVitalSigns,
   PaymentRequestPatient,
   Prescription,
   Receipt,
@@ -27,6 +31,14 @@ export interface PatientMePayload {
   birth_date?: string | null;
   sex?: Sex;
   city?: string;
+  /* S3 — extended identity, all optional ('' clears a field). The two phone
+     fields are normalised E.164 server-side (invalid → 400 per field). */
+  address?: string;
+  phone_alt?: string;
+  national_id?: string;
+  emergency_contact_name?: string;
+  emergency_contact_phone?: string;
+  emergency_contact_relationship?: string;
 }
 
 export function getPatientMe(): Promise<PatientMe> {
@@ -135,6 +147,39 @@ export function listPrescriptions(page = 1): Promise<Paginated<Prescription>> {
 
 export function listRecordEntries(page = 1): Promise<Paginated<RecordEntry>> {
   return apiFetch(`/patients/me/record-entries/?page=${page}`);
+}
+
+/* ── S3 — enriched record, patient side (read-only, cross-center) ── */
+
+/**
+ * My medical file — constant empty shape (`updated_at: null`) before the
+ * first clinical write, never a 404. Writing is a clinical gesture.
+ */
+export function getMyMedicalFile(): Promise<PatientMedicalFile> {
+  return apiFetch('/patients/me/medical-file/');
+}
+
+/** My vital signs, all centers, sorted `-measured_at` (no staff internals). */
+export function listMyVitalSigns(page = 1): Promise<Paginated<PatientVitalSigns>> {
+  return apiFetch(`/patients/me/vital-signs/?page=${page}`);
+}
+
+/** My documents (photos of results/reports), all centers, ARCHIVED EXCLUDED. */
+export function listMyDocuments(page = 1): Promise<Paginated<PatientDocumentMine>> {
+  return apiFetch(`/patients/me/documents/?page=${page}`);
+}
+
+/**
+ * Download one of my documents through the authenticated endpoint (never a
+ * static /media/ URL). Archived or someone else's → 404.
+ */
+export function downloadMyDocument(id: number): Promise<void> {
+  return apiDownload(`/patients/me/documents/${id}/download/`, `document-${id}`);
+}
+
+/** My insurance/mutual lines — read-only here (desk-entered, billing data). */
+export function listMyInsurances(page = 1): Promise<Paginated<PatientInsurance>> {
+  return apiFetch(`/patients/me/insurances/?page=${page}`);
 }
 
 /* ── money (patient side) ── */

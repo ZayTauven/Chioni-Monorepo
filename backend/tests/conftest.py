@@ -20,9 +20,12 @@ def isolated_media_root(settings, tmp_path):
     """Uploads land in a per-test temp directory, never in backend/media/.
 
     Also what makes the « no orphan file » assertions deterministic: each
-    test starts from an empty storage root.
+    test starts from an empty storage root. The PRIVATE root (patient
+    documents, ADR 0016) is isolated the same way — its storage re-reads
+    the setting on every access, so the override always applies.
     """
     settings.MEDIA_ROOT = tmp_path / "media"
+    settings.PRIVATE_MEDIA_ROOT = tmp_path / "private_media"
 
 
 @pytest.fixture(autouse=True)

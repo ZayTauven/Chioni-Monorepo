@@ -18,7 +18,12 @@ from apps.audit.services import AuditAction, audit
 from apps.common import notifications
 from apps.common.phones import normalize_phone
 from apps.medical.models import Consent, Encounter, HealthRecordEntry
-from apps.patients.models import GuardianLink, GuardianProfile, PatientProfile
+from apps.patients.models import (
+    GuardianLink,
+    GuardianProfile,
+    PatientInsurance,
+    PatientProfile,
+)
 
 #: Bounded ascent for canonical-profile resolution (R4): merge chains are
 #: expected to be short (a duplicate absorbed once); anything deeper than
@@ -61,15 +66,23 @@ def get_or_create_shadow_user(phone):
     return user, True
 
 
+#: Every declarative phone field of a patient identity dict (R-API-5):
+#: normalised to E.164 before ANY write — S3 added ``phone_alt`` and the
+#: emergency contact's phone alongside the historical ``phone``.
+_IDENTITY_PHONE_FIELDS = ("phone", "phone_alt", "emergency_contact_phone")
+
+
 def _normalize_identity(identity):
-    """Normalise the declarative ``phone`` of a patient identity dict.
+    """Normalise the declarative phone fields of a patient identity dict.
 
     Blank stays blank (the desk may not know the number); anything present
     must be a real E.164-normalisable phone.
     """
-    if identity.get("phone"):
-        identity = {**identity, "phone": normalize_phone(identity["phone"])}
-    return identity
+    normalized = dict(identity)
+    for field in _IDENTITY_PHONE_FIELDS:
+        if normalized.get(field):
+            normalized[field] = normalize_phone(normalized[field])
+    return normalized
 
 
 # ---------------------------------------------------------------------------
@@ -165,9 +178,17 @@ def create_own_profile(*, user, **identity):
     return profile
 
 
-#: Fields a patient owns once the profile is claimed (R-API-2).
+#: Fields a patient owns once the profile is claimed (R-API-2). S3 (ADR
+#: 0016 §1): the extended administrative identity joins the set as-is — a
+#: claimed profile's address, second phone, national id and emergency
+#: contact belong to the patient exactly like their name.
 IDENTITY_FIELDS = frozenset(
-    {"first_name", "last_name", "birth_date", "sex", "phone", "city"}
+    {
+        "first_name", "last_name", "birth_date", "sex", "phone", "city",
+        "address", "phone_alt", "national_id",
+        "emergency_contact_name", "emergency_contact_phone",
+        "emergency_contact_relationship",
+    }
 )
 
 
@@ -668,6 +689,46 @@ def revoke_clinical_consent_at_center(*, actor, center, patient, link):
 
 
 # ---------------------------------------------------------------------------
+# Insurance / mutuelle (S3, ADR 0016 §6) — administrative-financial data
+# ---------------------------------------------------------------------------
+
+
+@transaction.atomic
+def create_patient_insurance(*, actor, center, patient, **fields):
+    """Record an insurance line for a patient (billing roles, desk).
+
+    Transversal ownership (ADR 0002): the row is anchored on the patient;
+    ``center`` only contextualises the audit entry (where it was typed).
+    Payload contract: ids only — never the insurer name or member number.
+    """
+    insurance = PatientInsurance.objects.create(
+        patient=patient, created_by=actor, **fields
+    )
+    audit(
+        actor=actor, action=AuditAction.PATIENT_INSURANCE_CREATED,
+        target=insurance, insurance_id=insurance.pk, patient_id=patient.pk,
+        center_id=center.pk,
+    )
+    return insurance
+
+
+@transaction.atomic
+def update_patient_insurance(*, actor, center, insurance, **fields):
+    """Update an insurance line — through ``save()``, audited (field names
+    only, never values)."""
+    for name, value in fields.items():
+        setattr(insurance, name, value)
+    insurance.save()
+    audit(
+        actor=actor, action=AuditAction.PATIENT_INSURANCE_UPDATED,
+        target=insurance, insurance_id=insurance.pk,
+        patient_id=insurance.patient_id, center_id=center.pk,
+        fields=",".join(sorted(fields)),
+    )
+    return insurance
+
+
+# ---------------------------------------------------------------------------
 # Duplicate merge (R4 closure)
 # ---------------------------------------------------------------------------
 
@@ -707,6 +768,11 @@ def merge_profiles(*, source, target, actor, center):
 
     - **Encounters and health record entries** → re-anchored on the target
       (the carnet belongs to the patient; fragments must reunite).
+    - **Documents & insurances (S3, ADR 0016)** → re-anchored on the target;
+      **medical file** → the target keeps its own, the source's is taken
+      over ONLY if the target has none (otherwise it stays on the
+      tombstone — nothing medical is deleted, no automatic pick between
+      two clinical contents); **vital signs** follow their encounters.
     - **Appointments** → re-anchored on the target too (revue adversariale
       vague 1) : un RDV laissé sur le tombstone enverrait le rappel J-1 au
       téléphone déclaratif du doublon (potentiellement celui d'un tiers) et
@@ -795,6 +861,8 @@ def merge_profiles(*, source, target, actor, center):
             suspended_links += 1
 
     # 2. Medical data — the carnet reunites on the canonical profile.
+    # VitalSigns rows need no step of their own: they hang off their
+    # encounter (``encounter__patient``) and follow it here (S3).
     encounters_moved = 0
     for encounter in Encounter.objects.for_patient(source):
         encounter.patient = target
@@ -805,6 +873,36 @@ def merge_profiles(*, source, target, actor, center):
         entry.patient = target
         entry.save(update_fields=["patient", "updated_at"])
         entries_moved += 1
+
+    # 2 ter (S3, ADR 0016) — the enriched record reunites too. Local import
+    # mirroring the scheduling one below: patients stays a leaf dependency
+    # of medical's new tables.
+    from apps.medical.models import PatientDocument, PatientMedicalFile
+
+    documents_moved = 0
+    for document in PatientDocument.objects.for_patient(source):
+        document.patient = target
+        document.save(update_fields=["patient", "updated_at"])
+        documents_moved += 1
+    insurances_moved = 0
+    for insurance in PatientInsurance.objects.filter(patient=source):
+        insurance.patient = target
+        insurance.save(update_fields=["patient", "updated_at"])
+        insurances_moved += 1
+    # Medical file: OneToOne — the TARGET keeps its own file; the source's
+    # is taken over ONLY when the target has none (ADR 0016, invariant 1).
+    # When both exist, the duplicate's file stays on the tombstone: nothing
+    # medical is deleted, and no automatic pick between two clinical
+    # contents is ever made.
+    medical_file_moved = False
+    source_file = PatientMedicalFile.objects.filter(patient=source).first()
+    if (
+        source_file is not None
+        and not PatientMedicalFile.objects.filter(patient=target).exists()
+    ):
+        source_file.patient = target
+        source_file.save(update_fields=["patient", "updated_at"])
+        medical_file_moved = True
 
     # 2 bis. Appointments — same reunification as the carnet (whatever the
     # center: encounters above move regardless of center too). Local import
@@ -859,6 +957,8 @@ def merge_profiles(*, source, target, actor, center):
         links_suspended=suspended_links,
         encounters_moved=encounters_moved, entries_moved=entries_moved,
         appointments_moved=appointments_moved,
+        documents_moved=documents_moved, insurances_moved=insurances_moved,
+        medical_file_moved=medical_file_moved,
         user_transferred=user_transferred,
     )
     if suspended_links:

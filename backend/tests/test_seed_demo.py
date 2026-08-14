@@ -25,8 +25,21 @@ from django.test import override_settings
 
 from apps.centers.models import HealthCenter, StaffMembership, TariffItem
 from apps.common.models import ActCategory
-from apps.medical.models import Consent, Encounter, HealthRecordEntry, Prescription
-from apps.patients.models import GuardianLink, GuardianProfile, PatientProfile
+from apps.medical.models import (
+    Consent,
+    Encounter,
+    HealthRecordEntry,
+    PatientDocument,
+    PatientMedicalFile,
+    Prescription,
+    VitalSigns,
+)
+from apps.patients.models import (
+    GuardianLink,
+    GuardianProfile,
+    PatientInsurance,
+    PatientProfile,
+)
 from apps.trustbridge.models import Invoice, PaymentRequest, PaymentRequestShare
 
 pytestmark = pytest.mark.django_db
@@ -150,6 +163,31 @@ class TestSeedDemoScenario:
         assert prescription.items.count() == 2
 
     @override_settings(DEBUG=True)
+    def test_enriched_record_is_seeded(self):
+        """S3 (ADR 0016) — medical file, one vital-signs set, one PRIVATE
+        document, one insurance, extended identity on the demo patient."""
+        run_command()
+
+        profile = User.objects.get(username="patient.demo").patient_profile
+        assert profile.address  # extended identity, edited by the patient
+        assert profile.emergency_contact_phone == "+33612345678"
+
+        medical_file = PatientMedicalFile.objects.get(patient=profile)
+        assert medical_file.blood_group == PatientMedicalFile.BloodGroup.O_POS
+
+        vitals = VitalSigns.objects.for_patient(profile).get()
+        assert vitals.systolic_bp == 152
+
+        document = PatientDocument.objects.for_patient(profile).get()
+        assert document.doc_type == PatientDocument.DocType.LAB_RESULT
+        assert document.archived_at is None
+        with pytest.raises(ValueError):
+            document.file.url  # private diffusion: no public URL, ever
+
+        insurance = PatientInsurance.objects.get(patient=profile)
+        assert insurance.is_active is True
+
+    @override_settings(DEBUG=True)
     def test_recap_output_names_the_accounts_and_the_demo_flow(self):
         output = run_command()
 
@@ -189,6 +227,11 @@ class TestSeedDemoIdempotence:
             "shares": PaymentRequestShare.objects.count(),
             "record_entries": HealthRecordEntry.objects.count(),
             "prescriptions": Prescription.objects.count(),
+            # S3 (ADR 0016) — enriched record tables.
+            "medical_files": PatientMedicalFile.objects.count(),
+            "vital_signs": VitalSigns.objects.count(),
+            "documents": PatientDocument.objects.count(),
+            "insurances": PatientInsurance.objects.count(),
         }
 
 

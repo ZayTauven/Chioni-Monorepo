@@ -33,9 +33,11 @@ Usage::
 
 from datetime import date
 from decimal import Decimal
+from io import BytesIO
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 from django.utils import timezone
@@ -44,9 +46,21 @@ from apps.centers import services as center_services
 from apps.centers.models import HealthCenter, StaffMembership, TariffItem
 from apps.common.models import ActCategory, Currency
 from apps.medical import services as medical_services
-from apps.medical.models import Encounter, HealthRecordEntry, Prescription
+from apps.medical.models import (
+    Encounter,
+    HealthRecordEntry,
+    PatientDocument,
+    PatientMedicalFile,
+    Prescription,
+    VitalSigns,
+)
 from apps.patients import services as patient_services
-from apps.patients.models import GuardianLink, GuardianProfile, PatientProfile
+from apps.patients.models import (
+    GuardianLink,
+    GuardianProfile,
+    PatientInsurance,
+    PatientProfile,
+)
 from apps.trustbridge import services as trustbridge_services
 from apps.trustbridge.models import Invoice, PaymentRequest
 
@@ -151,6 +165,10 @@ class Command(BaseCommand):
         )
         self._ensure_health_record(
             patient=patient, doctor=doctor, encounter=first_encounter,
+        )
+        self._ensure_enriched_record(
+            center=center, patient=patient, patient_user=patient_user,
+            doctor=doctor, cashier=cashier, encounter=first_encounter,
         )
 
         return {
@@ -449,6 +467,70 @@ class Command(BaseCommand):
                 ],
             )
             self._note("Ordonnance : 2 lignes sur la consultation.")
+
+    def _ensure_enriched_record(self, *, center, patient, patient_user,
+                                doctor, cashier, encounter):
+        """S3 (ADR 0016) — the enriched record, through the services only:
+        extended identity (the CLAIMED patient edits it herself — R-API-2),
+        medical file, one vital-signs set, one document, one insurance."""
+        if not patient.address:
+            patient_services.update_patient_profile(
+                actor=patient_user, profile=patient,
+                address="Quartier Coulée, Moroni",
+                emergency_contact_name="Nassim Ali",
+                emergency_contact_phone=GUARDIAN_PHONE,
+                emergency_contact_relationship="fils",
+            )
+            self._note("Identité élargie : adresse + personne à prévenir.")
+        if not PatientMedicalFile.objects.filter(patient=patient).exists():
+            medical_services.update_patient_medical_file(
+                actor=doctor, center=center, patient=patient,
+                blood_group=PatientMedicalFile.BloodGroup.O_POS,
+                notes="Hypertension connue ; pas d'allergie médicamenteuse.",
+            )
+            self._note("Fiche médicale : groupe O+ + notes cliniques.")
+        practitioner = StaffMembership.objects.for_center(center).get(
+            user=doctor, role=StaffMembership.Role.DOCTOR
+        )
+        if not VitalSigns.objects.for_patient(patient).exists():
+            medical_services.record_vital_signs(
+                actor=doctor, encounter=encounter, measured_by=practitioner,
+                systolic_bp=152, diastolic_bp=94, heart_rate=82, spo2=97,
+                temperature_c=Decimal("37.1"), weight_kg=Decimal("68.50"),
+                height_cm=162,
+            )
+            self._note("Signes vitaux : 1 relevé sur la consultation HTA.")
+        if not PatientDocument.objects.for_patient(patient).exists():
+            from PIL import Image, ImageDraw
+
+            buffer = BytesIO()
+            image = Image.new("RGB", (640, 480), "white")
+            ImageDraw.Draw(image).text(
+                (24, 24),
+                "Analyses sanguines — Clinique Ylang (démo)",
+                fill="black",
+            )
+            image.save(buffer, format="JPEG", quality=90)
+            medical_services.create_patient_document(
+                actor=doctor, center=center, patient=patient,
+                uploaded_file=SimpleUploadedFile(
+                    "analyses.jpg", buffer.getvalue(),
+                    content_type="image/jpeg",
+                ),
+                doc_type=PatientDocument.DocType.LAB_RESULT,
+                title="Analyses sanguines — bilan HTA",
+                source_encounter=encounter,
+            )
+            self._note("Document du carnet : photo d'analyses (privé).")
+        if not PatientInsurance.objects.filter(patient=patient).exists():
+            patient_services.create_patient_insurance(
+                actor=cashier, center=center, patient=patient,
+                insurer_name="Mutuelle des Comores",
+                member_number="MC-2026-4471",
+                valid_until=date(2026, 12, 31),
+                notes="Carte présentée au guichet (démo).",
+            )
+            self._note("Assurance : Mutuelle des Comores (active).")
 
     # ------------------------------------------------------------------
     # Recap

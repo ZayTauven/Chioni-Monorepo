@@ -8,6 +8,7 @@
 
 import type {
   AppointmentStatus,
+  BloodGroup,
   CashMethod,
   CenterType,
   ClaimStatus,
@@ -23,6 +24,7 @@ import type {
   Island,
   KycStatus,
   MobileMoneyOperator,
+  PatientDocumentType,
   PaymentIntentStatus,
   PaymentRequestStatus,
   PrescriptionStatus,
@@ -31,6 +33,7 @@ import type {
   Sex,
   StaffRole,
   UnpaidOrdering,
+  VitalSignsMeasures,
 } from './types';
 
 /* ── enum labels ── */
@@ -109,7 +112,98 @@ export const RECORD_ENTRY_TYPE_LABELS: Record<RecordEntryType, string> = {
   allergie: 'Allergie',
   traitement_en_cours: 'Traitement en cours',
   vaccination: 'Vaccination',
+  /* S3 — plain enough for both the clinical forms and the patient's carnet. */
+  chirurgie: 'Chirurgie / hospitalisation',
+  antecedent_familial: 'Antécédent familial',
+  observation: 'Observation',
 };
+
+/* ── S3 — enriched patient record (ADR 0016) ── */
+
+/** The 8 recordable blood groups, in form order ('' = not recorded). */
+export const BLOOD_GROUPS: Exclude<BloodGroup, ''>[] = [
+  'A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-',
+];
+
+export const BLOOD_GROUP_LABELS: Record<BloodGroup, string> = {
+  '': 'Non renseigné',
+  'A+': 'A+',
+  'A-': 'A−',
+  'B+': 'B+',
+  'B-': 'B−',
+  'AB+': 'AB+',
+  'AB-': 'AB−',
+  'O+': 'O+',
+  'O-': 'O−',
+};
+
+/** Document categories — simple French, shared by both spaces. */
+export const DOC_TYPE_LABELS: Record<PatientDocumentType, string> = {
+  resultat_biologie: "Résultat d'analyses",
+  imagerie: 'Imagerie',
+  compte_rendu: 'Compte rendu',
+  autre: 'Autre document',
+};
+
+/** Vital-sign field definitions: form label + displayed unit + input mode. */
+export interface VitalSignDef {
+  key: keyof VitalSignsMeasures;
+  /** Full label for the clinical entry form. */
+  label: string;
+  /** Unit shown next to the label and after values. */
+  unit: string;
+  /** Decimal measure (comma accepted, sent with a dot) vs whole number. */
+  decimal: boolean;
+}
+
+export const VITAL_SIGN_DEFS: VitalSignDef[] = [
+  { key: 'systolic_bp', label: 'Tension systolique', unit: 'mmHg', decimal: false },
+  { key: 'diastolic_bp', label: 'Tension diastolique', unit: 'mmHg', decimal: false },
+  { key: 'heart_rate', label: 'Fréquence cardiaque', unit: 'bpm', decimal: false },
+  { key: 'spo2', label: 'Saturation (SpO₂)', unit: '%', decimal: false },
+  { key: 'temperature_c', label: 'Température', unit: '°C', decimal: true },
+  { key: 'respiratory_rate', label: 'Fréquence respiratoire', unit: '/min', decimal: false },
+  { key: 'weight_kg', label: 'Poids', unit: 'kg', decimal: true },
+  { key: 'height_cm', label: 'Taille', unit: 'cm', decimal: false },
+];
+
+const VITAL_VALUE_FORMAT = new Intl.NumberFormat('fr-FR', {
+  minimumFractionDigits: 0,
+  maximumFractionDigits: 1,
+});
+
+/** "37.2" | 37 → "37,2" (French decimals, superfluous zeros dropped). */
+function formatVitalNumber(value: number | string): string {
+  const parsed = typeof value === 'number' ? value : Number.parseFloat(value);
+  if (!Number.isFinite(parsed)) return String(value);
+  return VITAL_VALUE_FORMAT.format(parsed);
+}
+
+/**
+ * Compact French summary of one vital-signs reading — the measures actually
+ * taken, in plain words shared by the clinical list and the patient carnet.
+ * Blood pressure merges into one item when both bounds are present.
+ * `plain: true` (patient side) drops the clinical jargon: no mmHg, « SpO₂ »
+ * becomes « Oxygène » — « Tension 120/80 » reads the way the nurse says it.
+ */
+export function vitalSummary(v: VitalSignsMeasures, opts?: { plain?: boolean }): string[] {
+  const plain = opts?.plain === true;
+  const parts: string[] = [];
+  if (v.systolic_bp !== null && v.diastolic_bp !== null) {
+    parts.push(plain ? `Tension ${v.systolic_bp}/${v.diastolic_bp}` : `Tension ${v.systolic_bp}/${v.diastolic_bp} mmHg`);
+  } else if (v.systolic_bp !== null) {
+    parts.push(plain ? `Tension ${v.systolic_bp}` : `Tension (systolique) ${v.systolic_bp} mmHg`);
+  } else if (v.diastolic_bp !== null) {
+    parts.push(plain ? `Tension ${v.diastolic_bp}` : `Tension (diastolique) ${v.diastolic_bp} mmHg`);
+  }
+  if (v.heart_rate !== null) parts.push(`Pouls ${v.heart_rate}/min`);
+  if (v.spo2 !== null) parts.push(`${plain ? 'Oxygène' : 'SpO₂'} ${v.spo2} %`);
+  if (v.temperature_c !== null) parts.push(`Température ${formatVitalNumber(v.temperature_c)} °C`);
+  if (v.respiratory_rate !== null) parts.push(`Respiration ${v.respiratory_rate}/min`);
+  if (v.weight_kg !== null) parts.push(`Poids ${formatVitalNumber(v.weight_kg)} kg`);
+  if (v.height_cm !== null) parts.push(`Taille ${v.height_cm} cm`);
+  return parts;
+}
 
 export const PAYMENT_INTENT_STATUS_LABELS: Record<PaymentIntentStatus, string> = {
   cree: 'Créé',

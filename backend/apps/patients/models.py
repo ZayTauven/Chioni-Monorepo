@@ -59,6 +59,40 @@ class PatientProfile(TimeStampedModel):
     )
     city = models.CharField("ville / village", max_length=128, blank=True)
 
+    # S3 (ADR 0016 §1) — extended ADMINISTRATIVE identity. All optional
+    # (Comorian desk reality: records are completed over time), all part of
+    # ``IDENTITY_FIELDS`` (patients/services.py): once the profile is
+    # claimed, only the patient edits them (R-API-2). Clinical data (blood
+    # group, measures) does NOT live here — see medical.PatientMedicalFile.
+    address = models.CharField("adresse", max_length=255, blank=True)
+    phone_alt = models.CharField(
+        "second téléphone",
+        max_length=32,
+        blank=True,
+        help_text="Déclaratif, normalisé E.164 comme « téléphone ».",
+    )
+    national_id = models.CharField(
+        "n° d'identité / identifiant médical",
+        max_length=64,
+        blank=True,
+        help_text=(
+            "Texte libre — aucun format imposé (réalité comorienne : CNI, "
+            "passeport ou identifiant médical local)."
+        ),
+    )
+    emergency_contact_name = models.CharField(
+        "personne à prévenir (nom)", max_length=128, blank=True
+    )
+    emergency_contact_phone = models.CharField(
+        "personne à prévenir (téléphone)",
+        max_length=32,
+        blank=True,
+        help_text="Normalisé E.164 comme « téléphone ».",
+    )
+    emergency_contact_relationship = models.CharField(
+        "personne à prévenir (lien)", max_length=64, blank=True
+    )
+
     # Creator tracing (doors A/B/C) — dedicated fields, simpler than a GenericFK.
     created_by_user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -324,3 +358,47 @@ class GuardianLink(TimeStampedModel):
             self.save(update_fields=["status", "updated_at"])
             for consent in self.consents.active().select_for_update():
                 consent.revoke()
+
+
+class PatientInsurance(TimeStampedModel):
+    """An insurance/mutuelle line of a patient — ADMINISTRATIVE-financial.
+
+    S3 (ADR 0016 §6). Transversal to centers like the carnet (ADR 0002):
+    the row belongs to the PATIENT and is visible from every center whose
+    perimeter includes them — an insurance card follows the person, not the
+    facility. Several lines may coexist (mutuelle + assurance). Readable by
+    any staff of the perimeter and by the patient; WRITTEN by billing roles
+    only (it is billing data — enforced at the view layer). No interaction
+    with invoicing in S3: tiers payant is a future chantier (consigné).
+
+    Writes go through ``apps.patients.services`` exclusively (audited
+    ``patient_insurance.created`` / ``.updated`` — ids and field names
+    only, NEVER the insurer name or member number: ADR 0007).
+    """
+
+    patient = models.ForeignKey(
+        PatientProfile,
+        verbose_name="patient",
+        on_delete=models.PROTECT,
+        related_name="insurances",
+    )
+    insurer_name = models.CharField("assureur / mutuelle", max_length=128)
+    member_number = models.CharField("numéro d'adhérent", max_length=64)
+    valid_until = models.DateField("valide jusqu'au", null=True, blank=True)
+    notes = models.TextField("notes", blank=True)
+    is_active = models.BooleanField("active", default=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        verbose_name="créée par",
+        on_delete=models.PROTECT,
+        related_name="patient_insurances_created",
+    )
+
+    class Meta:
+        verbose_name = "assurance patient"
+        verbose_name_plural = "assurances patients"
+        ordering = ["-is_active", "-created_at"]
+
+    def __str__(self) -> str:
+        state = "active" if self.is_active else "inactive"
+        return f"Assurance de {self.patient} ({state})"

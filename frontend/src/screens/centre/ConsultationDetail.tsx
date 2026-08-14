@@ -40,6 +40,7 @@ import {
   formatKmf,
 } from '@/lib/labels';
 import type { RecordEntryType } from '@/lib/types';
+import { VitalSignsCard } from './VitalSignsCard';
 import {
   BILLING_ROLES,
   CLINICAL_ROLES,
@@ -468,6 +469,10 @@ export function ConsultationDetail({ encounterId }: { encounterId: number }) {
             </div>
           )}
         </section>
+
+        {/* Signes vitaux (S3) — sphère clinique : la carte n'est JAMAIS montée
+            (ni son fetch lancé) pour les rôles administratifs/pharmacien. */}
+        {clinical && <VitalSignsCard encounterId={e.id} status={e.status} />}
 
         {/* Ordonnances */}
         <section className="ax-card ax-col--6" role="region" aria-label="Ordonnances">

@@ -74,7 +74,21 @@ export type EncounterStatus = 'en_cours' | 'terminee' | 'annulee';
 
 export type PrescriptionStatus = 'emise' | 'delivree';
 
-export type RecordEntryType = 'antecedent' | 'allergie' | 'traitement_en_cours' | 'vaccination';
+export type RecordEntryType =
+  | 'antecedent'
+  | 'allergie'
+  | 'traitement_en_cours'
+  | 'vaccination'
+  /* S3 (ADR 0016) — same free-text contract, three more shelves. */
+  | 'chirurgie'
+  | 'antecedent_familial'
+  | 'observation';
+
+/** Blood group of the medical file (S3) — '' means « not recorded ». */
+export type BloodGroup = '' | 'A+' | 'A-' | 'B+' | 'B-' | 'AB+' | 'AB-' | 'O+' | 'O-';
+
+/** Attached-document category (S3). Photos only — the PDF is deferred. */
+export type PatientDocumentType = 'resultat_biologie' | 'imagerie' | 'compte_rendu' | 'autre';
 
 export type PaymentRequestStatus =
   | 'brouillon'
@@ -173,6 +187,13 @@ export interface PatientMe {
   sex: Sex;
   phone: string | null;
   city: string;
+  /* S3 — extended administrative identity (all optional, '' when empty). */
+  address: string;
+  phone_alt: string | null;
+  national_id: string;
+  emergency_contact_name: string;
+  emergency_contact_phone: string | null;
+  emergency_contact_relationship: string;
   claim_status: ClaimStatus;
   created_at: string;
 }
@@ -227,6 +248,95 @@ export interface RecordEntry {
   entry_type: RecordEntryType;
   content: string;
   source_encounter: number | null;
+  created_at: string;
+}
+
+/* ── S3 — enriched patient record (ADR 0016) ── */
+
+/**
+ * Medical file (clinical sphere). Constant empty shape before the first
+ * clinical write: `{blood_group: '', notes: '', updated_at: null}` — never a
+ * 404. Patient side is read-only; staff side is clinical roles ONLY.
+ */
+export interface PatientMedicalFile {
+  blood_group: BloodGroup;
+  notes: string;
+  updated_at: string | null;
+}
+
+/**
+ * Vital-signs measures (S3). Integers come as numbers, decimals as STRINGS
+ * (DRF DecimalField) ; a measure not taken is null.
+ */
+export interface VitalSignsMeasures {
+  systolic_bp: number | null;
+  diastolic_bp: number | null;
+  heart_rate: number | null;
+  spo2: number | null;
+  /** Decimal string, 1 decimal ("37.2"). */
+  temperature_c: string | null;
+  respiratory_rate: number | null;
+  /** Decimal string, 2 decimals ("62.00"). */
+  weight_kg: string | null;
+  height_cm: number | null;
+}
+
+/** GET /patients/me/vital-signs/ item — NO `measured_by` (staff internals never cross). */
+export interface PatientVitalSigns extends VitalSignsMeasures {
+  id: number;
+  encounter: number;
+  measured_at: string;
+  created_at: string;
+}
+
+/** GET|POST /centers/{c}/encounters/{e}/vital-signs/ item (clinical roles). */
+export interface VitalSignsStaff extends PatientVitalSigns {
+  /** StaffMembership id of the measuring caregiver (always the caller on POST). */
+  measured_by: number;
+  measured_by_name: string;
+}
+
+/**
+ * GET /patients/me/documents/ item — archived documents excluded. NEVER a
+ * file URL: bytes only flow through the authenticated download endpoint.
+ */
+export interface PatientDocumentMine {
+  id: number;
+  center: number;
+  center_name: string;
+  doc_type: PatientDocumentType;
+  title: string;
+  source_encounter: number | null;
+  created_at: string;
+}
+
+/**
+ * GET|POST /centers/{c}/patients/{pk}/documents/ item (clinical roles of the
+ * PRODUCING center only). `archived_at` filled = invisible to the patient,
+ * kept (line + download) for the staff — correction without destruction.
+ */
+export interface PatientDocumentStaff {
+  id: number;
+  patient: number;
+  doc_type: PatientDocumentType;
+  title: string;
+  source_encounter: number | null;
+  archived_at: string | null;
+  created_at: string;
+}
+
+/**
+ * Insurance/mutual line (S3) — administrative-financial sphere, transversal
+ * to the patient (every center of the perimeter sees the same lines).
+ * Read: all staff + patient ; write: BILLING roles.
+ */
+export interface PatientInsurance {
+  id: number;
+  insurer_name: string;
+  member_number: string;
+  valid_until: string | null;
+  notes: string;
+  is_active: boolean;
   created_at: string;
 }
 
@@ -380,6 +490,13 @@ export interface Patient {
   sex: Sex;
   phone: string | null;
   city: string;
+  /* S3 — extended administrative identity (same R-API-2 editing rules). */
+  address: string;
+  phone_alt: string | null;
+  national_id: string;
+  emergency_contact_name: string;
+  emergency_contact_phone: string | null;
+  emergency_contact_relationship: string;
   claim_status: ClaimStatus;
   created_at: string;
 }

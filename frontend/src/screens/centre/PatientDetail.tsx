@@ -32,10 +32,14 @@ import {
 } from '@/lib/labels';
 import type { Patient, Sex } from '@/lib/types';
 import { DeskConsentsCard } from './DeskConsents';
+import { DocumentsCard } from './PatientDocuments';
+import { InsurancesCard } from './PatientInsurances';
+import { MedicalFileCard } from './PatientMedicalFile';
 import {
   AvatarChip,
   BILLING_ROLES,
   CLAIM_TONES,
+  CLINICAL_ROLES,
   CardSkeleton,
   DetailItem,
   EmptyState,
@@ -75,6 +79,13 @@ function IdentityForm({
     sex: patient.sex,
     phone: patient.phone ?? '',
     city: patient.city,
+    /* S3 — identité administrative élargie (mêmes règles R-API-2). */
+    address: patient.address,
+    phone_alt: patient.phone_alt ?? '',
+    national_id: patient.national_id,
+    emergency_contact_name: patient.emergency_contact_name,
+    emergency_contact_phone: patient.emergency_contact_phone ?? '',
+    emergency_contact_relationship: patient.emergency_contact_relationship,
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<ApiError | null>(null);
@@ -90,6 +101,12 @@ function IdentityForm({
         sex: form.sex,
         phone: form.phone.trim() || null,
         city: form.city.trim(),
+        address: form.address.trim(),
+        phone_alt: form.phone_alt.trim(),
+        national_id: form.national_id.trim(),
+        emergency_contact_name: form.emergency_contact_name.trim(),
+        emergency_contact_phone: form.emergency_contact_phone.trim(),
+        emergency_contact_relationship: form.emergency_contact_relationship.trim(),
       });
       onSaved(fresh);
     } catch (err) {
@@ -107,7 +124,9 @@ function IdentityForm({
       style={{ display: 'flex', flexDirection: 'column', gap: 'var(--ax-space-4)' }}
     >
       {error && error.messages.length > 0 && <ErrorAlert error={error} />}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--ax-space-4)' }}>
+      {/* auto-fit : la carte Identité est étroite (ax-col--4) — la grille
+          retombe en une colonne plutôt que d'écraser les champs. */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 'var(--ax-space-4)' }}>
         <div className="ax-field">
           <label className="ax-label" htmlFor="pe-first">Prénom</label>
           <input
@@ -133,7 +152,7 @@ function IdentityForm({
           <FieldError error={error} field="last_name" />
         </div>
       </div>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--ax-space-4)' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 'var(--ax-space-4)' }}>
         <div className="ax-field">
           <label className="ax-label" htmlFor="pe-birth">Date de naissance</label>
           <input
@@ -154,7 +173,7 @@ function IdentityForm({
           </select>
         </div>
       </div>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--ax-space-4)' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 'var(--ax-space-4)' }}>
         <div className="ax-field">
           <label className="ax-label" htmlFor="pe-phone">Téléphone</label>
           <input
@@ -173,6 +192,85 @@ function IdentityForm({
           <FieldError error={error} field="city" />
         </div>
       </div>
+      {/* S3 — identité élargie (tous champs facultatifs). */}
+      <div className="ax-field">
+        <label className="ax-label" htmlFor="pe-address">Adresse</label>
+        <input
+          id="pe-address"
+          type="text"
+          className={`ax-input${error?.fieldErrors.address ? ' is-invalid' : ''}`}
+          value={form.address}
+          onChange={(e) => setForm((f) => ({ ...f, address: e.target.value }))}
+        />
+        <FieldError error={error} field="address" />
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 'var(--ax-space-4)' }}>
+        <div className="ax-field">
+          <label className="ax-label" htmlFor="pe-phone-alt">2ᵉ téléphone</label>
+          <input
+            id="pe-phone-alt"
+            type="tel"
+            className={`ax-input${error?.fieldErrors.phone_alt ? ' is-invalid' : ''}`}
+            value={form.phone_alt}
+            onChange={(e) => setForm((f) => ({ ...f, phone_alt: e.target.value }))}
+            placeholder="+269…"
+          />
+          <FieldError error={error} field="phone_alt" />
+        </div>
+        <div className="ax-field">
+          <label className="ax-label" htmlFor="pe-national-id">N° d&apos;identité</label>
+          <input
+            id="pe-national-id"
+            type="text"
+            className={`ax-input${error?.fieldErrors.national_id ? ' is-invalid' : ''}`}
+            value={form.national_id}
+            onChange={(e) => setForm((f) => ({ ...f, national_id: e.target.value }))}
+          />
+          <FieldError error={error} field="national_id" />
+        </div>
+      </div>
+      <fieldset style={{ border: '1px solid var(--ax-border)', borderRadius: 'var(--ax-radius-md)', padding: 'var(--ax-space-4)', margin: 0, display: 'flex', flexDirection: 'column', gap: 'var(--ax-space-4)' }}>
+        <legend style={{ fontSize: 'var(--ax-text-xs)', color: 'var(--ax-text-subtle)', padding: '0 var(--ax-space-2)' }}>
+          Personne à prévenir en cas d&apos;urgence
+        </legend>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 'var(--ax-space-4)' }}>
+          <div className="ax-field">
+            <label className="ax-label" htmlFor="pe-ec-name">Nom</label>
+            <input
+              id="pe-ec-name"
+              type="text"
+              className={`ax-input${error?.fieldErrors.emergency_contact_name ? ' is-invalid' : ''}`}
+              value={form.emergency_contact_name}
+              onChange={(e) => setForm((f) => ({ ...f, emergency_contact_name: e.target.value }))}
+            />
+            <FieldError error={error} field="emergency_contact_name" />
+          </div>
+          <div className="ax-field">
+            <label className="ax-label" htmlFor="pe-ec-phone">Téléphone</label>
+            <input
+              id="pe-ec-phone"
+              type="tel"
+              className={`ax-input${error?.fieldErrors.emergency_contact_phone ? ' is-invalid' : ''}`}
+              value={form.emergency_contact_phone}
+              onChange={(e) => setForm((f) => ({ ...f, emergency_contact_phone: e.target.value }))}
+              placeholder="+269…"
+            />
+            <FieldError error={error} field="emergency_contact_phone" />
+          </div>
+        </div>
+        <div className="ax-field">
+          <label className="ax-label" htmlFor="pe-ec-rel">Lien avec le patient</label>
+          <input
+            id="pe-ec-rel"
+            type="text"
+            className={`ax-input${error?.fieldErrors.emergency_contact_relationship ? ' is-invalid' : ''}`}
+            value={form.emergency_contact_relationship}
+            onChange={(e) => setForm((f) => ({ ...f, emergency_contact_relationship: e.target.value }))}
+            placeholder="ex. mère, frère, voisin…"
+          />
+          <FieldError error={error} field="emergency_contact_relationship" />
+        </div>
+      </fieldset>
       <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 'var(--ax-space-2)' }}>
         <button type="button" className="ax-btn ax-btn--ghost" onClick={onCancel} disabled={saving}>
           Annuler
@@ -315,6 +413,10 @@ function MergeModal({
 export function PatientDetail({ patientId }: { patientId: number }) {
   const { centerId, roles } = useCenter();
   const billing = hasRole(roles, BILLING_ROLES);
+  /* S3 : fiche médicale + documents = sphère clinique. Les cartes ne sont
+     JAMAIS montées (ni leurs fetchs lancés) hors rôles cliniques — comme le
+     bloc finances du dashboard. */
+  const clinical = hasRole(roles, CLINICAL_ROLES);
   const [editing, setEditing] = useState(false);
   const [mergeOpen, setMergeOpen] = useState(false);
   const [patched, setPatched] = useState<Patient | null>(null);
@@ -436,7 +538,25 @@ export function PatientDetail({ patientId }: { patientId: number }) {
                 <DetailItem label="Date de naissance">{patient.birth_date ? formatDate(patient.birth_date) : '—'}</DetailItem>
                 <DetailItem label="Sexe">{SEX_LABELS[patient.sex]}</DetailItem>
                 <DetailItem label="Téléphone">{patient.phone || '—'}</DetailItem>
+                <DetailItem label="2ᵉ téléphone">{patient.phone_alt || '—'}</DetailItem>
                 <DetailItem label="Ville">{patient.city || '—'}</DetailItem>
+                <DetailItem label="N° d'identité">{patient.national_id || '—'}</DetailItem>
+                <div style={{ gridColumn: '1 / -1' }}>
+                  <DetailItem label="Adresse">{patient.address || '—'}</DetailItem>
+                </div>
+                <div style={{ gridColumn: '1 / -1' }}>
+                  <DetailItem label="Personne à prévenir">
+                    {patient.emergency_contact_name
+                      ? [
+                          patient.emergency_contact_name,
+                          patient.emergency_contact_relationship ? `(${patient.emergency_contact_relationship})` : '',
+                          patient.emergency_contact_phone ? `· ${patient.emergency_contact_phone}` : '',
+                        ]
+                          .filter(Boolean)
+                          .join(' ')
+                      : '—'}
+                  </DetailItem>
+                </div>
                 <DetailItem label="Dossier créé le">{formatDate(patient.created_at)}</DetailItem>
               </div>
             )}
@@ -487,6 +607,14 @@ export function PatientDetail({ patientId }: { patientId: number }) {
             )}
           </div>
         </section>
+
+        {/* S3 — sphère clinique : fiche médicale + documents (rôles cliniques
+            SEULS, jamais rendues pour secrétaire/caissier/directeur/pharmacien). */}
+        {clinical && <MedicalFileCard patientId={patient.id} />}
+        {clinical && <DocumentsCard patientId={patient.id} />}
+
+        {/* S3 — assurances/mutuelles : lecture tout staff, écriture BILLING. */}
+        <InsurancesCard patientId={patient.id} />
 
         {/* Consentement clinique recueilli au guichet (S2) — endpoints BILLING
             seuls : la carte n'est jamais montée pour les autres rôles. */}

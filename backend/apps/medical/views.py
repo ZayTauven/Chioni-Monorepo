@@ -5,15 +5,19 @@ will be wired whole in a later phase, never half-exposed.
 """
 
 from datetime import datetime, time, timedelta
+from pathlib import PurePosixPath
 
 from django.core.exceptions import ValidationError as DjangoValidationError
+from django.http import FileResponse
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.utils.dateparse import parse_date
 from drf_spectacular.utils import extend_schema
 from rest_framework import generics, status
 from rest_framework.exceptions import ValidationError as DrfValidationError
+from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.response import Response
+from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 
 from apps.centers.models import StaffMembership, TariffItem
@@ -25,7 +29,14 @@ from apps.common.permissions import (
     claimed_patient_profile,
 )
 from apps.common.roles import CLINICAL_ROLES
-from apps.medical.models import Encounter, HealthRecordEntry, Prescription
+from apps.medical.models import (
+    Encounter,
+    HealthRecordEntry,
+    PatientDocument,
+    PatientMedicalFile,
+    Prescription,
+    VitalSigns,
+)
 from apps.medical.serializers import (
     EncounterAdminSerializer,
     EncounterClinicalSerializer,
@@ -33,14 +44,26 @@ from apps.medical.serializers import (
     EncounterPatientSerializer,
     HealthRecordEntryCreateSerializer,
     HealthRecordEntrySerializer,
+    PatientDocumentCreateSerializer,
+    PatientDocumentPatientSerializer,
+    PatientDocumentStaffSerializer,
+    PatientMedicalFileSerializer,
+    PatientMedicalFileWriteSerializer,
     PrescriptionCreateSerializer,
     PrescriptionSerializer,
+    VitalSignsCreateSerializer,
+    VitalSignsPatientSerializer,
+    VitalSignsStaffSerializer,
 )
 from apps.medical.services import (
+    archive_patient_document,
     close_encounter,
     create_encounter,
+    create_patient_document,
     create_prescription,
     create_record_entry,
+    record_vital_signs,
+    update_patient_medical_file,
 )
 from apps.patients.views import center_patients_qs
 from apps.scheduling.models import Appointment
@@ -343,6 +366,242 @@ class EncounterRecordEntryView(_EncounterNestedView):
         )
 
 
+class EncounterVitalSignsView(_EncounterNestedView):
+    """GET/POST /centers/{center_pk}/encounters/{encounter_pk}/vital-signs/
+
+    S3 (ADR 0016 §4) — vital signs are clinical content: read AND write
+    reserved to clinical roles (pharmacist and administrative staff → 403,
+    like the carnet). ``measured_by`` is ALWAYS the caller's own clinical
+    membership in this center (same rule as the encounter's practitioner —
+    a view can never attribute a measure to someone else's hat). A closed
+    encounter refuses new rows (400 explicite, service). Bare array like
+    the other clinical sub-routes.
+    """
+
+    permission_classes = [IsStaffOfCenter(*CLINICAL_ROLES)]
+
+    def get_serializer_class(self):
+        if self.request.method == "POST":
+            return VitalSignsCreateSerializer
+        return VitalSignsStaffSerializer
+
+    def get(self, request, *args, **kwargs):
+        encounter = self.get_encounter()
+        rows = (
+            VitalSigns.objects.filter(encounter=encounter)
+            .select_related("measured_by__user")
+            .order_by("-measured_at", "-id")
+        )
+        return Response(VitalSignsStaffSerializer(rows, many=True).data)
+
+    def post(self, request, *args, **kwargs):
+        encounter = self.get_encounter()
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        measured_by = (
+            active_membership_qs(
+                request.user, center=self.center, roles=CLINICAL_ROLES
+            )
+            .order_by("id")
+            .first()
+        )
+        vital_signs = record_vital_signs(
+            actor=request.user,
+            encounter=encounter,
+            measured_by=measured_by,
+            **serializer.validated_data,
+        )
+        return Response(
+            VitalSignsStaffSerializer(vital_signs).data,
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class CenterPatientMedicalFileView(CenterScopedViewMixin, APIView):
+    """GET/PATCH /centers/{center_pk}/patients/{pk}/medical-file/ — S3.
+
+    The structured medical file is CLINICAL data (blood group = RGPD
+    art. 9): clinical roles of the perimeter only, for reading AND
+    writing — administrative staff and the pharmacist get 403, exactly
+    like the carnet. Patient outside the perimeter → 404 (URL ref).
+    Before the first write, GET answers the uniform empty shape.
+    """
+
+    permission_classes = [IsStaffOfCenter(*CLINICAL_ROLES)]
+
+    def _patient(self):
+        return get_object_or_404(
+            center_patients_qs(self.center), pk=self.kwargs["pk"]
+        )
+
+    @extend_schema(responses=PatientMedicalFileSerializer)
+    def get(self, request, center_pk, pk):
+        patient = self._patient()
+        medical_file = (
+            PatientMedicalFile.objects.filter(patient=patient).first()
+            or PatientMedicalFile()  # unsaved → uniform empty shape
+        )
+        return Response(PatientMedicalFileSerializer(medical_file).data)
+
+    @extend_schema(
+        request=PatientMedicalFileWriteSerializer,
+        responses=PatientMedicalFileSerializer,
+    )
+    def patch(self, request, center_pk, pk):
+        patient = self._patient()
+        serializer = PatientMedicalFileWriteSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        medical_file = update_patient_medical_file(
+            actor=request.user,
+            center=self.center,
+            patient=patient,
+            **serializer.validated_data,
+        )
+        return Response(PatientMedicalFileSerializer(medical_file).data)
+
+
+def _document_file_response(document):
+    """Stream a patient document to an AUTHORISED caller (ADR 0016 §5).
+
+    The caller's permissions were already replayed by the view (exact same
+    scoping as the list). Contract of the response:
+
+    - ``Content-Disposition: attachment`` with a NEUTRAL name
+      (``document-<id>.<ext>``) — the uuid storage name never leaks, and
+      nothing clinical transits in a header;
+    - ``X-Content-Type-Options: nosniff`` — the browser must never
+      second-guess the declared image type;
+    - at deployment this becomes an ``X-Accel-Redirect`` to an internal
+      location over PRIVATE_MEDIA_ROOT (documented in the ADR).
+    """
+    extension = PurePosixPath(document.file.name).suffix
+    response = FileResponse(
+        document.file.open("rb"),
+        as_attachment=True,
+        filename=f"document-{document.pk}{extension}",
+    )
+    response["X-Content-Type-Options"] = "nosniff"
+    return response
+
+
+class _CenterPatientDocumentScopeMixin(CenterScopedViewMixin):
+    """Shared scoping of the staff document routes (ADR 0016 §5): patient
+    resolved in THIS center's perimeter (404), documents PRODUCED BY THIS
+    CENTER only — the transversal carnet remains the patient's own space,
+    a document produced elsewhere is invisible here (bornage identique aux
+    entrées de carnet)."""
+
+    permission_classes = [IsStaffOfCenter(*CLINICAL_ROLES)]
+
+    def scoped_documents(self):
+        patient = get_object_or_404(
+            center_patients_qs(self.center), pk=self.kwargs["pk"]
+        )
+        return PatientDocument.objects.filter(
+            patient=patient, center=self.center
+        )
+
+
+class CenterPatientDocumentListCreateView(
+    _CenterPatientDocumentScopeMixin, generics.ListCreateAPIView
+):
+    """GET/POST /centers/{center_pk}/patients/{pk}/documents/ — S3.
+
+    Clinical roles of the producing center. The LIST includes archived
+    rows (the staff sees the correction state — ``archived_at``); the
+    patient-side list excludes them. POST is multipart and runs the ADR
+    0014 pipeline unchanged (JPEG/PNG/WebP only — PDF explicitly deferred)
+    under the STRICT ``uploads`` throttle scope (POST only: reading the
+    list must never starve on the upload budget).
+    """
+
+    parser_classes = [MultiPartParser, FormParser]
+
+    def get_throttles(self):
+        if self.request.method == "POST":
+            self.throttle_scope = "uploads"
+            return [ScopedRateThrottle()]
+        return super().get_throttles()
+
+    def get_serializer_class(self):
+        if self.request.method == "POST":
+            return PatientDocumentCreateSerializer
+        return PatientDocumentStaffSerializer
+
+    def get_queryset(self):
+        return self.scoped_documents().order_by("-created_at")
+
+    def create(self, request, *args, **kwargs):
+        patient = get_object_or_404(
+            center_patients_qs(self.center), pk=self.kwargs["pk"]
+        )
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        source_encounter = None
+        if data.get("source_encounter") is not None:
+            # Body ref (S1 norm): one explicit 400 covering foreign and
+            # non-existent ids alike; the model then re-checks same-patient.
+            source_encounter = (
+                Encounter.objects.for_center(self.center)
+                .filter(pk=data["source_encounter"])
+                .first()
+            )
+            if source_encounter is None:
+                raise DjangoValidationError(
+                    "Cette consultation n'appartient pas à ce centre."
+                )
+        document = create_patient_document(
+            actor=request.user,
+            center=self.center,
+            patient=patient,
+            uploaded_file=data["file"],
+            doc_type=data["doc_type"],
+            title=data["title"],
+            source_encounter=source_encounter,
+        )
+        return Response(
+            PatientDocumentStaffSerializer(document).data,
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class CenterPatientDocumentDownloadView(
+    _CenterPatientDocumentScopeMixin, APIView
+):
+    """GET .../patients/{pk}/documents/{document_pk}/download/ — S3.
+
+    THE only staff read path of the bytes (private diffusion): replays
+    exactly the list permissions and scoping, then streams. An archived
+    document stays downloadable by the producing center's clinical staff
+    (correction without destruction — the state is visible in the list).
+    """
+
+    def get(self, request, center_pk, pk, document_pk):
+        document = get_object_or_404(
+            self.scoped_documents(), pk=document_pk
+        )
+        return _document_file_response(document)
+
+
+class CenterPatientDocumentArchiveView(
+    _CenterPatientDocumentScopeMixin, APIView
+):
+    """POST .../patients/{pk}/documents/{document_pk}/archive/ — S3.
+
+    Error correction WITHOUT destruction (ADR 0002): the row and the file
+    stay, the patient no longer sees them. Final — already archived → 400.
+    """
+
+    @extend_schema(request=None, responses=PatientDocumentStaffSerializer)
+    def post(self, request, center_pk, pk, document_pk):
+        document = get_object_or_404(
+            self.scoped_documents(), pk=document_pk
+        )
+        document = archive_patient_document(actor=request.user, document=document)
+        return Response(PatientDocumentStaffSerializer(document).data)
+
+
 # ---------------------------------------------------------------------------
 # Audience: the PATIENT owner of the carnet (transversal, all centers)
 # ---------------------------------------------------------------------------
@@ -388,3 +647,88 @@ class MyRecordEntriesView(generics.ListAPIView):
     def get_queryset(self):
         profile = claimed_patient_profile(self.request.user)
         return HealthRecordEntry.objects.for_patient(profile).order_by("-created_at")
+
+
+class MyMedicalFileView(APIView):
+    """GET /patients/me/medical-file/ — my structured medical file (S3).
+
+    The carnet belongs to the patient (ADR 0002): transversal read. Empty
+    shape before any clinical write; writing stays a clinical-staff act.
+    """
+
+    permission_classes = [IsPatientSelf]
+
+    @extend_schema(responses=PatientMedicalFileSerializer)
+    def get(self, request):
+        profile = claimed_patient_profile(request.user)
+        medical_file = (
+            PatientMedicalFile.objects.filter(patient=profile).first()
+            or PatientMedicalFile()
+        )
+        return Response(PatientMedicalFileSerializer(medical_file).data)
+
+
+class MyVitalSignsView(generics.ListAPIView):
+    """GET /patients/me/vital-signs/?encounter= — my measures, all centers.
+
+    S3 (ADR 0016 §4) — transversal patient read. ``?encounter=`` narrows
+    to one consultation; a foreign encounter id simply matches nothing
+    (the queryset is patient-scoped — no cross-patient probe).
+    """
+
+    permission_classes = [IsPatientSelf]
+    serializer_class = VitalSignsPatientSerializer
+
+    def get_queryset(self):
+        profile = claimed_patient_profile(self.request.user)
+        qs = VitalSigns.objects.for_patient(profile).order_by(
+            "-measured_at", "-id"
+        )
+        encounter_id = _validated_id_param(
+            self.request.query_params, "encounter", "consultation"
+        )
+        if encounter_id is not None:
+            qs = qs.filter(encounter_id=encounter_id)
+        return qs
+
+
+class MyDocumentsView(generics.ListAPIView):
+    """GET /patients/me/documents/ — my carnet documents, all centers (S3).
+
+    Archived documents are EXCLUDED (ADR 0016 §5): archiving is the
+    correction path — a document archived by the producing center no
+    longer exists for the patient.
+    """
+
+    permission_classes = [IsPatientSelf]
+    serializer_class = PatientDocumentPatientSerializer
+
+    def get_queryset(self):
+        profile = claimed_patient_profile(self.request.user)
+        return (
+            PatientDocument.objects.for_patient(profile)
+            .filter(archived_at__isnull=True)
+            .select_related("center")
+            .order_by("-created_at")
+        )
+
+
+class MyDocumentDownloadView(APIView):
+    """GET /patients/me/documents/{pk}/download/ — S3, private diffusion.
+
+    Replays exactly the patient list scoping (own documents, archived
+    excluded → a foreign or archived document is a deterministic 404),
+    then streams the bytes. No public URL exists anywhere else.
+    """
+
+    permission_classes = [IsPatientSelf]
+
+    def get(self, request, pk):
+        profile = claimed_patient_profile(request.user)
+        document = get_object_or_404(
+            PatientDocument.objects.for_patient(profile).filter(
+                archived_at__isnull=True
+            ),
+            pk=pk,
+        )
+        return _document_file_response(document)
