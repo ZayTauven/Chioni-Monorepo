@@ -57,7 +57,10 @@ class HealthRecordEntryAdmin(admin.ModelAdmin):
 
 @admin.register(Consent)
 class ConsentAdmin(admin.ModelAdmin):
-    list_display = ("patient", "guardian_link", "scope", "granted_at", "revoked_at")
-    list_filter = ("scope",)
+    list_display = (
+        "patient", "guardian_link", "scope", "granted_at", "revoked_at",
+        "collected_via", "collected_by",
+    )
+    list_filter = ("scope", "collected_via")
     search_fields = ("patient__last_name", "patient__first_name")
-    autocomplete_fields = ("patient", "guardian_link")
+    autocomplete_fields = ("patient", "guardian_link", "collected_by")

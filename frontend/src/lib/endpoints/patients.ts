@@ -8,6 +8,7 @@ import type {
   Encounter,
   GuardianLinkPatient,
   Paginated,
+  PatientAppointment,
   PatientCashReceipt,
   PatientMe,
   PaymentRequestPatient,
@@ -96,6 +97,30 @@ export function grantClinicalConsent(linkId: number): Promise<GuardianLinkPatien
 
 export function revokeClinicalConsent(linkId: number): Promise<GuardianLinkPatient> {
   return apiFetch(`/patients/me/guardians/${linkId}/consents/clinical/`, { method: 'DELETE' });
+}
+
+/* ── appointments (S2 — read + cancel; the desk books, never the patient) ── */
+
+/**
+ * My appointments, cross-center, `scheduled_at` desc. `upcoming: true` keeps
+ * only appointments still `prevu` AND in the future (the « à venir » widget);
+ * omitted = full history (the contract's `upcoming=false`).
+ */
+export function listMyAppointments({
+  page = 1,
+  upcoming = false,
+}: { page?: number; upcoming?: boolean } = {}): Promise<Paginated<PatientAppointment>> {
+  const query = new URLSearchParams({ page: String(page) });
+  if (upcoming) query.set('upcoming', 'true');
+  return apiFetch(`/patients/me/appointments/?${query.toString()}`);
+}
+
+/**
+ * Cancel MY appointment — only while `prevu`: any other status answers
+ * 400 `["Seul un rendez-vous encore prévu peut être annulé."]` (shown as-is).
+ */
+export function cancelMyAppointment(id: number): Promise<PatientAppointment> {
+  return apiFetch(`/patients/me/appointments/${id}/cancel/`, { method: 'POST' });
 }
 
 /* ── health record ── */

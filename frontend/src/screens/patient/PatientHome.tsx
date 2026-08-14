@@ -138,13 +138,24 @@ export function PatientHome() {
         </section>
       ))}
 
-      {/* 3 — two big shortcuts. */}
+      {/* 3 — three big shortcuts. « Mes rendez-vous » (S2) vit ici : la tab
+             bar garde ses 4 onglets (contrat du chrome lite). */}
       <section className="ax-card ax-card--interactive">
         <Link href="/patient/carnet" className="ax-card__body pat-shortcut">
           <span className="pat-shortcut__icon" aria-hidden="true"><Icon name="notebook" /></span>
           <span className="pat-shortcut__text">
             <span className="pat-shortcut__title">Mon carnet de santé</span>
             <span className="pat-shortcut__sub">Consultations, ordonnances, ma santé</span>
+          </span>
+          {CHEVRON}
+        </Link>
+      </section>
+      <section className="ax-card ax-card--interactive">
+        <Link href="/patient/rendez-vous" className="ax-card__body pat-shortcut">
+          <span className="pat-shortcut__icon" aria-hidden="true"><Icon name="calendar" /></span>
+          <span className="pat-shortcut__text">
+            <span className="pat-shortcut__title">Mes rendez-vous</span>
+            <span className="pat-shortcut__sub">Vos prochains passages au centre</span>
           </span>
           {CHEVRON}
         </Link>

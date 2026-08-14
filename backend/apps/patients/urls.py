@@ -10,6 +10,7 @@ from django.urls import path
 
 from apps.patients.views import (
     AcceptInvitationView,
+    CenterPatientClinicalConsentView,
     CenterPatientDetailView,
     CenterPatientGuardianLinksView,
     CenterPatientListCreateView,
@@ -17,6 +18,7 @@ from apps.patients.views import (
     ClinicalConsentView,
     DeclineInvitationView,
     GuardianInvitationListView,
+    GuardianLinkListView,
     GuardianRevokeLinkView,
     InviteGuardianView,
     MyGuardianLinksView,
@@ -51,6 +53,11 @@ urlpatterns = [
         "centers/<int:center_pk>/patients/<int:pk>/guardian-links/",
         CenterPatientGuardianLinksView.as_view(),
         name="center-patient-guardian-links",
+    ),
+    path(
+        "centers/<int:center_pk>/patients/<int:pk>/consents/clinical/",
+        CenterPatientClinicalConsentView.as_view(),
+        name="center-patient-clinical-consent",
     ),
     # Audience: the patient (porte B)
     path("patients/me/", MyPatientProfileView.as_view(), name="my-profile"),
@@ -101,6 +108,11 @@ urlpatterns = [
         "guardian/invitations/<int:link_pk>/decline/",
         DeclineInvitationView.as_view(),
         name="decline-invitation",
+    ),
+    path(
+        "guardian/links/",
+        GuardianLinkListView.as_view(),
+        name="guardian-link-list",
     ),
     path(
         "guardian/links/<int:link_pk>/revoke/",

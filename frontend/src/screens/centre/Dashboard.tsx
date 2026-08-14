@@ -484,8 +484,8 @@ function DisputesCard() {
 /* ── screen ── */
 
 export function Dashboard() {
-  const { centerId, center, role } = useCenter();
-  const billing = hasRole(role, BILLING_ROLES);
+  const { centerId, center, roles } = useCenter();
+  const billing = hasRole(roles, BILLING_ROLES);
 
   const centerDetail = useAsync(() => getCenter(centerId), [centerId]);
   const requests = useAsync(() => listPaymentRequests(centerId, 1), [centerId]);

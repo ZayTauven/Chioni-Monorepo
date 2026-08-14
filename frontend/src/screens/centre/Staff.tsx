@@ -402,8 +402,9 @@ function ReactivateModal({
 /* ── screen ── */
 
 export function Staff() {
-  const { centerId, role } = useCenter();
-  const isDirector = role === 'directeur';
+  const { centerId, roles } = useCenter();
+  // Multi-roles S2 : un directeur-médecin garde l'accès personnel.
+  const isDirector = roles.includes('directeur');
   const [page, setPage] = useState(1);
   const [addOpen, setAddOpen] = useState(false);
   const [editing, setEditing] = useState<StaffMember | null>(null);

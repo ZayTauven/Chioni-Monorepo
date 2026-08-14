@@ -42,8 +42,8 @@ function methodLabel(key: CashMethod | 'total'): string {
 }
 
 export function CashJournal() {
-  const { centerId, role } = useCenter();
-  const billing = hasRole(role, BILLING_ROLES);
+  const { centerId, roles } = useCenter();
+  const billing = hasRole(roles, BILLING_ROLES);
   const [date, setDate] = useState(todayIsoDate());
 
   const journal = useAsync(

@@ -230,9 +230,9 @@ function CreateInvoiceModal({
 /* ── screen ── */
 
 export function Invoices() {
-  const { centerId, role } = useCenter();
+  const { centerId, roles } = useCenter();
   const router = useRouter();
-  const billing = hasRole(role, BILLING_ROLES);
+  const billing = hasRole(roles, BILLING_ROLES);
   const [page, setPage] = useState(1);
   // Pré-remplissage depuis /centre/factures?encounter=N (sans useSearchParams).
   const [prefillEncounter] = useState<number | null>(() => {

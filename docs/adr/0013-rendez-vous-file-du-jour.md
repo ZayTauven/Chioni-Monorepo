@@ -1,6 +1,6 @@
 # ADR 0013 — Rendez-vous et file du jour : donnée d'exploitation « simple d'abord »
 
-- **Statut** : acté (chantier « gâter les centres », vague 1a)
+- **Statut** : acté (chantier « gâter les centres », vague 1a) ; addendum S2 (fenêtre patient)
 - **Date** : 2026-08-13
 
 ## Contexte
@@ -31,3 +31,14 @@ Nouvelle app `apps.scheduling`, un seul modèle `Appointment` :
 - **Fenêtre de réservation bornée** (`MAX_BOOKING_HORIZON` = 2 ans) : au-delà c'est une coquille, et la borne éloigne `end_at`/fenêtres de chevauchement de `datetime.max` (un créneau fin 9999 provoquait des 500 `OverflowError`). `?date=` absorbe aussi les dates calendaires impossibles (« 2026-02-30 ») et hors limites (« 9999-12-31 ») en 400.
 - **Fusion de doublons** : `merge_profiles` ré-ancre désormais les RDV sur le profil canonique (comme les encounters) — un RDV laissé sur le tombstone enverrait le rappel J-1 au téléphone déclaratif du doublon et deviendrait inhonorable via la création d'encounter.
 - Campagne de régression : `tests/test_adversarial_scheduling_wave1.py`.
+
+## Addendum S2 — La fenêtre PATIENT sur ses rendez-vous (2026-08-13)
+
+Le « chantier ultérieur » annoncé au point 1 est ouvert, en LECTURE + annulation seulement (audit C.4 : le patient recevait des SMS de rappel sans pouvoir voir ses RDV) :
+
+- **`GET /patients/me/appointments/`** (`IsPatientSelf`) — transversal tous centres (`Appointment.objects.for_patient()`, miroir de lecture du carnet ; le RDV RESTE une donnée d'exploitation du centre, seul son propre patient gagne cette fenêtre). Paginé, tri `scheduled_at` décroissant, filtre `?upcoming=true` (= encore `prevu` ET dans le futur ; `false` accepté comme no-op ; autre valeur → 400 par champ).
+- **Payload PATIENT dédié** (`AppointmentPatientSerializer`) — PAS le payload staff : `{id, center{id,name}, scheduled_at, duration_minutes, status, practitioner_display_name}`. **`reason` est ABSENT, à dessein** (cohérent avec le point 2 : c'est une note de guichet saisie PAR le staff POUR le staff, au contenu non contrôlé — elle n'a jamais été écrite pour le patient ; l'histoire clinique commence à l'encounter, jamais ici). Également absents : `patient` (c'est l'appelant), `practitioner` (id de membership interne au centre — seul le NOM d'affichage sert), `reminder_sent_at` (plomberie). Le nom du praticien ne retombe JAMAIS sur le `username` (les comptes ombre s'appellent « invite-<téléphone> » — fuite) : nom complet ou `null`.
+- **`POST /patients/me/appointments/{pk}/cancel/`** — annulation d'un RDV **`prevu` UNIQUEMENT** (plus étroit que le staff, qui peut annuler un `arrive` : une fois le patient pointé au guichet, le flux appartient au centre). RDV d'autrui → 404 (référence d'URL, queryset) ; RDV à soi non-`prevu` → 400. Même machine à états, même `_transition`, garde relue sous verrou de ligne. **QUI a annulé n'est PAS enregistré** : le modèle n'a aucun champ pour le porter et les RDV ne sont pas sur la liste des actions auditées (choix initial de cette ADR) — S2 n'ajoute RIEN au modèle ; si l'attribution devient un besoin produit, c'est un chantier dédié (champ + reprise), jamais un effet de bord.
+- **La PRISE de rendez-vous par le patient (self-booking) reste HORS périmètre** : elle exige les règles de périmètre du centre (résolution du praticien, politique de chevauchement, validation guichet, capacité) — un chantier à cadrer en propre, pas un endpoint à improviser.
+- Aucun accès tuteur : rien dans la portée `paiements` ne couvre les RDV, et l'existence même d'un RDV dans un centre est une information de soin.
+- Tests : `tests/test_patient_appointments.py` (cloisonnement inter-patients, transversalité, `reason` absent — assertion négative, annulation `prevu` seul, casquette staff sans effet).

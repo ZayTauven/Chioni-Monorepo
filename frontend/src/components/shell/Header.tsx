@@ -5,8 +5,9 @@
  * Kept from the template: sidebar toggle, ⌘K command search, fullscreen,
  * light/dark quick-toggle, notifications, customizer trigger. Removed: cart,
  * app grid, 8-language menu (French only for now, shikomori in phase 2).
- * Added: active-center selector (multi-center staff) and an auth-wired
- * profile menu (name/phone, space switcher, sign-out).
+ * Added: active-center selector (multi-center staff, centers deduplicated —
+ * multi-roles S2) and an auth-wired profile menu (name/phone, « Mon profil »
+ * page, space switcher, sign-out).
  */
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
@@ -15,7 +16,6 @@ import { useCustomizer } from '../../context/CustomizerContext';
 import { spacesOf, useAuth } from '@/context/AuthContext';
 import { useCenter } from '@/context/CenterContext';
 import { Icon } from '../ui/Icon';
-import { ProfileDialog } from '@/screens/centre/ProfileDialog';
 
 const ICON = {
   burger: (
@@ -90,9 +90,8 @@ export function Header({
 }) {
   const c = useCustomizer();
   const { me, signOut } = useAuth();
-  const { center, memberships, switchCenter } = useCenter();
+  const { center, centers, switchCenter } = useCenter();
   const [full, setFull] = useState(false);
-  const [profileOpen, setProfileOpen] = useState(false);
 
   useEffect(() => {
     const onFs = () => setFull(!!document.fullscreenElement);
@@ -140,8 +139,9 @@ export function Header({
 
       <span className="ax-header__spacer"></span>
 
-      {/* 3 · ACTIVE CENTER (selector when the user works in several centers) */}
-      {memberships.length > 1 ? (
+      {/* 3 · ACTIVE CENTER (selector when the user works in several centers —
+             deduplicated: a center where the user holds two roles shows once) */}
+      {centers.length > 1 ? (
         <Dropdown
           className="ax-lang"
           panelClassName="ax-dropdown"
@@ -159,16 +159,16 @@ export function Header({
           )}
         >
           <p className="ax-dropdown__head">Mes centres</p>
-          {memberships.map((m) => (
+          {centers.map((option) => (
             <button
-              key={m.center.id}
+              key={option.id}
               type="button"
-              className={`ax-dropdown__item${m.center.id === center.id ? ' is-active' : ''}`}
-              aria-pressed={m.center.id === center.id}
-              onClick={() => switchCenter(m.center.id)}
+              className={`ax-dropdown__item${option.id === center.id ? ' is-active' : ''}`}
+              aria-pressed={option.id === center.id}
+              onClick={() => switchCenter(option.id)}
             >
-              <span>{m.center.name}</span>
-              {m.center.id === center.id && ICON.check}
+              <span>{option.name}</span>
+              {option.id === center.id && ICON.check}
             </button>
           ))}
         </Dropdown>
@@ -256,9 +256,9 @@ export function Header({
             <small>{me?.phone}</small>
           </span>
         </div>
-        <button type="button" className="ax-dropdown__item" onClick={() => setProfileOpen(true)}>
+        <Link className="ax-dropdown__item" href="/centre/profil">
           Mon profil
-        </button>
+        </Link>
         {multiSpace && (
           <Link className="ax-dropdown__item" href="/espaces">
             Changer d&rsquo;espace
@@ -273,8 +273,6 @@ export function Header({
           Se déconnecter
         </button>
       </Dropdown>
-
-      {profileOpen && <ProfileDialog onClose={() => setProfileOpen(false)} />}
 
       {/* 8 · CUSTOMIZER TRIGGER */}
       <button

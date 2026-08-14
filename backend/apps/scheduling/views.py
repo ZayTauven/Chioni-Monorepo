@@ -1,15 +1,23 @@
-"""Scheduling views — audience: ANY active staff of the center.
+"""Scheduling views — one section per AUDIENCE (ADR 0008).
 
-The day queue (`?date=` list) serves the secretary at the desk and the
-doctor between two consultations alike: no role gating inside the tenant
-(the ``reason`` field is operational desk data — model docstring).
+STAFF: the day queue (`?date=` list) serves the secretary at the desk and
+the doctor between two consultations alike: no role gating inside the
+tenant (the ``reason`` field is operational desk data — model docstring).
+
+PATIENT (S2): the patient reads their own appointments ACROSS centers
+(``for_patient`` — the read mirror of the medical carnet) and may cancel
+one while it is still ``prevu``. Self-booking stays OUT of scope (S2):
+booking needs the center's perimeter rules (practitioner resolution,
+overlap policy, desk validation) — a chantier of its own, documented in
+the ADR 0013 addendum.
 
 Refus semantics (ADR 0008): anonymous → 401 ; center where the caller
 holds no membership → 404 (invisible, via ``CenterScopedViewMixin``) ;
-appointment of another center → 404 (queryset scoping, deterministic
-IDOR answer) ; patient/practitioner outside the center's perimeter on a
-WRITE → **400 explicite** (the booking form tells the desk what is wrong
-— « n'est pas connu de ce centre » covers foreign and non-existent ids
+appointment of another center — or of another PATIENT via the patient
+routes — → 404 (queryset scoping, deterministic IDOR answer) ;
+patient/practitioner outside the center's perimeter on a WRITE →
+**400 explicite** (the booking form tells the desk what is wrong —
+« n'est pas connu de ce centre » covers foreign and non-existent ids
 alike, nothing is leaked).
 """
 
@@ -24,17 +32,24 @@ from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
 
 from apps.centers.models import StaffMembership
-from apps.common.permissions import CenterScopedViewMixin, IsStaffOfCenter
+from apps.common.permissions import (
+    CenterScopedViewMixin,
+    IsPatientSelf,
+    IsStaffOfCenter,
+    claimed_patient_profile,
+)
 from apps.patients.views import center_patients_qs
 from apps.scheduling.models import Appointment
 from apps.scheduling.serializers import (
     AppointmentCreateSerializer,
+    AppointmentPatientSerializer,
     AppointmentSerializer,
     AppointmentUpdateSerializer,
 )
 from apps.scheduling.services import (
     UNCHANGED,
     cancel_appointment,
+    cancel_appointment_by_patient,
     check_in_appointment,
     create_appointment,
     find_overlapping_ids,
@@ -300,3 +315,68 @@ class AppointmentHonorView(_AppointmentTransitionView):
     """
 
     transition_service = staticmethod(honor_appointment)
+
+
+# ---------------------------------------------------------------------------
+# Audience: the PATIENT themself (S2 — audit C.4)
+# ---------------------------------------------------------------------------
+
+
+class MyAppointmentListView(generics.ListAPIView):
+    """GET /patients/me/appointments/ — my appointments, ACROSS centers.
+
+    The patient already receives J-1 reminder SMS; this list is the app
+    counterpart. Transversal by design (``for_patient`` — like the
+    carnet's reads), sorted newest first, paginated. ``?upcoming=true``
+    keeps only what is still expected to happen (``prevu`` in the
+    future); ``?upcoming=false`` is accepted as a no-op for symmetry;
+    any other value → 400 per field (S1 filter norm).
+
+    Payload: ``AppointmentPatientSerializer`` — NOT the staff payload
+    (no ``reason``, see the serializer docstring).
+    """
+
+    permission_classes = [IsPatientSelf]
+    serializer_class = AppointmentPatientSerializer
+
+    def get_queryset(self):
+        profile = claimed_patient_profile(self.request.user)
+        qs = Appointment.objects.for_patient(profile).select_related(
+            "center", "practitioner__user"
+        )
+        raw_upcoming = self.request.query_params.get("upcoming")
+        if raw_upcoming is not None:
+            if raw_upcoming not in ("true", "false"):
+                raise ValidationError(
+                    {"upcoming": ["Valeur attendue : true ou false."]}
+                )
+            if raw_upcoming == "true":
+                qs = qs.filter(
+                    status=Appointment.Status.SCHEDULED,
+                    scheduled_at__gte=timezone.now(),
+                )
+        return qs.order_by("-scheduled_at", "-id")
+
+
+class MyAppointmentCancelView(generics.GenericAPIView):
+    """POST /patients/me/appointments/{pk}/cancel/ — patient cancellation.
+
+    The appointment id travels in the URL → someone else's appointment is
+    INVISIBLE (404, queryset scoping). An appointment of mine that is no
+    longer ``prevu`` answers 400 (state refusal on a visible object) —
+    the guard lives in ``cancel_appointment_by_patient`` (row-locked).
+    """
+
+    permission_classes = [IsPatientSelf]
+    serializer_class = AppointmentPatientSerializer
+
+    def post(self, request, pk):
+        profile = claimed_patient_profile(request.user)
+        appointment = get_object_or_404(
+            Appointment.objects.for_patient(profile).select_related(
+                "center", "practitioner__user"
+            ),
+            pk=pk,
+        )
+        appointment = cancel_appointment_by_patient(appointment=appointment)
+        return Response(AppointmentPatientSerializer(appointment).data)

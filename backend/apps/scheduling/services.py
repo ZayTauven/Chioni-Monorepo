@@ -236,6 +236,33 @@ def mark_no_show(*, appointment):
 
 
 @transaction.atomic
+def cancel_appointment_by_patient(*, appointment):
+    """S2 — the PATIENT cancels their own appointment: ``prevu`` ONLY.
+
+    Narrower than the staff path on purpose: staff may cancel an
+    ``arrive`` appointment (the waiting room empties for a reason the desk
+    knows), but once the patient has been checked in the flow belongs to
+    the center — a patient cancelling from their phone while sitting in
+    the waiting room would desynchronise the day queue. Same state
+    machine, same ``_transition`` step; the extra « still ``prevu`` »
+    guard is re-read under the ROW LOCK so it holds at commit time (a
+    check-in racing this cancel loses cleanly with a French 400).
+
+    WHO cancelled is deliberately NOT recorded: ``Appointment`` has no
+    such field, appointments are not on the sensitive/audited list
+    (ADR 0013 — no money, no clinical content), and S2 adds nothing to
+    the model. If attribution ever becomes a product need, it is a
+    dedicated chantier (field + backfill), not a side effect here.
+    """
+    locked = Appointment.objects.select_for_update().get(pk=appointment.pk)
+    if locked.status != Status.SCHEDULED:
+        raise ValidationError(
+            "Seul un rendez-vous encore prévu peut être annulé."
+        )
+    return _transition(locked, Status.CANCELLED)
+
+
+@transaction.atomic
 def honor_appointment_from_encounter(appointment):
     """Auto-honor when an encounter is created FROM this appointment.
 

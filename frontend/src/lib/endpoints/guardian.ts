@@ -7,6 +7,7 @@
 import { ApiError, apiFetch } from '../api';
 import type {
   GuardianLinkGuardian,
+  GuardianLinkHistory,
   GuardianProfile,
   Paginated,
   PaymentIntent,
@@ -31,6 +32,15 @@ export function getGuardianProfile(): Promise<GuardianProfile> {
 
 export function createGuardianProfile(payload: GuardianProfilePayload): Promise<GuardianProfile> {
   return apiFetch('/guardian/profile/', { method: 'POST', body: payload });
+}
+
+/**
+ * S2 — country of residence and preferred currency only. The currency is a
+ * DISPLAY preference (quotes stay structurally EUR→KMF); identity goes
+ * through PATCH /auth/me/. 400 per field on a bad ISO-2 code.
+ */
+export function updateGuardianProfile(payload: GuardianProfilePayload): Promise<GuardianProfile> {
+  return apiFetch('/guardian/profile/', { method: 'PATCH', body: payload });
 }
 
 /* ── protégés ── */
@@ -74,6 +84,15 @@ export function declineInvitation(linkId: number): Promise<GuardianLinkGuardian>
 
 export function revokeLink(linkId: number): Promise<GuardianLinkGuardian> {
   return apiFetch(`/guardian/links/${linkId}/revoke/`, { method: 'POST' });
+}
+
+/**
+ * S2 — my link HISTORY, every status, `-created_at`. The added value: a link
+ * in `attente_confirmation_titulaire` (invisible in /proteges/ during the
+ * claimant-confirmation gate) shows up here. No phone, no scopes.
+ */
+export function listGuardianLinks(page = 1): Promise<Paginated<GuardianLinkHistory>> {
+  return apiFetch(`/guardian/links/?page=${page}`);
 }
 
 /* ── payment requests ── */

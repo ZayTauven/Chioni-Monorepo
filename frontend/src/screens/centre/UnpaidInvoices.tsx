@@ -25,8 +25,8 @@ import {
 } from './shared';
 
 export function UnpaidInvoices() {
-  const { centerId, role } = useCenter();
-  const billing = hasRole(role, BILLING_ROLES);
+  const { centerId, roles } = useCenter();
+  const billing = hasRole(roles, BILLING_ROLES);
   const [ordering, setOrdering] = useState<UnpaidOrdering>('-balance');
   const [page, setPage] = useState(1);
 

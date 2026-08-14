@@ -366,6 +366,34 @@ def create_guardian_profile(*, user, **fields):
 
 
 @transaction.atomic
+def update_guardian_profile(*, profile, **fields):
+    """S2 — the guardian updates their own profile (through ``save()``).
+
+    Field-by-field decision (documented — audit C.4):
+
+    - ``country_of_residence`` : modifiable (people move; it is display/
+      context data, consumed by nothing structural).
+    - ``preferred_currency`` : modifiable — it is NOT consumed by the
+      trustbridge quotes (devis are structurally EUR→KMF, rate and
+      amounts frozen on the PaymentIntent at pay time, ADR 0009), so
+      changing it can never rewrite a past or in-flight payment. It is a
+      display preference only; if multi-currency quotes ever exist, the
+      quote must keep freezing its own currency, never read this field
+      live.
+    - identity (first/last name) : lives on ``User`` → already covered by
+      ``PATCH /auth/me/`` — not duplicated here.
+
+    Deliberately NOT audited: same class as ``create_guardian_profile``
+    (neither money, nor medical, nor consent, nor role — outside the
+    sensitive-action catalogue).
+    """
+    for name, value in fields.items():
+        setattr(profile, name, value)
+    profile.save()
+    return profile
+
+
+@transaction.atomic
 def invite_guardian(*, actor, patient, phone, relationship, initiated_by):
     """Doors B and C — invite a guardian by phone onto ``patient``.
 
@@ -506,6 +534,135 @@ def revoke_clinical_consent(*, patient_user, link):
         actor=patient_user, action=AuditAction.CONSENT_REVOKED, target=consent,
         consent_id=consent.pk, link_id=link.pk, patient_id=link.patient_id,
         scope=str(Consent.Scope.CLINICAL_DETAIL),
+    )
+    return consent
+
+
+# ---------------------------------------------------------------------------
+# Consents collected AT THE DESK — UNCLAIMED patients only (S2, ADR 0004)
+# ---------------------------------------------------------------------------
+#
+# Audit C.4: an unclaimed patient could never grant `detail_clinique` (the
+# consent endpoints require IsPatientSelf) and the center had no way to
+# record a consent collected at the desk (paper form / orally). These two
+# services close that hole under STRICT conditions:
+#
+# - UNCLAIMED patients ONLY — a claimed patient manages their own consents
+#   from their space, the desk is refused with an explicit 400;
+# - ACTIVE link of THIS patient only (single refusal message covering the
+#   foreign, revoked and non-existent cases alike — S1 body-ref norm);
+# - the collection trace (WHO at the desk, HOW) lives on the Consent row
+#   (`collected_by` / `collected_via`) and the audit entry;
+# - REVERSIBILITY is inherited, not added: the claim gate (OTP-1) suspends
+#   every surviving link and revokes its active consents — a desk-collected
+#   consent dies at the exact moment the patient takes possession of their
+#   profile, like any other consent (verrouillé par test).
+
+
+#: Single 400 for every way a body-referenced link can be wrong for this
+#: patient (foreign patient, revoked, pending, non-existent) — S1 norm:
+#: byte-identical, nothing leaks.
+_DESK_LINK_REFUSAL = "Ce lien de tutelle n'est pas un lien actif de ce patient."
+
+#: A claimed patient owns their consents — the desk is out (both grant
+#: and revoke answer this exact 400).
+_DESK_CLAIMED_REFUSAL = (
+    "Ce patient gère lui-même ses consentements depuis son espace."
+)
+
+
+def resolve_desk_consent_link(*, patient, link_pk):
+    """Resolve a body-referenced link for the desk-consent endpoints.
+
+    ACTIVE links of ``patient`` only; anything else (foreign, revoked,
+    pending, non-existent) answers the SAME explicit 400 (S1 norm for
+    body references — deterministic, nothing to probe).
+    """
+    link = GuardianLink.objects.filter(
+        patient=patient, status=GuardianLink.Status.ACTIVE, pk=link_pk
+    ).first()
+    if link is None:
+        raise ValidationError(_DESK_LINK_REFUSAL)
+    return link
+
+
+@transaction.atomic
+def grant_clinical_consent_at_center(*, actor, center, patient, link,
+                                     collected_via):
+    """Record a clinical consent collected at the desk (porte C).
+
+    The patient — unclaimed, often without a smartphone (Mariama) —
+    expressed their consent at the desk, on paper or orally; the center
+    records it. Same ``Consent`` machinery as the in-app grant
+    (``active_scopes`` stays THE source of truth), plus the collection
+    trace. Guards are re-checked here for direct service callers; the
+    view resolves patient (URL → 404) and link (body → 400) upstream.
+    """
+    # TOCTOU close (revue adversariale S2): the view resolves ``patient``
+    # and ``link`` BEFORE this transaction, so a claim (OTP-1) racing this
+    # call would leave the in-memory instances stale — ``patient.is_claimed``
+    # and ``link.status`` would read the pre-claim values and let a clinical
+    # consent slip PAST the claim gate, resurrecting the moment the titulaire
+    # confirms the link. Re-read BOTH rows under ``select_for_update`` so the
+    # desk grant and the claim serialise on the patient row (the claim updates
+    # it before suspending links): a claim that commits first is SEEN
+    # (refused), a grant that commits first is caught by the claim's
+    # consent-revoking suspension. Same lock order (patient → link) as
+    # ``claim_profile`` — no deadlock.
+    patient = PatientProfile.objects.select_for_update().get(pk=patient.pk)
+    link = GuardianLink.objects.select_for_update().get(pk=link.pk)
+    if patient.is_claimed:
+        raise ValidationError(_DESK_CLAIMED_REFUSAL)
+    if link.patient_id != patient.pk or link.status != GuardianLink.Status.ACTIVE:
+        raise ValidationError(_DESK_LINK_REFUSAL)
+    if collected_via not in Consent.CollectedVia.values:
+        raise ValidationError("Mode de recueil invalide : papier ou oral.")
+    if Consent.objects.allows(link, Consent.Scope.CLINICAL_DETAIL):
+        raise ValidationError("Ce consentement est déjà accordé.")
+    consent = Consent.objects.create(
+        patient=link.patient,
+        guardian_link=link,
+        scope=Consent.Scope.CLINICAL_DETAIL,
+        collected_by=actor,
+        collected_via=collected_via,
+    )
+    audit(
+        actor=actor, action=AuditAction.CONSENT_GRANTED_BY_CENTER,
+        target=consent, consent_id=consent.pk, link_id=link.pk,
+        patient_id=link.patient_id, guardian_id=link.guardian_id,
+        center_id=center.pk, scope=str(Consent.Scope.CLINICAL_DETAIL),
+        collected_via=str(collected_via),
+    )
+    return consent
+
+
+@transaction.atomic
+def revoke_clinical_consent_at_center(*, actor, center, patient, link):
+    """Withdraw a clinical consent from the desk (porte C) — the patient
+    changed their mind at the counter. Unclaimed patients only, same
+    strict link resolution as the grant — including the row-locked re-read
+    that closes the claim-vs-desk race (symmetry with the grant; here a
+    stale read is harmless — revoking only ever REMOVES a scope — but the
+    refusal semantics must stay honest against a concurrent claim)."""
+    patient = PatientProfile.objects.select_for_update().get(pk=patient.pk)
+    link = GuardianLink.objects.select_for_update().get(pk=link.pk)
+    if patient.is_claimed:
+        raise ValidationError(_DESK_CLAIMED_REFUSAL)
+    if link.patient_id != patient.pk or link.status != GuardianLink.Status.ACTIVE:
+        raise ValidationError(_DESK_LINK_REFUSAL)
+    consent = (
+        Consent.objects.active()
+        .filter(guardian_link=link, scope=Consent.Scope.CLINICAL_DETAIL)
+        .first()
+    )
+    if consent is None:
+        raise ValidationError("Aucun consentement clinique actif sur ce lien.")
+    consent.revoke()
+    audit(
+        actor=actor, action=AuditAction.CONSENT_REVOKED_BY_CENTER,
+        target=consent, consent_id=consent.pk, link_id=link.pk,
+        patient_id=link.patient_id, guardian_id=link.guardian_id,
+        center_id=center.pk, scope=str(Consent.Scope.CLINICAL_DETAIL),
     )
     return consent
 

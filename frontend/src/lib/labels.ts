@@ -11,7 +11,9 @@ import type {
   CashMethod,
   CenterType,
   ClaimStatus,
+  ConsentCollectedVia,
   ConsentScope,
+  Currency,
   DisputeStatus,
   EncounterStatus,
   GenericCategory,
@@ -130,6 +132,17 @@ export const APPOINTMENT_STATUS_LABELS: Record<AppointmentStatus, string> = {
   annule: 'Annulé',
 };
 
+/** Appointment statuses as the PATIENT reads them — plain words, no desk
+    jargon (« honoré » stays a staff word), gender-neutral phrasing (« Vous
+    êtes arrivé » would misgender half the readers). */
+export const APPOINTMENT_STATUS_PATIENT: Record<AppointmentStatus, string> = {
+  prevu: 'Prévu',
+  arrive: 'Vous êtes sur place',
+  honore: 'Passé',
+  manque: 'Manqué',
+  annule: 'Annulé',
+};
+
 export const CASH_METHOD_LABELS: Record<CashMethod, string> = {
   especes: 'Espèces',
   mobile_money: 'Mobile money',
@@ -207,6 +220,29 @@ export const CONSENT_SCOPE_LABELS: Record<ConsentScope, string> = {
   paiements: 'Paiements',
   detail_clinique: 'Détail des soins',
 };
+
+/** How a desk-collected clinical consent was gathered (S2). */
+export const CONSENT_COLLECTED_VIA_LABELS: Record<ConsentCollectedVia, string> = {
+  papier: 'Formulaire papier signé',
+  oral: 'Accord oral',
+};
+
+/** Currencies as the guardian reads them (profile preference). */
+export const CURRENCY_LABELS: Record<Currency, string> = {
+  EUR: 'Euro (€)',
+  KMF: 'Franc comorien (KMF)',
+};
+
+/**
+ * ISO-3166 alpha-2 codes offered in the guardian's country-of-residence
+ * select — the main Comorian-diaspora countries first, then the region.
+ * Display names come from countryName() (Intl), so only the CODES live here;
+ * the backend accepts any valid ISO-2 code.
+ */
+export const RESIDENCE_COUNTRY_CODES: string[] = [
+  'FR', 'BE', 'CH', 'DE', 'GB', 'IT', 'ES', 'NL', 'LU', 'CA', 'US',
+  'AE', 'SA', 'MG', 'MU', 'TZ', 'KE', 'ZA', 'KM',
+];
 
 export const CLAIM_STATUS_LABELS: Record<ClaimStatus, string> = {
   non_revendique: 'Dossier géré au guichet',
@@ -314,6 +350,11 @@ const WEEKDAY_DATE_FORMAT = new Intl.DateTimeFormat('fr-FR', {
 });
 const SHORT_DATE_FORMAT = new Intl.DateTimeFormat('fr-FR', { day: '2-digit', month: '2-digit' });
 
+/** 20 → "20 min" (appointment durations). */
+export function formatMinutes(minutes: number): string {
+  return `${minutes} min`;
+}
+
 /** ISO datetime → "14:05" (the agenda's column). */
 export function formatTime(iso: string): string {
   const date = new Date(iso);
@@ -326,6 +367,23 @@ export function formatWeekdayDate(isoDate: string): string {
   const date = new Date(`${isoDate}T12:00:00`);
   if (Number.isNaN(date.getTime())) return isoDate;
   return WEEKDAY_DATE_FORMAT.format(date);
+}
+
+const WEEKDAY_DATE_TIME_FORMAT = new Intl.DateTimeFormat('fr-FR', {
+  weekday: 'long',
+  day: 'numeric',
+  month: 'long',
+  year: 'numeric',
+  hour: '2-digit',
+  minute: '2-digit',
+});
+
+/** ISO datetime → "jeudi 13 août 2026, 09:30" (patient-facing appointments —
+    the weekday is what makes a date graspable at a glance). */
+export function formatWeekdayDateTime(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return iso;
+  return WEEKDAY_DATE_TIME_FORMAT.format(date);
 }
 
 /** "2026-08-13" → "13/08" (chart axis categories). */

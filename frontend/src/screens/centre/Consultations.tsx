@@ -75,9 +75,18 @@ async function fetchAllTariffs(centerId: number): Promise<TariffItem[]> {
 export function CreateEncounterModal({
   onClose,
   onCreated,
+  lockedPatient,
+  appointment,
 }: {
   onClose: () => void;
   onCreated: (id: number) => void;
+  /**
+   * Ouverture depuis la file du jour (S1 reliquat) : le patient du
+   * rendez-vous est VERROUILLÉ (pas de recherche, pas de « Changer »).
+   */
+  lockedPatient?: { id: number; name: string };
+  /** Id du rendez-vous lié — le backend le passe à `honore` automatiquement. */
+  appointment?: number;
 }) {
   const { centerId } = useCenter();
   const [patientQ, setPatientQ] = useState('');
@@ -103,17 +112,20 @@ export function CreateEncounterModal({
     .filter((t) => selectedActs.includes(t.id))
     .reduce((sum, t) => sum + Number.parseFloat(t.price_kmf), 0);
 
+  const patientId = lockedPatient?.id ?? patient?.id ?? null;
+
   const submit = async () => {
-    if (!patient) return;
+    if (patientId === null) return;
     setSaving(true);
     setError(null);
     try {
       const encounter = await createEncounter(centerId, {
-        patient: patient.id,
+        patient: patientId,
         reason: reason.trim(),
         ...(diagnosis.trim() ? { diagnosis: diagnosis.trim() } : {}),
         ...(occurredAt ? { occurred_at: new Date(occurredAt).toISOString() } : {}),
         ...(selectedActs.length > 0 ? { tariff_items: selectedActs } : {}),
+        ...(appointment !== undefined ? { appointment } : {}),
       });
       onCreated(encounter.id);
     } catch (err) {
@@ -136,7 +148,7 @@ export function CreateEncounterModal({
             type="submit"
             form="encounter-create-form"
             className="ax-btn ax-btn--primary"
-            disabled={saving || !patient || !reason.trim()}
+            disabled={saving || patientId === null || !reason.trim()}
           >
             {saving ? 'Enregistrement…' : 'Enregistrer la consultation'}
           </button>
@@ -153,12 +165,22 @@ export function CreateEncounterModal({
       >
         {error && error.messages.length > 0 && <ErrorAlert error={error} />}
 
-        {/* Patient picker */}
+        {/* Patient picker (verrouillé quand on vient d'un rendez-vous) */}
         <div className="ax-field">
           <label className="ax-label" htmlFor="ne-patient">
             Patient <span className="ax-field__required" aria-hidden="true">*</span>
           </label>
-          {patient ? (
+          {lockedPatient ? (
+            <div className="ax-cluster" style={{ gap: 'var(--ax-space-3)', flexWrap: 'nowrap', alignItems: 'center' }}>
+              <AvatarChip name={lockedPatient.name} seed={lockedPatient.id} />
+              <span style={{ fontWeight: 500, color: 'var(--ax-text-strong)', flex: '1 1 auto' }}>
+                {lockedPatient.name}
+              </span>
+              <span style={{ fontSize: 'var(--ax-text-xs)', color: 'var(--ax-text-subtle)' }}>
+                Patient du rendez-vous
+              </span>
+            </div>
+          ) : patient ? (
             <div className="ax-cluster" style={{ gap: 'var(--ax-space-3)', flexWrap: 'nowrap', alignItems: 'center' }}>
               <AvatarChip name={`${patient.first_name} ${patient.last_name}`} seed={patient.id} />
               <span style={{ fontWeight: 500, color: 'var(--ax-text-strong)', flex: '1 1 auto' }}>
@@ -310,11 +332,11 @@ export function CreateEncounterModal({
 /* ── screen ── */
 
 export function Consultations() {
-  const { centerId, role } = useCenter();
+  const { centerId, roles } = useCenter();
   const router = useRouter();
   const [page, setPage] = useState(1);
   const [createOpen, setCreateOpen] = useState(false);
-  const clinical = hasRole(role, CLINICAL_ROLES);
+  const clinical = hasRole(roles, CLINICAL_ROLES);
   /** Filtres serveur S1 : jour local (`?date=`) et praticien (`?practitioner=`). */
   const [dateFilter, setDateFilter] = useState('');
   const [practitionerFilter, setPractitionerFilter] = useState<number | ''>('');

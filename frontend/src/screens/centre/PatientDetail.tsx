@@ -31,6 +31,7 @@ import {
   formatDateTime,
 } from '@/lib/labels';
 import type { Patient, Sex } from '@/lib/types';
+import { DeskConsentsCard } from './DeskConsents';
 import {
   AvatarChip,
   BILLING_ROLES,
@@ -312,8 +313,8 @@ function MergeModal({
 /* ── screen ── */
 
 export function PatientDetail({ patientId }: { patientId: number }) {
-  const { centerId, role } = useCenter();
-  const billing = hasRole(role, BILLING_ROLES);
+  const { centerId, roles } = useCenter();
+  const billing = hasRole(roles, BILLING_ROLES);
   const [editing, setEditing] = useState(false);
   const [mergeOpen, setMergeOpen] = useState(false);
   const [patched, setPatched] = useState<Patient | null>(null);
@@ -486,6 +487,10 @@ export function PatientDetail({ patientId }: { patientId: number }) {
             )}
           </div>
         </section>
+
+        {/* Consentement clinique recueilli au guichet (S2) — endpoints BILLING
+            seuls : la carte n'est jamais montée pour les autres rôles. */}
+        {billing && <DeskConsentsCard patient={patient} />}
       </div>
 
       {mergeOpen && (

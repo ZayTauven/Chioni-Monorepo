@@ -301,8 +301,9 @@ function CenterForm({
 }
 
 export function Settings() {
-  const { centerId, role, memberships, switchCenter } = useCenter();
-  const isDirector = role === 'directeur';
+  const { centerId, roles, centers, switchCenter } = useCenter();
+  // Multi-roles S2 : un directeur-médecin garde l'édition du centre.
+  const isDirector = roles.includes('directeur');
   const [editing, setEditing] = useState(false);
   const [patched, setPatched] = useState<HealthCenter | null>(null);
 
@@ -390,7 +391,7 @@ export function Settings() {
             </div>
           </section>
 
-          {memberships.length > 1 && (
+          {centers.length > 1 && (
             <section className="ax-card" role="region" aria-label="Changer de centre">
               <div className="ax-card__header">
                 <div className="ax-card__titles">
@@ -400,23 +401,25 @@ export function Settings() {
               </div>
               <div className="ax-card__body" style={{ paddingTop: 0 }}>
                 <ul className="ax-list ax-list--compact">
-                  {memberships.map((m) => (
-                    <li key={m.id} className="ax-list__row">
+                  {/* Centres dédupliqués (multi-roles S2) — un centre où l'on
+                      cumule deux rôles n'apparaît qu'une fois. */}
+                  {centers.map((c) => (
+                    <li key={c.id} className="ax-list__row">
                       <span className="ax-list__content">
-                        <span className="ax-list__title" style={{ fontWeight: 'var(--ax-weight-medium)' }}>{m.center.name}</span>
+                        <span className="ax-list__title" style={{ fontWeight: 'var(--ax-weight-medium)' }}>{c.name}</span>
                         <span style={{ display: 'block', fontSize: 'var(--ax-text-xs)', color: 'var(--ax-text-subtle)' }}>
-                          {m.center.city} · {CENTER_TYPE_LABELS[m.center.type]}
+                          {c.city} · {CENTER_TYPE_LABELS[c.type]}
                         </span>
                       </span>
                       <span className="ax-list__trailing">
-                        {m.center.id === centerId ? (
+                        {c.id === centerId ? (
                           <StatusBadge tone="accent" label="Centre actuel" />
                         ) : (
                           <button
                             type="button"
                             className="ax-btn ax-btn--secondary ax-btn--sm"
                             onClick={() => {
-                              switchCenter(m.center.id);
+                              switchCenter(c.id);
                               setPatched(null);
                               setEditing(false);
                             }}

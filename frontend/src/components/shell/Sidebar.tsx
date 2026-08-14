@@ -40,10 +40,12 @@ const NAV_ROLE_GATES: Record<string, StaffRole[]> = {
   'centre.impayes': BILLING_ROLES,
 };
 
-/** Shared with the command palette — one source of truth for nav visibility. */
-export function navNodeVisible(nodeId: string, role: StaffRole): boolean {
+/** Shared with the command palette — one source of truth for nav visibility.
+ *  Takes ALL the member's roles in the active center (multi-roles S2):
+ *  cumulating hats only ever widens what the nav shows. */
+export function navNodeVisible(nodeId: string, roles: readonly StaffRole[]): boolean {
   const allowed = NAV_ROLE_GATES[nodeId];
-  return !allowed || hasRole(role, allowed);
+  return !allowed || hasRole(roles, allowed);
 }
 
 function Badge({ badge }: { badge: NavNode['badge'] }) {
@@ -237,7 +239,7 @@ function CenterIdentity() {
 
 export function Sidebar() {
   const activeSlug = slugFromPath(usePathname() || '/');
-  const { role } = useCenter();
+  const { roles } = useCenter();
   const [filter, setFilter] = useState('');
 
   return (
@@ -315,7 +317,7 @@ export function Sidebar() {
               {sectionLabel(section)}
             </p>
             {groupsInSection(section)
-              .filter((g) => g.inMenu && navNodeVisible(g.id, role))
+              .filter((g) => g.inMenu && navNodeVisible(g.id, roles))
               .map((g) =>
                 manifest.childrenOf(g.id).filter((c) => c.inMenu).length > 0 ? (
                   <Group

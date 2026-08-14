@@ -18,15 +18,16 @@ interface Row {
   crumb: string;
 }
 
-function buildRows(role: StaffRole): Row[] {
+function buildRows(roles: readonly StaffRole[]): Row[] {
   const rows: Row[] = [];
   for (const n of manifest.nodes) {
     if (n.alias) continue; // canonical entries only
     // Skip pure group containers (nodes whose children carry the real pages);
     // Chioni's flat manifest has none, so every top-level node is a page.
     if (manifest.childrenOf(n.id).length > 0) continue;
-    // Role-gated entries (S1) follow the sidebar's visibility rule.
-    if (!navNodeVisible(n.id, role)) continue;
+    // Role-gated entries (S1) follow the sidebar's visibility rule
+    // (multi-roles S2: every hat counts, gating only ever widens).
+    if (!navNodeVisible(n.id, roles)) continue;
     const trail = manifest.trail(n).slice(0, -1).map((t) => t.title);
     rows.push({ node: n, crumb: trail.join(' › ') });
   }
@@ -35,12 +36,12 @@ function buildRows(role: StaffRole): Row[] {
 
 export function CommandPalette({ open, onClose }: { open: boolean; onClose: () => void }) {
   const router = useRouter();
-  const { role } = useCenter();
+  const { roles } = useCenter();
   const [q, setQ] = useState('');
   const [active, setActive] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
-  const allRows = useMemo(() => buildRows(role), [role]);
+  const allRows = useMemo(() => buildRows(roles), [roles]);
   useFocusTrap(panelRef, open);
 
   const results = useMemo(() => {

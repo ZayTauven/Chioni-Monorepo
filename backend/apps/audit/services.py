@@ -58,6 +58,11 @@ class AuditAction:
     # Consents
     CONSENT_GRANTED = "consent.granted"
     CONSENT_REVOKED = "consent.revoked"
+    # S2 (ADR 0004 addendum) — clinical consent collected AT THE DESK for
+    # an UNCLAIMED patient (paper form or orally, porte C). Payload:
+    # references + the collection mode code only — never any content.
+    CONSENT_GRANTED_BY_CENTER = "consent.granted_by_center"
+    CONSENT_REVOKED_BY_CENTER = "consent.revoked_by_center"
 
     # Center staff & money-adjacent configuration
     STAFF_CREATED = "staff.membership_created"

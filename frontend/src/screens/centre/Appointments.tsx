@@ -22,6 +22,7 @@ import {
   cancelAppointment,
   checkInAppointment,
   createAppointment,
+  getAppointment,
   honorAppointment,
   listAppointments,
   listPatients,
@@ -49,14 +50,17 @@ import {
   APPOINTMENT_TONES,
   AvatarChip,
   CardSkeleton,
+  CLINICAL_ROLES,
   EmptyState,
   ErrorAlert,
   FieldError,
+  hasRole,
   IconCheck,
   IconClose,
   IconEdit,
   IconPlus,
   IconSearch,
+  IconStethoscope,
   Modal,
   Pagination,
   StatusBadge,
@@ -81,6 +85,17 @@ const AppointmentsCalendar = dynamic(() => import('./AppointmentsCalendar'), {
     </div>
   ),
 });
+
+/*
+ * Modal « Nouvelle consultation » (S1 reliquat : créer la consultation depuis
+ * un RDV arrivé) — chargé à la demande pour la même raison que la grille :
+ * la file du jour, outil quotidien, ne paie pas le poids du module
+ * Consultations tant que personne ne clique.
+ */
+const CreateEncounterModal = dynamic(
+  () => import('./Consultations').then((m) => m.CreateEncounterModal),
+  { ssr: false },
+);
 
 /* ── practitioner directory (S1 — GET /practitioners/, every active staff) ── */
 
@@ -579,7 +594,9 @@ function ConfirmRowActionModal({
 /* ── screen ── */
 
 export function Appointments() {
-  const { centerId } = useCenter();
+  const { centerId, roles } = useCenter();
+  /** Rôles cliniques : peuvent créer la consultation depuis un RDV arrivé. */
+  const clinical = hasRole(roles, CLINICAL_ROLES);
   const [date, setDate] = useState(todayIsoDate());
   /** « File du jour » (pointage, vue par défaut) ou « Calendrier » (grille
    *  mois). L'état de date est PARTAGÉ : choisir un jour dans la grille
@@ -595,6 +612,10 @@ export function Appointments() {
   const [calReload, setCalReload] = useState(0);
   const [editing, setEditing] = useState<Appointment | null>(null);
   const [confirming, setConfirming] = useState<{ appointment: Appointment; action: 'no-show' | 'cancel' } | null>(null);
+  /** RDV « arrivé » dont on crée la consultation (S1 reliquat, modal). */
+  const [encounterFor, setEncounterFor] = useState<Appointment | null>(null);
+  /** Consultation créée depuis la file : lien d'ouverture + ligne rafraîchie. */
+  const [encounterDone, setEncounterDone] = useState<{ id: number; patientName: string } | null>(null);
   const [warning, setWarning] = useState<string | null>(null);
   const [actionError, setActionError] = useState<ApiError | null>(null);
   const [busyRow, setBusyRow] = useState<number | null>(null);
@@ -626,6 +647,29 @@ export function Appointments() {
 
   const rows = (list.data?.results ?? []).map((a) => freshRows[a.id] ?? a);
   const isToday = date === todayIsoDate();
+
+  /** Consultation créée depuis la file (S1 reliquat) : le backend a passé le
+   *  RDV à « honoré » — on rafraîchit la ligne pour le montrer honnêtement. */
+  const onEncounterCreated = async (encounterId: number) => {
+    const appt = encounterFor;
+    setEncounterFor(null);
+    if (!appt) return;
+    setEncounterDone({
+      id: encounterId,
+      patientName: appt.patient_name || `Patient n° ${appt.patient}`,
+    });
+    if (statusFilter) {
+      // La ligne peut sortir du filtre courant — re-fetch honnête.
+      list.reload();
+      return;
+    }
+    try {
+      const fresh = await getAppointment(centerId, appt.id);
+      setFreshRows((m) => ({ ...m, [appt.id]: fresh }));
+    } catch {
+      list.reload();
+    }
+  };
 
   const runAction = async (appointment: Appointment, action: RowAction) => {
     setBusyRow(appointment.id);
@@ -791,6 +835,29 @@ export function Appointments() {
         </div>
       )}
 
+      {encounterDone && (
+        <div className="ax-alert ax-alert--success" role="status" style={{ marginBottom: 'var(--ax-space-5)' }}>
+          <div className="ax-alert__content">
+            <p className="ax-alert__message">
+              Consultation de {encounterDone.patientName} enregistrée — le rendez-vous est honoré.
+            </p>
+          </div>
+          <div className="ax-alert__actions" style={{ display: 'flex', gap: 'var(--ax-space-2)', alignItems: 'center' }}>
+            <Link href={`/centre/consultations/${encounterDone.id}`} className="ax-btn ax-btn--secondary ax-btn--sm">
+              <span className="ax-btn__label">Ouvrir la consultation</span>
+            </Link>
+            <button
+              type="button"
+              className="ax-btn ax-btn--ghost ax-btn--sm ax-btn--icon"
+              onClick={() => setEncounterDone(null)}
+              aria-label="Fermer le message"
+            >
+              <IconClose />
+            </button>
+          </div>
+        </div>
+      )}
+
       {actionError && (
         <div style={{ marginBottom: 'var(--ax-space-5)' }}>
           <ErrorAlert error={actionError} />
@@ -881,11 +948,35 @@ export function Appointments() {
                         </td>
                         <td className="ax-table__td" style={{ textAlign: 'end', whiteSpace: 'nowrap' }}>
                           <div className="ax-cluster" style={{ gap: 'var(--ax-space-1)', justifyContent: 'flex-end', flexWrap: 'nowrap' }}>
+                            {/* S1 reliquat : le soignant ouvre la consultation
+                                depuis un RDV arrivé — patient verrouillé, le
+                                backend marquera le RDV honoré. */}
+                            {clinical && a.status === 'arrive' && (
+                              <button
+                                type="button"
+                                className="ax-btn ax-btn--primary ax-btn--sm"
+                                onClick={() => setEncounterFor(a)}
+                                disabled={busyRow === a.id}
+                                aria-label={`Créer la consultation pour ${a.patient_name || `Patient n° ${a.patient}`}`}
+                              >
+                                <IconStethoscope />
+                                <span className="ax-btn__label">Consultation</span>
+                              </button>
+                            )}
                             {ROW_ACTIONS[a.status].map((action) => (
                               <button
                                 key={action}
                                 type="button"
-                                className={`ax-btn ax-btn--sm ${action === 'check-in' || action === 'honor' ? 'ax-btn--primary' : 'ax-btn--ghost'}`}
+                                /* Une seule action primaire par ligne : quand le
+                                   bouton « Consultation » est affiché (soignant,
+                                   RDV arrivé), « Honoré » passe en secondaire. */
+                                className={`ax-btn ax-btn--sm ${
+                                  action === 'check-in' || action === 'honor'
+                                    ? action === 'honor' && clinical && a.status === 'arrive'
+                                      ? 'ax-btn--secondary'
+                                      : 'ax-btn--primary'
+                                    : 'ax-btn--ghost'
+                                }`}
                                 onClick={() =>
                                   CONFIRMED_ACTIONS.includes(action)
                                     ? setConfirming({ appointment: a, action: action as 'no-show' | 'cancel' })
@@ -956,6 +1047,17 @@ export function Appointments() {
             setConfirming(null);
             void runAction(c.appointment, c.action);
           }}
+        />
+      )}
+      {encounterFor && (
+        <CreateEncounterModal
+          lockedPatient={{
+            id: encounterFor.patient,
+            name: encounterFor.patient_name || `Patient n° ${encounterFor.patient}`,
+          }}
+          appointment={encounterFor.id}
+          onClose={() => setEncounterFor(null)}
+          onCreated={(id) => void onEncounterCreated(id)}
         />
       )}
     </>

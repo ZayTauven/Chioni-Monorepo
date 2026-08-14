@@ -81,6 +81,49 @@ class GuardianLinkStaffRoutingSerializer(serializers.ModelSerializer):
         return f"Tuteur n°{link.guardian_id}"
 
 
+class CenterClinicalConsentSerializer(serializers.Serializer):
+    """POST body of the desk-consent endpoint (S2, ADR 0004 addendum).
+
+    ``guardian_link`` is a plain id: the VIEW resolves it among the
+    ACTIVE links of the patient — a foreign/revoked/non-existent id
+    answers one explicit 400 (S1 body-ref norm). ``collected_via`` traces
+    HOW the consent was collected at the desk.
+    """
+
+    guardian_link = serializers.IntegerField(
+        error_messages={"required": "Le lien de tutelle est requis."}
+    )
+    collected_via = serializers.ChoiceField(
+        choices=Consent.CollectedVia.choices,
+        error_messages={
+            "required": "Le mode de recueil est requis (papier ou oral).",
+            "invalid_choice": "Mode de recueil invalide : papier ou oral.",
+        },
+    )
+
+
+class CenterClinicalConsentRevokeSerializer(serializers.Serializer):
+    """DELETE body of the desk-consent endpoint — the link to withdraw from."""
+
+    guardian_link = serializers.IntegerField(
+        error_messages={"required": "Le lien de tutelle est requis."}
+    )
+
+
+class CenterClinicalConsentReceiptSerializer(serializers.ModelSerializer):
+    """The desk's acknowledgement of the consent it just recorded/withdrew.
+
+    Strict action receipt: link id, scope, collection trace, timestamps.
+    No guardian identity, no patient identity — the desk already resolved
+    both, nothing new must transit here.
+    """
+
+    class Meta:
+        model = Consent
+        fields = ["guardian_link", "scope", "collected_via", "granted_at", "revoked_at"]
+        read_only_fields = fields
+
+
 class PatientStaffCreateSerializer(serializers.ModelSerializer):
     """Desk creation (porte C) + optional guardian attachment by phone.
 
@@ -167,12 +210,27 @@ class GuardianInviteSerializer(serializers.Serializer):
 
 
 class GuardianProfileSerializer(serializers.ModelSerializer):
-    """The guardian about themself."""
+    """The guardian about themself (POST create and PATCH update — S2).
+
+    Both writable fields are safe to edit: residence is display/context
+    data, and ``preferred_currency`` is NOT consumed by the trustbridge
+    quotes (devis are structurally EUR→KMF, frozen on the intent — see
+    ``services.update_guardian_profile``). Identity lives on ``User``
+    (``PATCH /auth/me/``), never here.
+    """
 
     class Meta:
         model = GuardianProfile
         fields = ["id", "country_of_residence", "preferred_currency", "created_at"]
         read_only_fields = ["id", "created_at"]
+
+    def validate_country_of_residence(self, value):
+        value = value.strip().upper()
+        if len(value) != 2 or not (value.isascii() and value.isalpha()):
+            raise serializers.ValidationError(
+                "Code pays invalide : format ISO à 2 lettres (ex. FR)."
+            )
+        return value
 
 
 class PatientGuardianSerializer(serializers.ModelSerializer):
@@ -201,6 +259,32 @@ class GuardianLinkGuardianSerializer(serializers.ModelSerializer):
             "initiated_by", "accepted_at",
         ]
         read_only_fields = fields
+
+
+class GuardianLinkHistorySerializer(serializers.ModelSerializer):
+    """S2 — one row of the guardian's link HISTORY (`GET /guardian/links/`).
+
+    ALL statuses appear — the point is `attente_confirmation_titulaire`:
+    before S2 a protégé whose profile got claimed simply VANISHED from
+    `/guardian/proteges/` with no explanation; this list lets the UI say
+    « en attente de confirmation de votre proche ».
+
+    Administrative strict minimum, tighter than the protégés list: a
+    display NAME and the link lifecycle — no protégé phone, no claim
+    status, no relationship, no consent scopes, nothing medical. A
+    non-active row must never become a side window on the protégé.
+    """
+
+    protege_display_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = GuardianLink
+        fields = ["id", "protege_display_name", "status", "created_at", "revoked_at"]
+        read_only_fields = fields
+
+    def get_protege_display_name(self, link) -> str:
+        name = f"{link.patient.first_name} {link.patient.last_name}".strip()
+        return name or f"Protégé n°{link.patient_id}"
 
 
 class ProtegeCreateSerializer(serializers.Serializer):

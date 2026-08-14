@@ -13,6 +13,8 @@ import type {
   CashJournal,
   CashMethod,
   CashPayment,
+  ConsentCollectedVia,
+  DeskClinicalConsent,
   Dispute,
   EncounterAct,
   EncounterStatus,
@@ -151,6 +153,39 @@ export function listPatientGuardianLinks(
   return apiFetch(`/centers/${centerId}/patients/${patientId}/guardian-links/?page=${page}`);
 }
 
+/* ── desk-collected clinical consent (S2, ADR 0004 addendum — BILLING) ── */
+
+/**
+ * Record a clinical consent gathered at the desk (paper form / oral accord)
+ * for a NON-claimed patient. Explicit 400s shown as-is: claimed patient
+ * (« gère lui-même ses consentements »), link not an active link of THIS
+ * patient, already granted. The consent is auto-revoked when the patient
+ * claims their profile — never present it as permanent.
+ */
+export function grantDeskClinicalConsent(
+  centerId: number,
+  patientId: number,
+  guardianLinkId: number,
+  collectedVia: ConsentCollectedVia,
+): Promise<DeskClinicalConsent> {
+  return apiFetch(`/centers/${centerId}/patients/${patientId}/consents/clinical/`, {
+    method: 'POST',
+    body: { guardian_link: guardianLinkId, collected_via: collectedVia },
+  });
+}
+
+/** Withdraw a desk-collected clinical consent. 400 if none is active. */
+export function revokeDeskClinicalConsent(
+  centerId: number,
+  patientId: number,
+  guardianLinkId: number,
+): Promise<DeskClinicalConsent> {
+  return apiFetch(`/centers/${centerId}/patients/${patientId}/consents/clinical/`, {
+    method: 'DELETE',
+    body: { guardian_link: guardianLinkId },
+  });
+}
+
 export function mergePatients(
   centerId: number,
   sourceId: number,
@@ -181,6 +216,12 @@ export interface EncounterPayload {
   diagnosis?: string;
   occurred_at?: string;
   tariff_items?: number[];
+  /**
+   * Appointment id (S1 reliquat) — a valid one flips the appointment to
+   * `honore` automatically server-side. 400 explicites shown as-is: foreign
+   * center, another patient's appointment, already-closed appointment.
+   */
+  appointment?: number;
 }
 
 export interface EncounterFilters {

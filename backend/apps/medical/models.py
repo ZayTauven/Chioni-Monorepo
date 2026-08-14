@@ -14,6 +14,7 @@ Two structural rules live here:
    the rule elsewhere.
 """
 
+from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import models
 from django.utils import timezone
@@ -298,6 +299,14 @@ class Consent(TimeStampedModel):
             "Détail clinique : ordonnances détaillées, éléments du carnet",
         )
 
+    class CollectedVia(models.TextChoices):
+        """S2 (ADR 0004 addendum) — how a DESK-collected consent was
+        obtained. Empty string = granted by the patient from their own
+        space (the historical, default path)."""
+
+        PAPER = "papier", "Formulaire papier signé au guichet"
+        ORAL = "oral", "Recueil oral au guichet"
+
     patient = models.ForeignKey(
         "patients.PatientProfile",
         verbose_name="patient",
@@ -313,6 +322,35 @@ class Consent(TimeStampedModel):
     scope = models.CharField("portée", max_length=24, choices=Scope.choices)
     granted_at = models.DateTimeField("accordé le", default=timezone.now)
     revoked_at = models.DateTimeField("révoqué le", null=True, blank=True)
+    # S2 (ADR 0004 addendum) — traceability of DESK collection (porte C):
+    # a consent recorded by the center for an UNCLAIMED patient carries WHO
+    # collected it and HOW (paper form / orally). Both stay empty on the
+    # historical path (the patient granting from their own space) — the
+    # semantics of the grant itself are IDENTICAL, only the collection
+    # trace differs.
+    collected_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        verbose_name="recueilli par",
+        on_delete=models.PROTECT,
+        related_name="consents_collected",
+        null=True,
+        blank=True,
+        help_text=(
+            "Agent du centre qui a recueilli le consentement au guichet "
+            "(patient non revendiqué, porte C). Vide quand le patient "
+            "l'accorde lui-même depuis son espace."
+        ),
+    )
+    collected_via = models.CharField(
+        "mode de recueil",
+        max_length=8,
+        choices=CollectedVia.choices,
+        blank=True,
+        help_text=(
+            "Mode de recueil au guichet (papier signé / oral). Vide quand "
+            "le patient l'accorde lui-même depuis son espace."
+        ),
+    )
 
     objects = ConsentManager()
 

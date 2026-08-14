@@ -14,7 +14,7 @@
  * a frozen rate). The quote screen is where euros appear.
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import Link from 'next/link';
 import type { ApiError } from '@/lib/api';
 import {
@@ -24,9 +24,23 @@ import {
   listInvitations,
   listPaymentRequests,
   listProteges,
+  updateGuardianProfile,
 } from '@/lib/endpoints/guardian';
-import { RELATIONSHIP_LABELS, countryName, formatDate, formatKmf } from '@/lib/labels';
-import type { GuardianLinkGuardian, Paginated, PaymentRequestGuardian } from '@/lib/types';
+import {
+  CURRENCY_LABELS,
+  RELATIONSHIP_LABELS,
+  RESIDENCE_COUNTRY_CODES,
+  countryName,
+  formatDate,
+  formatKmf,
+} from '@/lib/labels';
+import type {
+  Currency,
+  GuardianLinkGuardian,
+  GuardianProfile,
+  Paginated,
+  PaymentRequestGuardian,
+} from '@/lib/types';
 import { useAuth } from '@/context/AuthContext';
 import {
   DeclineInvitationModal,
@@ -46,6 +60,148 @@ interface HomeData {
   invitations: GuardianLinkGuardian[];
   proteges: GuardianLinkGuardian[];
   protegesCount: number;
+}
+
+/* ── profile card (S2 : pays de résidence + devise modifiables) ── */
+
+function ProfileCard({ phone, profile }: { phone: string; profile: GuardianProfile }) {
+  const { refreshMe } = useAuth();
+  const [editing, setEditing] = useState(false);
+  const [country, setCountry] = useState(profile.country_of_residence);
+  const [currency, setCurrency] = useState<Currency>(profile.preferred_currency);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<ApiError | null>(null);
+  const [saved, setSaved] = useState(false);
+
+  // Le pays actuel reste choisissable même s'il n'est pas dans la liste courte.
+  const countryOptions = RESIDENCE_COUNTRY_CODES.includes(profile.country_of_residence)
+    ? RESIDENCE_COUNTRY_CODES
+    : [profile.country_of_residence, ...RESIDENCE_COUNTRY_CODES];
+
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await updateGuardianProfile({ country_of_residence: country, preferred_currency: currency });
+      // guardian_profile vit dans /auth/me/ — resynchroniser l'app entière.
+      await refreshMe();
+      setEditing(false);
+      setSaved(true);
+    } catch (err) {
+      setError(toDisplayError(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const fieldErrors = error?.fieldErrors ?? {};
+
+  return (
+    <section aria-label="Mon profil" className="ax-stack" style={{ gap: 'var(--ax-space-3)' }}>
+      <h2 className="tuteur-section-title">Mon profil</h2>
+      {saved && !editing && (
+        <div className="ax-alert ax-alert--success" role="status">
+          <div className="ax-alert__content">
+            <p className="ax-alert__message" style={{ margin: 0 }}>Profil mis à jour.</p>
+          </div>
+        </div>
+      )}
+      <div className="ax-card" style={{ margin: 0 }}>
+        {editing ? (
+          <form className="ax-card__body ax-stack" style={{ gap: 'var(--ax-space-4)' }} onSubmit={(e) => void submit(e)}>
+            <div className="ax-field">
+              <label className="ax-field__label" htmlFor="tuteur-pays">Pays de résidence</label>
+              <select
+                id="tuteur-pays"
+                className="ax-select"
+                value={country}
+                onChange={(e) => setCountry(e.target.value)}
+              >
+                {countryOptions.map((code) => (
+                  <option key={code} value={code}>{countryName(code)}</option>
+                ))}
+              </select>
+              {fieldErrors.country_of_residence && (
+                <p className="ax-field__message ax-field__message--error">
+                  {fieldErrors.country_of_residence[0]}
+                </p>
+              )}
+            </div>
+            <div className="ax-field">
+              <label className="ax-field__label" htmlFor="tuteur-devise">Devise préférée</label>
+              <select
+                id="tuteur-devise"
+                className="ax-select"
+                value={currency}
+                onChange={(e) => setCurrency(e.target.value as Currency)}
+              >
+                {(Object.keys(CURRENCY_LABELS) as Currency[]).map((c) => (
+                  <option key={c} value={c}>{CURRENCY_LABELS[c]}</option>
+                ))}
+              </select>
+              <p className="ax-field__hint">
+                C&rsquo;est une préférence d&rsquo;affichage. Avant chaque paiement, le devis vous
+                montre toujours les euros que vous payez et les francs comoriens que le centre
+                reçoit.
+              </p>
+              {fieldErrors.preferred_currency && (
+                <p className="ax-field__message ax-field__message--error">
+                  {fieldErrors.preferred_currency[0]}
+                </p>
+              )}
+            </div>
+            {error && error.messages.length > 0 && <ErrorAlert error={error} />}
+            <button type="submit" className="ax-btn ax-btn--primary ax-btn--lg ax-btn--block" disabled={busy}>
+              <span className="ax-btn__label">{busy ? 'Enregistrement…' : 'Enregistrer'}</span>
+            </button>
+            <button
+              type="button"
+              className="ax-btn ax-btn--ghost ax-btn--block"
+              disabled={busy}
+              onClick={() => {
+                setCountry(profile.country_of_residence);
+                setCurrency(profile.preferred_currency);
+                setError(null);
+                setEditing(false);
+              }}
+            >
+              <span className="ax-btn__label">Annuler</span>
+            </button>
+          </form>
+        ) : (
+          <div className="ax-card__body" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--ax-space-2)' }}>
+            <div className="tuteur-money-row">
+              <span className="tuteur-money-row__label">Téléphone</span>
+              <span className="tuteur-money-row__value ax-num">{phone}</span>
+            </div>
+            <div className="tuteur-money-row">
+              <span className="tuteur-money-row__label">Pays de résidence</span>
+              <span className="tuteur-money-row__value">{countryName(profile.country_of_residence)}</span>
+            </div>
+            <div className="tuteur-money-row">
+              <span className="tuteur-money-row__label">Devise préférée</span>
+              <span className="tuteur-money-row__value">{CURRENCY_LABELS[profile.preferred_currency]}</span>
+            </div>
+            <button
+              type="button"
+              className="ax-btn ax-btn--secondary ax-btn--block"
+              style={{ marginTop: 'var(--ax-space-2)' }}
+              onClick={() => {
+                setSaved(false);
+                setCountry(profile.country_of_residence);
+                setCurrency(profile.preferred_currency);
+                setEditing(true);
+              }}
+            >
+              <span className="ax-btn__label">Modifier</span>
+            </button>
+          </div>
+        )}
+      </div>
+    </section>
+  );
 }
 
 export function TuteurHome() {
@@ -267,32 +423,8 @@ export function TuteurHome() {
             )}
           </section>
 
-          {/* 5 — read-only profile */}
-          {profile && (
-            <section aria-label="Mon profil" className="ax-stack" style={{ gap: 'var(--ax-space-3)' }}>
-              <h2 className="tuteur-section-title">Mon profil</h2>
-              <div className="ax-card" style={{ margin: 0 }}>
-                <div className="ax-card__body" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--ax-space-2)' }}>
-                  <div className="tuteur-money-row">
-                    <span className="tuteur-money-row__label">Téléphone</span>
-                    <span className="tuteur-money-row__value ax-num">{me?.phone}</span>
-                  </div>
-                  <div className="tuteur-money-row">
-                    <span className="tuteur-money-row__label">Pays de résidence</span>
-                    <span className="tuteur-money-row__value">
-                      {countryName(profile.country_of_residence)}
-                    </span>
-                  </div>
-                  <div className="tuteur-money-row">
-                    <span className="tuteur-money-row__label">Devise de paiement</span>
-                    <span className="tuteur-money-row__value">
-                      {profile.preferred_currency === 'EUR' ? 'Euro (€)' : 'Franc comorien (KMF)'}
-                    </span>
-                  </div>
-                </div>
-              </div>
-            </section>
-          )}
+          {/* 5 — profile (S2 : pays et devise modifiables) */}
+          {profile && <ProfileCard phone={me?.phone ?? ''} profile={profile} />}
         </>
       )}
 

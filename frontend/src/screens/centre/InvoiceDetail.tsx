@@ -559,9 +559,9 @@ function CaisseSection({
 /* ── screen ── */
 
 export function InvoiceDetail({ invoiceId }: { invoiceId: number }) {
-  const { centerId, role } = useCenter();
+  const { centerId, roles } = useCenter();
   const router = useRouter();
-  const billing = hasRole(role, BILLING_ROLES);
+  const billing = hasRole(roles, BILLING_ROLES);
 
   const invoiceState = useAsync(() => getInvoice(centerId, invoiceId), [centerId, invoiceId]);
   const [fresh, setFresh] = useState<Invoice | null>(null);

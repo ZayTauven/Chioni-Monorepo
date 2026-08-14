@@ -120,9 +120,10 @@ function ResolveModal({
 }
 
 export function Disputes() {
-  const { centerId, role } = useCenter();
-  const billing = hasRole(role, BILLING_ROLES);
-  const isDirector = role === 'directeur';
+  const { centerId, roles } = useCenter();
+  const billing = hasRole(roles, BILLING_ROLES);
+  // Multi-roles S2 : un directeur-médecin garde la résolution des litiges.
+  const isDirector = roles.includes('directeur');
   const [page, setPage] = useState(1);
   const [resolving, setResolving] = useState<Dispute | null>(null);
 

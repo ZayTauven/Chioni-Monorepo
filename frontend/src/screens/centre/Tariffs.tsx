@@ -178,8 +178,8 @@ function TariffModal({
 }
 
 export function Tariffs() {
-  const { centerId, role } = useCenter();
-  const canWrite = hasRole(role, TARIFF_WRITE_ROLES);
+  const { centerId, roles } = useCenter();
+  const canWrite = hasRole(roles, TARIFF_WRITE_ROLES);
   const [page, setPage] = useState(1);
   const [modal, setModal] = useState<{ open: boolean; item: TariffItem | null }>({ open: false, item: null });
   const [toggleError, setToggleError] = useState<ApiError | null>(null);

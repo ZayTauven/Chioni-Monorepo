@@ -102,6 +102,9 @@ export type MobileMoneyOperator = 'huri' | 'mvola' | 'autre';
 /** `?ordering=` of GET /centers/{c}/invoices/unpaid/ — any other value is a 400. */
 export type UnpaidOrdering = '-balance' | 'balance' | '-age' | 'age';
 
+/** How a desk-collected clinical consent was gathered (S2, ADR 0004 addendum). */
+export type ConsentCollectedVia = 'papier' | 'oral';
+
 /* ── /auth/me/ — router of the 3 spaces ── */
 
 export interface CenterSummary {
@@ -247,6 +250,23 @@ export interface PaymentRequestPatient {
   created_at: string;
 }
 
+/* ── patient appointments (S2 — read + cancel only, no self-booking) ── */
+
+/**
+ * GET /patients/me/appointments/ item — cross-center, sorted by
+ * `scheduled_at` desc. Deliberately WITHOUT `reason` (operational desk note,
+ * staff only — the contract forbids planning a slot for it).
+ */
+export interface PatientAppointment {
+  id: number;
+  center: { id: number; name: string };
+  scheduled_at: string;
+  duration_minutes: number;
+  status: AppointmentStatus;
+  /** Full name, or null (« rendez-vous avec le centre », or unnamed staff). */
+  practitioner_display_name: string | null;
+}
+
 /* ── guardian space ── */
 
 export interface ProtegePatient {
@@ -263,6 +283,21 @@ export interface GuardianLinkGuardian {
   status: GuardianLinkStatus;
   initiated_by: InitiatedBy;
   accepted_at: string | null;
+}
+
+/**
+ * GET /guardian/links/ item (S2) — the guardian's link HISTORY, every status.
+ * Deliberately minimal: no phone, no scopes, no relationship. Its value: a
+ * protégé in `attente_confirmation_titulaire` (invisible in /proteges/ during
+ * the claimant-confirmation gate) is visible here — the UI presents it as the
+ * patient's protection, never as an error.
+ */
+export interface GuardianLinkHistory {
+  id: number;
+  protege_display_name: string;
+  status: GuardianLinkStatus;
+  created_at: string;
+  revoked_at: string | null;
 }
 
 /** Guardian-side line: NEVER carries `label` (medical secrecy, ADR 0005). */
@@ -389,6 +424,20 @@ export interface GuardianLinkCenter {
   id: number;
   guardian_name: string;
   relationship: Relationship;
+}
+
+/**
+ * Desk-collected clinical consent (S2, ADR 0004 addendum) — response of
+ * POST|DELETE /centers/{c}/patients/{pk}/consents/clinical/. NON-claimed
+ * patients only; automatically revoked when the patient claims their profile
+ * (claimant-confirmation gate) — never present it as permanent.
+ */
+export interface DeskClinicalConsent {
+  guardian_link: number;
+  scope: 'detail_clinique';
+  collected_via: ConsentCollectedVia;
+  granted_at: string;
+  revoked_at: string | null;
 }
 
 export interface PaymentRequestShare {

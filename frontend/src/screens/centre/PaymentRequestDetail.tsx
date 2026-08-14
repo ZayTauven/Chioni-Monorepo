@@ -250,9 +250,9 @@ function ShareModal({
 /* ── screen ── */
 
 export function PaymentRequestDetail({ requestId }: { requestId: number }) {
-  const { centerId, role } = useCenter();
-  const billing = hasRole(role, BILLING_ROLES);
-  const canConfirmCare = hasRole(role, CARE_CONFIRM_ROLES);
+  const { centerId, roles } = useCenter();
+  const billing = hasRole(roles, BILLING_ROLES);
+  const canConfirmCare = hasRole(roles, CARE_CONFIRM_ROLES);
 
   const requestState = useAsync(() => getPaymentRequest(centerId, requestId), [centerId, requestId]);
   const [fresh, setFresh] = useState<PaymentRequestStaff | null>(null);

@@ -28,8 +28,12 @@ from apps.common.roles import BILLING_ROLES
 from apps.medical.models import Consent
 from apps.patients.models import GuardianLink, PatientProfile
 from apps.patients.serializers import (
+    CenterClinicalConsentReceiptSerializer,
+    CenterClinicalConsentRevokeSerializer,
+    CenterClinicalConsentSerializer,
     GuardianInviteSerializer,
     GuardianLinkGuardianSerializer,
+    GuardianLinkHistorySerializer,
     GuardianLinkPatientSerializer,
     GuardianLinkStaffRoutingSerializer,
     GuardianProfileSerializer,
@@ -40,6 +44,7 @@ from apps.patients.serializers import (
     ProtegeCreateSerializer,
 )
 from apps.patients.services import (
+    _DESK_CLAIMED_REFUSAL,
     accept_link,
     confirm_guardian_link,
     create_guardian_profile,
@@ -49,10 +54,14 @@ from apps.patients.services import (
     decline_guardian_link,
     decline_invitation,
     grant_clinical_consent,
+    grant_clinical_consent_at_center,
     invite_guardian,
     merge_profiles,
+    resolve_desk_consent_link,
     revoke_clinical_consent,
+    revoke_clinical_consent_at_center,
     revoke_link,
+    update_guardian_profile,
     update_patient_profile,
 )
 from apps.patients.throttling import (
@@ -174,6 +183,76 @@ class CenterPatientGuardianLinksView(CenterScopedViewMixin, generics.ListAPIView
             .select_related("guardian__user")
             .order_by("created_at")
         )
+
+
+class CenterPatientClinicalConsentView(CenterScopedViewMixin, APIView):
+    """POST/DELETE /centers/{c}/patients/{pk}/consents/clinical/ — S2.
+
+    The desk records (POST) or withdraws (DELETE) a clinical consent
+    collected on paper or orally — the ONLY consent path for an
+    UNCLAIMED patient (audit C.4: nobody could grant `detail_clinique`
+    for a porte A/C patient). ADR 0004 addendum documents the model.
+
+    Strict conditions, in refusal order:
+
+    - roles BILLING (the collection happens at the desk);
+    - patient in THIS center's perimeter — URL ref → 404 otherwise;
+    - patient UNCLAIMED only — a claimed patient manages their own
+      consents from their space → explicit 400;
+    - ``guardian_link`` (body ref) must be an ACTIVE link of THIS patient
+      → one byte-identical 400 for foreign/revoked/non-existent (S1).
+
+    Audited (`consent.granted_by_center` / `consent.revoked_by_center`,
+    references only). The claim gate (OTP-1) revokes these consents like
+    any other the moment the patient claims their profile.
+    """
+
+    permission_classes = [IsStaffOfCenter(*BILLING_ROLES)]
+
+    def _resolve_patient(self, pk):
+        patient = get_object_or_404(center_patients_qs(self.center), pk=pk)
+        if patient.is_claimed:
+            raise DjangoValidationError(_DESK_CLAIMED_REFUSAL)
+        return patient
+
+    @extend_schema(
+        request=CenterClinicalConsentSerializer,
+        responses=CenterClinicalConsentReceiptSerializer,
+    )
+    def post(self, request, center_pk, pk):
+        patient = self._resolve_patient(pk)
+        serializer = CenterClinicalConsentSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        link = resolve_desk_consent_link(
+            patient=patient, link_pk=serializer.validated_data["guardian_link"]
+        )
+        consent = grant_clinical_consent_at_center(
+            actor=request.user,
+            center=self.center,
+            patient=patient,
+            link=link,
+            collected_via=serializer.validated_data["collected_via"],
+        )
+        return Response(
+            CenterClinicalConsentReceiptSerializer(consent).data,
+            status=status.HTTP_201_CREATED,
+        )
+
+    @extend_schema(
+        request=CenterClinicalConsentRevokeSerializer,
+        responses=CenterClinicalConsentReceiptSerializer,
+    )
+    def delete(self, request, center_pk, pk):
+        patient = self._resolve_patient(pk)
+        serializer = CenterClinicalConsentRevokeSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        link = resolve_desk_consent_link(
+            patient=patient, link_pk=serializer.validated_data["guardian_link"]
+        )
+        consent = revoke_clinical_consent_at_center(
+            actor=request.user, center=self.center, patient=patient, link=link
+        )
+        return Response(CenterClinicalConsentReceiptSerializer(consent).data)
 
 
 class CenterPatientMergeView(CenterScopedViewMixin, APIView):
@@ -380,16 +459,29 @@ class ClinicalConsentView(_PatientOwnLinkMixin, APIView):
 
 
 class MyGuardianProfileView(APIView):
-    """GET/POST /guardian/profile/ — my guardian profile."""
+    """GET/POST/PATCH /guardian/profile/ — my guardian profile.
+
+    ``IsAuthenticated`` by design (documented exemption of the structural
+    guardian test): this endpoint is the space's front desk — it must
+    answer « create your profile » to users who have none yet. GET and
+    PATCH require the profile to exist (404 otherwise — the same
+    information as ``IsGuardian``'s 403, kept consistent with the GET
+    contract in place). Field-by-field editability: see
+    ``services.update_guardian_profile`` (S2).
+    """
 
     def get_permissions(self):
         return [IsAuthenticated()]
 
-    @extend_schema(responses=GuardianProfileSerializer)
-    def get(self, request):
+    def _profile_or_404(self, request):
         profile = guardian_profile(request.user)
         if profile is None:
             raise NotFound("Vous n'avez pas encore de profil tuteur.")
+        return profile
+
+    @extend_schema(responses=GuardianProfileSerializer)
+    def get(self, request):
+        profile = self._profile_or_404(request)
         return Response(GuardianProfileSerializer(profile).data)
 
     @extend_schema(request=GuardianProfileSerializer, responses=GuardianProfileSerializer)
@@ -402,6 +494,16 @@ class MyGuardianProfileView(APIView):
         return Response(
             GuardianProfileSerializer(profile).data, status=status.HTTP_201_CREATED
         )
+
+    @extend_schema(request=GuardianProfileSerializer, responses=GuardianProfileSerializer)
+    def patch(self, request):
+        profile = self._profile_or_404(request)
+        serializer = GuardianProfileSerializer(
+            profile, data=request.data, partial=True
+        )
+        serializer.is_valid(raise_exception=True)
+        update_guardian_profile(profile=profile, **serializer.validated_data)
+        return Response(GuardianProfileSerializer(profile).data)
 
 
 class ProtegeListCreateView(generics.ListCreateAPIView):
@@ -497,6 +599,35 @@ class DeclineInvitationView(APIView):
         )
         decline_invitation(link=link, guardian_user=request.user)
         return Response(GuardianLinkGuardianSerializer(link).data)
+
+
+class GuardianLinkListView(generics.ListAPIView):
+    """GET /guardian/links/ — the guardian's link HISTORY, every status (S2).
+
+    ``IsGuardian`` (space door, S1 norm): this lists the links THEMSELVES
+    — lifecycle objects, not scoped data — and a guardian whose last link
+    was suspended by the claim gate (`attente_confirmation_titulaire`)
+    holds NO active scope, yet is exactly who needs this list: before S2
+    their protégé vanished from `/guardian/proteges/` with no explanation.
+    The existing `proteges`/`invitations` contracts are untouched — this
+    is a separate, additive read.
+
+    Payload: administrative strict minimum (see
+    ``GuardianLinkHistorySerializer`` — no phone, no scopes, nothing
+    medical).
+    """
+
+    permission_classes = [IsGuardian]
+    serializer_class = GuardianLinkHistorySerializer
+
+    def get_queryset(self):
+        return (
+            GuardianLink.objects.filter(
+                guardian=guardian_profile(self.request.user)
+            )
+            .select_related("patient")
+            .order_by("-created_at")
+        )
 
 
 class GuardianRevokeLinkView(APIView):

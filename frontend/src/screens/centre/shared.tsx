@@ -45,8 +45,17 @@ export const PRESCRIPTION_READ_ROLES: StaffRole[] = [...CLINICAL_ROLES, 'pharmac
 export const CARE_CONFIRM_ROLES: StaffRole[] = ['directeur', 'medecin', 'infirmier', 'sage_femme', 'pharmacien'];
 export const TARIFF_WRITE_ROLES: StaffRole[] = ['directeur', 'caissier'];
 
-export function hasRole(role: StaffRole, allowed: StaffRole[]): boolean {
-  return allowed.includes(role);
+/**
+ * Multi-roles (S2): a member can hold SEVERAL roles in the same center
+ * (directeur + médecin). Gates pass `roles` from useCenter() so cumulating
+ * hats only ever WIDENS access — a single role still works for spot checks.
+ */
+export function hasRole(
+  roles: StaffRole | readonly StaffRole[],
+  allowed: readonly StaffRole[],
+): boolean {
+  const held: readonly StaffRole[] = typeof roles === 'string' ? [roles] : roles;
+  return held.some((r) => allowed.includes(r));
 }
 
 /* ── async data hook ── */

@@ -18,7 +18,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { ApiError } from '@/lib/api';
-import { dispute, getPaymentRequest, getQuote, pay } from '@/lib/endpoints/guardian';
+import {
+  dispute,
+  getPaymentRequest,
+  getQuote,
+  isNoActiveLinkError,
+  pay,
+} from '@/lib/endpoints/guardian';
 import {
   GENERIC_CATEGORY_LABELS,
   formatDate,
@@ -29,7 +35,9 @@ import {
 import type { PaymentIntent, PaymentRequestGuardian, Quote } from '@/lib/types';
 import {
   DisputeModal,
+  EmptyState,
   ErrorAlert,
+  HEART_ICON,
   LoadingCard,
   PrStatusBadge,
   PrivacyNote,
@@ -159,6 +167,8 @@ export function TuteurDemandeDetail() {
   const [request, setRequest] = useState<PaymentRequestGuardian | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<ApiError | null>(null);
+  /** S1 : 403 « aucun lien actif » = l'état « aucun protégé », pas une erreur. */
+  const [noActiveLink, setNoActiveLink] = useState(false);
 
   const [phase, setPhase] = useState<PayPhase>({ kind: 'view' });
   const [actionBusy, setActionBusy] = useState(false);
@@ -181,11 +191,18 @@ export function TuteurDemandeDetail() {
     }
     setLoading(true);
     setError(null);
+    setNoActiveLink(false);
     try {
       setRequest(await getPaymentRequest(id));
       setIntentGuard(readIntentGuard(id));
     } catch (e) {
-      setError(toDisplayError(e));
+      if (isNoActiveLinkError(e)) {
+        // Tuteur sans lien actif (profil neuf ou entièrement révoqué) : le
+        // même état vide bienveillant que les listes — il n'a rien fait de mal.
+        setNoActiveLink(true);
+      } else {
+        setError(toDisplayError(e));
+      }
     } finally {
       setLoading(false);
     }
@@ -361,6 +378,25 @@ export function TuteurDemandeDetail() {
   }
 
   if (loading) return <LoadingCard />;
+
+  if (noActiveLink) {
+    return (
+      <div className="tuteur-screen">
+        <EmptyState
+          icon={HEART_ICON}
+          title="Aucun protégé pour le moment"
+          text="Acceptez une invitation ou ajoutez un proche : les demandes de paiement de ses soins apparaîtront ici."
+        >
+          <p style={{ margin: 'var(--ax-space-3) 0 0' }}>
+            <Link className="ax-btn ax-btn--secondary" href="/tuteur/proteges">
+              <span className="ax-btn__label">Ajouter un proche</span>
+            </Link>
+          </p>
+        </EmptyState>
+        <Link className="ax-link" href="/tuteur/demandes">← Toutes les demandes</Link>
+      </div>
+    );
+  }
 
   if (error || !request) {
     const err =

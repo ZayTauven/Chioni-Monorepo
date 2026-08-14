@@ -35,6 +35,16 @@ class AppointmentQuerySet(models.QuerySet):
     def for_center(self, center):
         return self.filter(center=center)
 
+    def for_patient(self, patient):
+        """S2 — the PATIENT's read window on their own appointments.
+
+        Appointments stay operating data of the center (ADR 0002/0013),
+        but the patient they concern may READ them across every center —
+        the queryset mirror of ``for_patient()`` on medical data. Staff
+        views keep using ``for_center()`` exclusively.
+        """
+        return self.filter(patient=patient)
+
 
 class Appointment(TimeStampedModel):
     """A booked slot at a center — the unit of the day queue.

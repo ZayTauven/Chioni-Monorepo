@@ -297,11 +297,11 @@ function RecordEntryModal({
 /* ── screen ── */
 
 export function ConsultationDetail({ encounterId }: { encounterId: number }) {
-  const { centerId, role } = useCenter();
-  const clinical = hasRole(role, CLINICAL_ROLES);
-  const canReadPrescriptions = hasRole(role, PRESCRIPTION_READ_ROLES);
-  const canPrescribe = hasRole(role, PRESCRIBER_ROLES);
-  const billing = hasRole(role, BILLING_ROLES);
+  const { centerId, roles } = useCenter();
+  const clinical = hasRole(roles, CLINICAL_ROLES);
+  const canReadPrescriptions = hasRole(roles, PRESCRIPTION_READ_ROLES);
+  const canPrescribe = hasRole(roles, PRESCRIBER_ROLES);
+  const billing = hasRole(roles, BILLING_ROLES);
 
   const [rxOpen, setRxOpen] = useState(false);
   const [entryOpen, setEntryOpen] = useState(false);
