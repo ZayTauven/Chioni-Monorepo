@@ -1,4 +1,29 @@
+"""Medical admin — READ-ONLY WITHOUT EXCEPTION (S4, ADR 0017 décision 4).
+
+Everything in this app is either clinical content or a consent. Both have
+service invariants a change form silently voids:
+
+- an ``Encounter`` closes through ``close_encounter`` and gates every
+  later production (no prescription, no carnet entry once « terminee ») ;
+- a ``PatientDocument`` lives on the PRIVATE storage and is archived,
+  never deleted — the admin never even shows ``file`` (that storage has
+  no URL, ADR 0016 §5) ;
+- ``VitalSigns`` carry plausibility bounds and a practitioner-of-the-
+  center invariant enforced in ``save()`` ;
+- **``Consent`` is the sensitive one, and closes the SV.2 debt**: it is
+  THE source of truth of what a guardian may see
+  (``Consent.objects.active_scopes``). Hand-granting one here would open
+  a patient's clinical detail to a third party with no patient act, no
+  claimant-confirmation gate and no audit entry — the exact opposite of
+  everything ADR 0004 builds.
+
+Reading stays open (that is what an admin is for); writing belongs to the
+audited services.
+"""
+
 from django.contrib import admin
+
+from apps.common.admin import ReadOnlyAdminMixin
 
 from .models import (
     ActPerformed,
@@ -14,7 +39,7 @@ from .models import (
 
 
 @admin.register(PatientMedicalFile)
-class PatientMedicalFileAdmin(admin.ModelAdmin):
+class PatientMedicalFileAdmin(ReadOnlyAdminMixin, admin.ModelAdmin):
     list_display = ("patient", "blood_group", "updated_by", "updated_at")
     list_filter = ("blood_group",)
     search_fields = ("patient__last_name", "patient__first_name")
@@ -22,7 +47,7 @@ class PatientMedicalFileAdmin(admin.ModelAdmin):
 
 
 @admin.register(VitalSigns)
-class VitalSignsAdmin(admin.ModelAdmin):
+class VitalSignsAdmin(ReadOnlyAdminMixin, admin.ModelAdmin):
     list_display = (
         "encounter", "measured_at", "measured_by",
         "systolic_bp", "diastolic_bp", "heart_rate", "spo2",
@@ -33,7 +58,7 @@ class VitalSignsAdmin(admin.ModelAdmin):
 
 
 @admin.register(PatientDocument)
-class PatientDocumentAdmin(admin.ModelAdmin):
+class PatientDocumentAdmin(ReadOnlyAdminMixin, admin.ModelAdmin):
     # The « file » field is deliberately ABSENT everywhere: the private
     # storage has NO URL (ADR 0016 §5) and the admin widget would try to
     # render one. The bytes are only reachable through the authenticated
@@ -50,14 +75,14 @@ class PatientDocumentAdmin(admin.ModelAdmin):
     exclude = ("file",)
 
 
-class ActPerformedInline(admin.TabularInline):
+class ActPerformedInline(ReadOnlyAdminMixin, admin.TabularInline):
     model = ActPerformed
     extra = 0
     readonly_fields = ("label_snapshot", "price_kmf_snapshot")
 
 
 @admin.register(Encounter)
-class EncounterAdmin(admin.ModelAdmin):
+class EncounterAdmin(ReadOnlyAdminMixin, admin.ModelAdmin):
     list_display = ("patient", "center", "practitioner", "occurred_at", "reason", "status")
     list_filter = ("status", "center")
     search_fields = ("patient__last_name", "patient__first_name", "reason")
@@ -67,20 +92,24 @@ class EncounterAdmin(admin.ModelAdmin):
 
 
 @admin.register(ActPerformed)
-class ActPerformedAdmin(admin.ModelAdmin):
+class ActPerformedAdmin(ReadOnlyAdminMixin, admin.ModelAdmin):
+    """Acts are tariff SNAPSHOTS (ADR 0005) and the billing base: an act
+    edited by hand would either rewrite history or desynchronise a frozen
+    invoice line."""
+
     list_display = ("label_snapshot", "price_kmf_snapshot", "encounter", "created_at")
     search_fields = ("label_snapshot", "encounter__patient__last_name")
     autocomplete_fields = ("encounter", "tariff_item")
     readonly_fields = ("label_snapshot", "price_kmf_snapshot")
 
 
-class PrescriptionItemInline(admin.TabularInline):
+class PrescriptionItemInline(ReadOnlyAdminMixin, admin.TabularInline):
     model = PrescriptionItem
     extra = 0
 
 
 @admin.register(Prescription)
-class PrescriptionAdmin(admin.ModelAdmin):
+class PrescriptionAdmin(ReadOnlyAdminMixin, admin.ModelAdmin):
     list_display = ("id", "encounter", "status", "created_at")
     list_filter = ("status",)
     autocomplete_fields = ("encounter",)
@@ -88,7 +117,7 @@ class PrescriptionAdmin(admin.ModelAdmin):
 
 
 @admin.register(HealthRecordEntry)
-class HealthRecordEntryAdmin(admin.ModelAdmin):
+class HealthRecordEntryAdmin(ReadOnlyAdminMixin, admin.ModelAdmin):
     list_display = ("patient", "entry_type", "content", "source_encounter", "created_at")
     list_filter = ("entry_type",)
     search_fields = ("patient__last_name", "patient__first_name", "content")
@@ -96,7 +125,16 @@ class HealthRecordEntryAdmin(admin.ModelAdmin):
 
 
 @admin.register(Consent)
-class ConsentAdmin(admin.ModelAdmin):
+class ConsentAdmin(ReadOnlyAdminMixin, admin.ModelAdmin):
+    """SV.2 debt SOLDED here (ADR 0017 décision 4).
+
+    A consent is the hinge of the whole guardianship model: granting or
+    un-revoking one by hand would hand a third party a patient's clinical
+    detail without the patient, without the claimant-confirmation gate and
+    without a trace. Revocation is meant to be irreversible — the admin
+    was the only place where it was not.
+    """
+
     list_display = (
         "patient", "guardian_link", "scope", "granted_at", "revoked_at",
         "collected_via", "collected_by",

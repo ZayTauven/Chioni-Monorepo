@@ -6,7 +6,8 @@
  * reads the stored tokens and calls /auth/me/ ; exposes the sign-in flows
  * (OTP for patients/guardians, password for staff), sign-out and a `me`
  * refresh. `spacesOf(me)` derives the user's hats — the router of the
- * 3 spaces per ADR 0011.
+ * spaces per ADR 0011, extended to FOUR by S4 (ADR 0017): the Chioni
+ * operator joins staff-of-center, patient and guardian.
  */
 
 import {
@@ -30,23 +31,36 @@ import {
 } from '@/lib/tokens';
 import type { Me } from '@/lib/types';
 
-export type Space = 'centre' | 'patient' | 'tuteur';
+export type Space = 'centre' | 'patient' | 'tuteur' | 'plateforme';
 
 export type AuthStatus = 'loading' | 'anonymous' | 'authenticated';
 
-/** Which spaces this user can enter (a user can wear several hats). */
+/**
+ * Which spaces this user can enter (a user can wear several hats).
+ *
+ * S4 — the 4th hat: `platform_staff` is the ONLY gate of the platform space.
+ * Never derive it from anything else: `is_staff`/`is_superuser` are absent
+ * from the payload by design and grant no API right at all. The backend only
+ * surfaces an ACTIVE operator row, so `!== null` is the whole rule.
+ */
 export function spacesOf(me: Me | null): Space[] {
   if (!me) return [];
   const spaces: Space[] = [];
   if (me.staff_memberships.length > 0) spaces.push('centre');
   if (me.patient_profile) spaces.push('patient');
   if (me.guardian_profile) spaces.push('tuteur');
+  if (me.platform_staff) spaces.push('plateforme');
   return spaces;
 }
 
 /** Home route of a space. */
 export function homeOfSpace(space: Space): string {
-  return { centre: '/centre', patient: '/patient', tuteur: '/tuteur' }[space];
+  return {
+    centre: '/centre',
+    patient: '/patient',
+    tuteur: '/tuteur',
+    plateforme: '/plateforme',
+  }[space];
 }
 
 /** Where to send a user right after sign-in. */

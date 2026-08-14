@@ -15,6 +15,7 @@ import { getPatientMe, listMyInsurances, updatePatientMe } from '@/lib/endpoints
 import { SEX_LABELS, formatDate } from '@/lib/labels';
 import { ApiError } from '@/lib/api';
 import type { PatientMe, Sex } from '@/lib/types';
+import { MyDataCard } from '@/screens/lite/MyDataCard';
 import { useLoadMore } from './useLoadMore';
 import { ErrorAlert, LoadMoreButton, SkeletonCards, SuccessAlert } from './ui';
 
@@ -405,6 +406,10 @@ export function PatientProfil() {
       </section>
 
       <InsurancesCard />
+
+      {/* S4 (ADR 0017 décision 7) — mes droits sur mes données : copie et
+          demande de suppression. Partagée avec l'espace tuteur. */}
+      <MyDataCard />
     </div>
   );
 }

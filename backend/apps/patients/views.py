@@ -152,6 +152,9 @@ class CenterPatientDetailView(CenterScopedViewMixin, generics.RetrieveUpdateAPIV
         update_patient_profile(
             actor=self.request.user,
             profile=serializer.instance,
+            # S4 — the desk edit belongs to THIS tenant's journal (the
+            # patient's own edit, from `/patients/me/`, carries no center).
+            center=self.center,
             **serializer.validated_data,
         )
 

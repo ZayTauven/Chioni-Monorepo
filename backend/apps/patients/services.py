@@ -109,7 +109,7 @@ def create_patient_at_center(*, actor, center, guardian_phone=None,
     )
     audit(
         actor=actor, action=AuditAction.PATIENT_CREATED, target=profile,
-        door="C", center_id=center.pk, patient_id=profile.pk,
+        center=center, door="C", center_id=center.pk, patient_id=profile.pk,
     )
     link = None
     if guardian_phone:
@@ -119,6 +119,7 @@ def create_patient_at_center(*, actor, center, guardian_phone=None,
             phone=guardian_phone,
             relationship=guardian_relationship or GuardianLink.Relationship.OTHER,
             initiated_by=GuardianLink.InitiatedBy.CENTER,
+            center=center,
         )
     return profile, link
 
@@ -193,7 +194,7 @@ IDENTITY_FIELDS = frozenset(
 
 
 @transaction.atomic
-def update_patient_profile(*, actor, profile, **fields):
+def update_patient_profile(*, actor, profile, center=None, **fields):
     """Identity update — through ``save()``, audited.
 
     R-API-2: once a profile is CLAIMED, its identity belongs to the patient.
@@ -215,7 +216,7 @@ def update_patient_profile(*, actor, profile, **fields):
     profile.save()
     audit(
         actor=actor, action=AuditAction.PATIENT_UPDATED, target=profile,
-        patient_id=profile.pk, fields=",".join(sorted(fields)),
+        center=center, patient_id=profile.pk, fields=",".join(sorted(fields)),
     )
     return profile
 
@@ -415,7 +416,8 @@ def update_guardian_profile(*, profile, **fields):
 
 
 @transaction.atomic
-def invite_guardian(*, actor, patient, phone, relationship, initiated_by):
+def invite_guardian(*, actor, patient, phone, relationship, initiated_by,
+                    center=None):
     """Doors B and C — invite a guardian by phone onto ``patient``.
 
     Creates (or finds) the guardian's account+profile by phone and opens a
@@ -444,6 +446,7 @@ def invite_guardian(*, actor, patient, phone, relationship, initiated_by):
     )
     audit(
         actor=actor, action=AuditAction.LINK_CREATED, target=link,
+        center=center,
         link_id=link.pk, patient_id=patient.pk, guardian_id=guardian.pk,
         initiated_by=initiated_by, status=link.status,
     )
@@ -649,7 +652,7 @@ def grant_clinical_consent_at_center(*, actor, center, patient, link,
     )
     audit(
         actor=actor, action=AuditAction.CONSENT_GRANTED_BY_CENTER,
-        target=consent, consent_id=consent.pk, link_id=link.pk,
+        target=consent, center=center, consent_id=consent.pk, link_id=link.pk,
         patient_id=link.patient_id, guardian_id=link.guardian_id,
         center_id=center.pk, scope=str(Consent.Scope.CLINICAL_DETAIL),
         collected_via=str(collected_via),
@@ -681,7 +684,7 @@ def revoke_clinical_consent_at_center(*, actor, center, patient, link):
     consent.revoke()
     audit(
         actor=actor, action=AuditAction.CONSENT_REVOKED_BY_CENTER,
-        target=consent, consent_id=consent.pk, link_id=link.pk,
+        target=consent, center=center, consent_id=consent.pk, link_id=link.pk,
         patient_id=link.patient_id, guardian_id=link.guardian_id,
         center_id=center.pk, scope=str(Consent.Scope.CLINICAL_DETAIL),
     )
@@ -706,8 +709,8 @@ def create_patient_insurance(*, actor, center, patient, **fields):
     )
     audit(
         actor=actor, action=AuditAction.PATIENT_INSURANCE_CREATED,
-        target=insurance, insurance_id=insurance.pk, patient_id=patient.pk,
-        center_id=center.pk,
+        target=insurance, center=center,
+        insurance_id=insurance.pk, patient_id=patient.pk, center_id=center.pk,
     )
     return insurance
 
@@ -721,7 +724,7 @@ def update_patient_insurance(*, actor, center, insurance, **fields):
     insurance.save()
     audit(
         actor=actor, action=AuditAction.PATIENT_INSURANCE_UPDATED,
-        target=insurance, insurance_id=insurance.pk,
+        target=insurance, center=center, insurance_id=insurance.pk,
         patient_id=insurance.patient_id, center_id=center.pk,
         fields=",".join(sorted(fields)),
     )
@@ -952,6 +955,7 @@ def merge_profiles(*, source, target, actor, center):
 
     audit(
         actor=actor, action=AuditAction.PATIENT_MERGED, target=target,
+        center=center,
         source_id=source.pk, target_id=target.pk, center_id=center.pk,
         links_moved=moved_links, links_revoked=revoked_links,
         links_suspended=suspended_links,

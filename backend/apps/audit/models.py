@@ -40,6 +40,31 @@ class AuditLog(AppendOnlyModel):
     )
     object_id = models.CharField("identifiant cible", max_length=64, blank=True)
     target = GenericForeignKey("content_type", "object_id")
+    # S4 (ADR 0017, décision 5) — the TENANT the action belongs to, posted
+    # explicitly by ``audit(center=…)``. Before this column there was no
+    # way to query « the journal of my center »: ``payload__center_id`` was
+    # present on SOME actions only, in un-indexed JSONB.
+    #
+    # NULL is a first-class value, not a gap to fill: transverse actions
+    # (OTP, account creation, guardianship links, doors A/B) belong to no
+    # center, and every row written BEFORE this column existed keeps a NULL
+    # forever — the table is append-only (ORM + PostgreSQL trigger,
+    # ADR 0006) and back-filling history for an API's comfort is exactly
+    # what that ADR forbids. The director's journal says so honestly
+    # (``journal_starts_at``).
+    center = models.ForeignKey(
+        "centers.HealthCenter",
+        verbose_name="centre",
+        on_delete=models.PROTECT,
+        related_name="audit_logs",
+        null=True,
+        blank=True,
+        help_text=(
+            "Centre concerné par l'action, quand elle en concerne un. "
+            "Vide pour les actions transverses (authentification, tutelle, "
+            "profils patients hors guichet)."
+        ),
+    )
     payload = models.JSONField(
         "données",
         default=dict,
@@ -53,15 +78,22 @@ class AuditLog(AppendOnlyModel):
         indexes = [
             models.Index(fields=["content_type", "object_id"]),
             models.Index(fields=["action"]),
+            # The director's journal reads « this center, most recent
+            # first, over a window » — one composite index serves it.
+            models.Index(fields=["center", "created_at"]),
         ]
 
     def __str__(self) -> str:
         return f"{self.created_at:%Y-%m-%d %H:%M} — {self.actor or 'système'} — {self.action}"
 
     @classmethod
-    def log(cls, *, actor, action, target=None, **payload):
-        """Convenience writer used by services and views."""
-        entry = cls(actor=actor, action=action, payload=payload)
+    def log(cls, *, actor, action, target=None, center=None, **payload):
+        """Convenience writer used by services and views.
+
+        ``center`` is a COLUMN, never a payload key: it is the only
+        reference the API filters on, and it must be indexable.
+        """
+        entry = cls(actor=actor, action=action, center=center, payload=payload)
         if target is not None:
             entry.content_type = ContentType.objects.get_for_model(type(target))
             entry.object_id = str(target.pk)

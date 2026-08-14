@@ -72,6 +72,7 @@ def create_encounter(*, actor, center, practitioner, patient, reason,
         ActPerformed.objects.create(encounter=encounter, tariff_item=tariff)
     audit(
         actor=actor, action=AuditAction.ENCOUNTER_CREATED, target=encounter,
+        center=center,
         encounter_id=encounter.pk, center_id=center.pk,
         patient_id=patient.pk, acts=len(tariff_items),
     )
@@ -113,6 +114,7 @@ def close_encounter(*, actor, encounter):
     encounter.save(update_fields=["status", "updated_at"])
     audit(
         actor=actor, action=AuditAction.ENCOUNTER_CLOSED, target=encounter,
+        center=encounter.center,
         encounter_id=encounter.pk, center_id=encounter.center_id,
         patient_id=encounter.patient_id,
     )
@@ -134,6 +136,7 @@ def create_prescription(*, actor, encounter, items):
         )
     audit(
         actor=actor, action=AuditAction.PRESCRIPTION_CREATED, target=prescription,
+        center=encounter.center,
         prescription_id=prescription.pk, encounter_id=encounter.pk,
         patient_id=encounter.patient_id, center_id=encounter.center_id,
         items=len(items),
@@ -153,6 +156,7 @@ def create_record_entry(*, actor, encounter, entry_type, content):
     )
     audit(
         actor=actor, action=AuditAction.RECORD_ENTRY_CREATED, target=entry,
+        center=encounter.center,
         entry_id=entry.pk, encounter_id=encounter.pk,
         patient_id=encounter.patient_id, center_id=encounter.center_id,
         entry_type=str(entry_type),
@@ -184,7 +188,7 @@ def update_patient_medical_file(*, actor, center, patient, **fields):
     medical_file.save()
     audit(
         actor=actor, action=AuditAction.PATIENT_MEDICAL_FILE_UPDATED,
-        target=medical_file, medical_file_id=medical_file.pk,
+        target=medical_file, center=center, medical_file_id=medical_file.pk,
         patient_id=patient.pk, center_id=center.pk,
         fields=",".join(sorted(fields)),
     )
@@ -217,7 +221,8 @@ def record_vital_signs(*, actor, encounter, measured_by, measured_at=None,
     )
     audit(
         actor=actor, action=AuditAction.VITAL_SIGNS_RECORDED,
-        target=vital_signs, vital_signs_id=vital_signs.pk,
+        target=vital_signs, center=encounter.center,
+        vital_signs_id=vital_signs.pk,
         encounter_id=encounter.pk, patient_id=encounter.patient_id,
         center_id=encounter.center_id, fields=",".join(recorded),
     )
@@ -255,7 +260,8 @@ def create_patient_document(*, actor, center, patient, uploaded_file,
     )
     audit(
         actor=actor, action=AuditAction.PATIENT_DOCUMENT_CREATED,
-        target=document, document_id=document.pk, patient_id=patient.pk,
+        target=document, center=center,
+        document_id=document.pk, patient_id=patient.pk,
         center_id=center.pk, doc_type=str(doc_type),
     )
     return document
@@ -276,7 +282,7 @@ def archive_patient_document(*, actor, document):
     document.save(update_fields=["archived_at", "archived_by", "updated_at"])
     audit(
         actor=actor, action=AuditAction.PATIENT_DOCUMENT_ARCHIVED,
-        target=document, document_id=document.pk,
+        target=document, center=document.center, document_id=document.pk,
         patient_id=document.patient_id, center_id=document.center_id,
         doc_type=str(document.doc_type),
     )

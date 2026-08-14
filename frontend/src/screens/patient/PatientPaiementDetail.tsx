@@ -329,6 +329,7 @@ export function PatientPaiementDetail({ requestId }: { requestId: number }) {
           <select
             id="pd-share-link"
             className="ax-select ax-select--lg"
+            data-autofocus=""
             value={shareLinkId}
             onChange={(e) => setShareLinkId(e.target.value === '' ? '' : Number(e.target.value))}
           >
@@ -370,6 +371,7 @@ export function PatientPaiementDetail({ requestId }: { requestId: number }) {
           <textarea
             id="pd-dispute-reason"
             className={`ax-textarea${disputeFieldError ? ' is-invalid' : ''}`}
+            data-autofocus=""
             rows={4}
             value={disputeReason}
             onChange={(e) => {

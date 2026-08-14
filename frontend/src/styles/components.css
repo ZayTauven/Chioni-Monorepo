@@ -181,6 +181,21 @@
     display: flex;
     width: 100%;
   }
+  /* — libellé sur plusieurs lignes, au lieu de « Demander la suppression de
+       mon c… » — pour les boutons pleine largeur d'une colonne étroite (rail
+       de droite, téléphone) et pour les langues plus longues que le français
+       (shikomori, phase 2). `.ax-btn` coupe par défaut : c'est le bon réglage
+       pour une barre d'outils, jamais pour une action qu'on doit comprendre
+       avant de la choisir. `min-height` suffit à laisser grandir le bouton. */
+  .ax-btn--wrap {
+    white-space: normal;
+    padding-block: var(--ax-space-2);
+  }
+  .ax-btn--wrap .ax-btn__label {
+    overflow: visible;
+    text-overflow: clip;
+    text-align: center;
+  }
   .ax-btn--pill {
     border-radius: var(--ax-radius-pill);
   }
@@ -1449,6 +1464,11 @@
     width: 100%;
     max-width: 560px;
     max-height: calc(100vh - var(--ax-space-16));
+    /* Android : `100vh` ignore la barre d'adresse, donc le bas du dialogue —
+       c'est-à-dire ses boutons — pouvait tomber sous le bord visible. `dvh`
+       suit la hauteur réellement affichée. Déclarée EN SECOND, jamais seule :
+       un navigateur qui ne connaît pas l'unité ignore la ligne et garde `vh`. */
+    max-height: calc(100dvh - var(--ax-space-16));
     margin: auto;
     color: var(--ax-text);
     background: var(--ax-surface-overlay);

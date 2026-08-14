@@ -42,8 +42,15 @@ from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 from django.utils import timezone
 
+from apps.accounts import services as account_services
+from apps.accounts.models import ErasureRequest, PlatformStaff
 from apps.centers import services as center_services
-from apps.centers.models import HealthCenter, StaffMembership, TariffItem
+from apps.centers.models import (
+    HealthCenter,
+    KycDocument,
+    StaffMembership,
+    TariffItem,
+)
 from apps.common.models import ActCategory, Currency
 from apps.medical import services as medical_services
 from apps.medical.models import (
@@ -74,6 +81,8 @@ CENTER_PHONE = "+2697731001"  # fictional Moroni landline
 PATIENT_PHONE = "+2693440001"
 GUARDIAN_PHONE = "+33612345678"
 GUARDIAN2_PHONE = "+33698765432"
+#: S4 (ADR 0017) — the fourth hat: a Chioni operator, tenant-side of nothing.
+PLATFORM_PHONE = "+2693440020"
 
 #: The money scenario is found back (idempotence) by these reasons.
 ENCOUNTER_1_REASON = "Contrôle hypertension"
@@ -125,6 +134,7 @@ class Command(BaseCommand):
 
     def _seed(self):
         admin = self._ensure_superuser()
+        self._ensure_platform_staff()
         center = self._ensure_center()
         # The director is provisioned by the back-office (admin); the
         # director then onboards the rest of the team — the real chain.
@@ -141,6 +151,7 @@ class Command(BaseCommand):
         doctor = staff[StaffMembership.Role.DOCTOR]
         cashier = staff[StaffMembership.Role.CASHIER]
         tariffs = self._ensure_tariffs(center=center, director=director)
+        self._ensure_kyc_document(center=center, director=director)
 
         guardian2, guardian2_profile = self._ensure_guardian(
             username="tuteur2.demo", phone=GUARDIAN2_PHONE,
@@ -170,6 +181,7 @@ class Command(BaseCommand):
             center=center, patient=patient, patient_user=patient_user,
             doctor=doctor, cashier=cashier, encounter=first_encounter,
         )
+        self._ensure_erasure_request(user=guardian2)
 
         return {
             "center": center,
@@ -191,6 +203,74 @@ class Command(BaseCommand):
         else:
             self._note("Superuser « admin » déjà en place.")
         return admin
+
+    def _ensure_platform_staff(self):
+        """S4 (ADR 0017) — the demo Chioni operator (4ᵉ espace).
+
+        Deliberately WITHOUT ``is_staff``: the whole point of the sprint is
+        that admin flags grant no product right. This account opens the
+        back-office space and nothing else — no Django admin, no tenant,
+        no patient.
+        """
+        user = self._ensure_user(
+            "plateforme.demo", phone=PLATFORM_PHONE,
+            first_name="Zaïnaba", last_name="Combo", verify_phone=True,
+        )
+        operator = PlatformStaff.objects.filter(user=user).first()
+        if operator is None:
+            PlatformStaff.objects.create(
+                user=user, role=PlatformStaff.Role.ADMIN, is_active=True
+            )
+            self._note(
+                "Équipe Chioni : plateforme.demo (administrateur) — "
+                "espace back-office."
+            )
+        else:
+            self._note("Équipe Chioni : plateforme.demo déjà en place.")
+        return user
+
+    def _ensure_erasure_request(self, *, user):
+        """S4 lot 3 (ADR 0017 §7) — one PENDING erasure request to demo.
+
+        Deposited by ``tuteur2.demo``, the guardian whose link is parked
+        behind the claimant-confirmation gate: the back-office queue has
+        something real to show, and processing it in demo revokes exactly
+        that pending link — without touching the money scenario carried by
+        ``tuteur.demo``. Written through the real service (audited).
+        """
+        if ErasureRequest.objects.filter(user=user).exists():
+            self._note("RGPD : demande d'effacement déjà en place.")
+            return
+        account_services.request_erasure(user=user)
+        self._note(
+            "RGPD : demande d'effacement déposée par tuteur2.demo "
+            "(en attente, à traiter depuis l'espace plateforme)."
+        )
+
+    def _ensure_kyc_document(self, *, center, director):
+        """One KYC piece on the demo center — the director provides it, the
+        platform reads it (private storage: no URL, ever)."""
+        if KycDocument.objects.for_center(center).exists():
+            return
+        from PIL import Image, ImageDraw
+
+        buffer = BytesIO()
+        image = Image.new("RGB", (800, 560), "white")
+        ImageDraw.Draw(image).text(
+            (24, 24),
+            "Registre du commerce — Clinique Ylang (démo)",
+            fill="black",
+        )
+        image.save(buffer, format="JPEG", quality=90)
+        center_services.upload_kyc_document(
+            actor=director,
+            center=center,
+            uploaded_file=SimpleUploadedFile(
+                "registre.jpg", buffer.getvalue(), content_type="image/jpeg"
+            ),
+            doc_type=KycDocument.DocType.TRADE_REGISTER,
+        )
+        self._note("Dossier KYC : registre du commerce déposé (privé).")
 
     def _ensure_center(self):
         # KYC note: there is no tenant-side service for kyc_status (the
@@ -594,6 +674,9 @@ class Command(BaseCommand):
             ("tuteur2.demo", GUARDIAN2_PHONE,
              "Rachida Ahmed — tutrice (famille élargie)",
              "Espace tuteur — lien en attente"),
+            ("plateforme.demo", PLATFORM_PHONE,
+             "Zaïnaba Combo — équipe Chioni (admin)",
+             "Espace plateforme (back-office)"),
         ]
         widths = [
             max(len(row[i]) for row in rows) for i in range(len(rows[0]))
@@ -647,6 +730,13 @@ class Command(BaseCommand):
             "(demande payée → soin confirmé).",
             "6. Caissier : clôturer la demande → reçu double devise "
             "(EUR payé / KMF reçu), visible du tuteur et de la patiente.",
+            "7. Plateforme : connexion plateforme.demo → GET "
+            "/api/v1/platform/centers/ (dossier KYC, compteurs staff) ; "
+            "suspendre puis réactiver la Clinique Ylang — seul le rail "
+            "diaspora se ferme, la caisse continue.",
+            "8. RGPD : GET /api/v1/platform/erasure-requests/ — la demande "
+            "de tuteur2.demo attend ; la traiter anonymise son compte "
+            "(le carnet d'Anfia, lui, n'est jamais effacé).",
         ):
             write(f"  {step}")
         write("")

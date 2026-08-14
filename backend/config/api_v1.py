@@ -13,6 +13,14 @@ urlpatterns = [
     path("health/", HealthCheckView.as_view(), name="health"),
     path("auth/", include("apps.accounts.urls")),
     path("centers/", include("apps.centers.urls")),
+    # S4 (ADR 0017) — back-office Chioni, 4ᵉ casquette. Chaque route de ce
+    # préfixe DOIT déclarer IsPlatformStaff (garde-fou structurel testé).
+    # Plusieurs modules se montent sur le MÊME préfixe (tenant/KYC dans
+    # centers, réconciliation PSP dans trustbridge) : Django résout les
+    # includes successifs sans conflit et le garde-fou les couvre tous.
+    path("platform/", include("apps.centers.platform_urls")),
+    path("platform/", include("apps.trustbridge.platform_urls")),
+    path("platform/", include("apps.accounts.platform_urls")),
     path("", include("apps.patients.urls")),
     path("", include("apps.medical.urls")),
     path("", include("apps.scheduling.urls")),

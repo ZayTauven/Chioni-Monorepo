@@ -42,6 +42,7 @@ import type {
   PaymentRequestGuardian,
 } from '@/lib/types';
 import { useAuth } from '@/context/AuthContext';
+import { MyDataCard } from '@/screens/lite/MyDataCard';
 import {
   DeclineInvitationModal,
   EmptyState,
@@ -425,6 +426,17 @@ export function TuteurHome() {
 
           {/* 5 — profile (S2 : pays et devise modifiables) */}
           {profile && <ProfileCard phone={me?.phone ?? ''} profile={profile} />}
+
+          {/* 6 — mes données (S4, ADR 0017 décision 7). Placée dans la zone
+              « profil » : l'espace tuteur n'a pas de page dédiée, son profil
+              vit ici — le même geste RGPD que côté patient, au même endroit
+              relatif (juste sous les informations personnelles). */}
+          <section aria-label="Mes données" className="ax-stack" style={{ gap: 'var(--ax-space-3)' }}>
+            <h2 className="tuteur-section-title">Mes données</h2>
+            {/* Le titre de section est celui de l'espace tuteur : la carte ne
+                redit pas le sien (il s'affichait en double). */}
+            <MyDataCard showHeading={false} />
+          </section>
         </>
       )}
 

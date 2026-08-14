@@ -1,12 +1,12 @@
 """Central permission toolkit — audiences (« casquettes ») are defined HERE.
 
-Chioni serves three audiences and a user may hold several hats at once
+Chioni serves four audiences and a user may hold several hats at once
 (doctor in a center AND guardian of a relative — ADR 0001). Cross-hat
 privilege bleed is prevented by construction: every view declares exactly
 ONE audience through these classes/helpers, and derives its queryset from
 that audience only — never from "any right the user happens to hold".
 
-The three audiences:
+The four audiences:
 
 - **Staff of a center** — ``IsStaffOfCenter(*roles)`` + ``CenterScopedViewMixin``.
   Operating data is tenant-scoped (ADR 0002): the mixin resolves the center
@@ -24,6 +24,13 @@ The three audiences:
   single place where the two halves are combined (scope × link perimeter);
   guardian views must build their querysets from them and nothing else.
 
+- **A Chioni operator** — ``IsPlatformStaff(*roles)`` (S4, ADR 0017). The
+  FOURTH hat, added by the « tenant de plein droit » sprint: it governs
+  the TENANT (centers, KYC, subscription, technical reconciliation) and
+  NEVER sees a patient — no clinical data, no patient PII, no patient
+  serializer under ``/api/v1/platform/``. ``is_staff``/``is_superuser``
+  grant NOTHING here: the right is a dedicated ``PlatformStaff`` row.
+
 IDOR policy (mission rule "jamais de 404-par-hasard"): scoping happens in
 the QUERYSET, so an object outside the caller's perimeter is structurally
 indistinguishable from a non-existent one — deterministic 404, for both
@@ -34,6 +41,7 @@ from django.utils.functional import cached_property
 from rest_framework.exceptions import NotFound
 from rest_framework.permissions import BasePermission
 
+from apps.accounts.models import PlatformStaff
 from apps.centers.models import HealthCenter, StaffMembership
 from apps.medical.models import Consent
 from apps.patients.models import GuardianLink, GuardianProfile, PatientProfile
@@ -83,6 +91,24 @@ def guardian_profile(user):
         return user.guardian_profile
     except GuardianProfile.DoesNotExist:
         return None
+
+
+def platform_staff(user):
+    """The caller's ACTIVE Chioni-operator row, or None (S4 — ADR 0017).
+
+    Mirrors :func:`claimed_patient_profile`: only a row that OPENS the
+    space is returned, so ``/auth/me/`` and the permission share one truth
+    (a deactivated operator is indistinguishable from someone who never
+    was one). ``is_staff``/``is_superuser`` are deliberately NOT consulted:
+    those flags govern the Django admin, not the product.
+    """
+    if not (user and user.is_authenticated):
+        return None
+    try:
+        row = user.platform_staff
+    except PlatformStaff.DoesNotExist:
+        return None
+    return row if row.is_active else None
 
 
 # ---------------------------------------------------------------------------
@@ -327,3 +353,54 @@ def IsGuardianWithScope(scope):
             return False
 
     return _IsGuardianWithScope
+
+
+# ---------------------------------------------------------------------------
+# Audience: a Chioni operator (S4 — the fourth hat, ADR 0017)
+# ---------------------------------------------------------------------------
+#
+# Two levels, like the tenant hats: the SPACE door (any active operator)
+# and the WRITE door (``admin`` role). ``support`` reads — centers, KYC,
+# reconciliation; ``admin`` alone writes — creating a center, changing a
+# KYC status, running an erasure (S4 lot 3).
+#
+# Testable guard-rail: the class exposes a ``platform_gate`` marker so the
+# structural test (tests/test_permissions_platform.py) can walk every
+# ``/api/v1/platform/…`` route and refuse a view that declares no platform
+# permission — same patron as the ``/guardian/`` rail. A new back-office
+# endpoint cannot ship unguarded, and cannot ship exposing a patient.
+
+
+def IsPlatformStaff(*roles):
+    """Factory: permission class requiring an ACTIVE ``PlatformStaff`` row.
+
+    - anonymous                       → 401
+    - authenticated, no operator row  → 403 « Réservé à l'équipe Chioni. »
+      (a Django superuser WITHOUT a row lands here — locked by test:
+      admin flags are not product rights)
+    - operator with the wrong role    → 403 with its own message
+
+    Called without arguments, any active operator role is accepted.
+    """
+
+    class _IsPlatformStaff(BasePermission):
+        message = "Réservé à l'équipe Chioni."
+        platform_gate = True
+        required_platform_roles = tuple(roles)
+
+        def has_permission(self, request, view):
+            operator = platform_staff(request.user)
+            if operator is None:
+                return False
+            if (
+                self.required_platform_roles
+                and operator.role not in self.required_platform_roles
+            ):
+                self.message = (
+                    "Cette action est réservée aux administrateurs "
+                    "de la plateforme Chioni."
+                )
+                return False
+            return True
+
+    return _IsPlatformStaff

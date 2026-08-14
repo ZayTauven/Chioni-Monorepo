@@ -29,11 +29,20 @@ from django.db import models, transaction
 from django.utils import timezone
 from django.utils.crypto import constant_time_compare, salted_hmac
 
-from apps.accounts.models import OtpCode
+from apps.accounts.models import ErasureRequest, OtpCode, PlatformStaff
 from apps.accounts.tasks import send_sms
 from apps.audit.services import AuditAction, audit
+from apps.centers.services import (
+    centers_locked_by_last_director,
+    deactivate_staff_member,
+)
 from apps.common.uploads import clear_file, process_image_upload, replace_file
-from apps.patients.models import GuardianLink, PatientProfile
+from apps.patients.models import (
+    GuardianLink,
+    GuardianProfile,
+    PatientInsurance,
+    PatientProfile,
+)
 from apps.patients.services import claim_profile
 
 OTP_LENGTH = 6
@@ -368,3 +377,396 @@ def _auto_claim_profile(user):
     if profile is None:
         return None
     return claim_profile(user=user, profile=profile)
+
+
+# ---------------------------------------------------------------------------
+# RGPD — right to erasure by ANONYMISATION (ADR 0007, implemented S4 lot 3)
+# ---------------------------------------------------------------------------
+#
+# Chioni rests on two immutabilities: the double-entry ledger and the audit
+# trail (ADR 0003/0006, PostgreSQL triggers). Physically deleting a ``User``
+# would break the ``PROTECT`` FKs that guarantee « chaque franc relié à un
+# payeur », and rewriting the ledger or the log to remove a name is exactly
+# what those triggers forbid. So erasure is a TOMBSTONE: the row survives as
+# a technical anchor, stripped of every personal datum.
+#
+# What is deliberately NOT erased, and why (ADR 0007):
+#
+# - **the health record** (Encounter, Prescription, HealthRecordEntry,
+#   VitalSigns, PatientDocument, PatientMedicalFile): it belongs to the
+#   PATIENT (ADR 0002) and follows the local law on medical-record
+#   retention. It becomes an orphan of identity — attached to a profile
+#   that no longer names anyone. This is a CHOICE, locked by test ;
+# - **the ledger**: no PII by construction (enumerated accounts, amounts,
+#   currencies) ;
+# - **the audit trail**: references only (ADR 0007), so anonymising the
+#   account mechanically anonymises the whole history that references it,
+#   without rewriting a single append-only row ;
+# - **invoices, receipts, cash receipts**: accounting evidence the CENTER
+#   must keep; they carry ids and amounts, never a name.
+
+#: Machine codes of what forbids anonymising an account RIGHT NOW.
+#: They are refusals to be FIXED, not verdicts: the API helps, the operator
+#: (and the tenant) act — hence a pending request stays pending.
+ERASURE_BLOCKER_LAST_DIRECTOR = "dernier_directeur"
+ERASURE_BLOCKER_PAYMENT_IN_FLIGHT = "paiement_en_cours"
+ERASURE_BLOCKER_LAST_PLATFORM_ADMIN = "dernier_admin_plateforme"
+
+#: One French sentence per blocker — rendered to the operator (400) and,
+#: as a code, in the back-office payload. Never a name, never a phone.
+ERASURE_BLOCKER_MESSAGES = {
+    ERASURE_BLOCKER_LAST_DIRECTOR: (
+        "Effacement refusé : cette personne est le dernier directeur actif "
+        "d'un centre. Nommez un autre directeur avant d'effacer son compte "
+        "— sinon le centre perdrait l'accès à son propre espace."
+    ),
+    ERASURE_BLOCKER_PAYMENT_IN_FLIGHT: (
+        "Effacement refusé : un paiement est en cours pour cette personne. "
+        "Le paiement doit d'abord aboutir (ou être annulé par la purge "
+        "horaire des intentions abandonnées)."
+    ),
+    ERASURE_BLOCKER_LAST_PLATFORM_ADMIN: (
+        "Effacement refusé : cette personne est le dernier administrateur "
+        "actif de la plateforme Chioni. Nommez un autre administrateur "
+        "avant d'effacer son compte."
+    ),
+}
+
+#: Decisions accepted by :func:`process_erasure_request`.
+ERASURE_DECISION_ANONYMIZE = "anonymiser"
+ERASURE_DECISION_REFUSE = "refuser"
+
+#: Neutral, readable labels for the tombstoned identities. A staff member
+#: browsing an old consultation list must SEE that the person exercised
+#: their right, not a blank row that looks like a bug. The pk keeps two
+#: anonymised patients distinguishable in a list without naming anyone.
+ANONYMIZED_USERNAME_TEMPLATE = "anon-{pk}"
+ANONYMIZED_PATIENT_FIRST_NAME = "Patient"
+ANONYMIZED_PATIENT_LAST_NAME_TEMPLATE = "anonymisé #{pk}"
+ANONYMIZED_INSURER_LABEL = "Assurance anonymisée"
+
+
+def erasure_blockers(user, *, lock=False):
+    """Codes of everything that forbids anonymising ``user`` right now.
+
+    Empty list = the erasure can be executed. Deliberately a LIST of codes
+    rather than a boolean: the operator must be told everything that stands
+    in the way, in one answer, not discover them one refusal at a time.
+
+    ``lock`` (revue adversariale S4) separates the two audiences of this
+    function, which used to be conflated:
+
+    - ``False`` (default) — a READ. The back-office queue renders these
+      codes inside a plain GET, outside any transaction; taking a row lock
+      there raised ``TransactionManagementError`` (a 500 any director could
+      trigger by simply filing an erasure request) ;
+    - ``True`` — the answer is about to DECIDE a write. The « last
+      director » and « last platform admin » rows are then locked
+      ``FOR UPDATE`` in pk order, so two erasures racing on the two last
+      holders of a seat serialise instead of both passing (same failure
+      mode, and same parade, as the vague-1 fix on staff deactivation).
+    """
+    from apps.trustbridge.models import PaymentIntent
+
+    blockers = []
+    if centers_locked_by_last_director(user, lock=lock):
+        blockers.append(ERASURE_BLOCKER_LAST_DIRECTOR)
+    # A PSP payment still in the air: the money must land (or the hourly
+    # zombie purge must cancel it) before the payer's account disappears —
+    # a debit reaching a tombstone would be unreconcilable.
+    if PaymentIntent.objects.filter(
+        guardian__user=user,
+        status__in=(
+            PaymentIntent.Status.CREATED,
+            PaymentIntent.Status.PROCESSING,
+        ),
+    ).exists():
+        blockers.append(ERASURE_BLOCKER_PAYMENT_IN_FLIGHT)
+    # Symmetric of the tenant guard, one floor up: losing every platform
+    # ``admin`` would lock Chioni out of its own back-office (only the
+    # Django admin could rebuild one). Judged necessary — an operator IS a
+    # person and may ask, they just cannot be the last one standing.
+    if _is_last_platform_admin(user, lock=lock):
+        blockers.append(ERASURE_BLOCKER_LAST_PLATFORM_ADMIN)
+    return blockers
+
+
+def _is_last_platform_admin(user, *, lock):
+    """True when ``user`` is the ONLY active platform ``admin`` left.
+
+    The whole active-admin set is read (and, when ``lock``, locked in pk
+    order) rather than « does another one exist »: an ordered row lock is
+    what makes two concurrent erasures serialise. Without it, each
+    transaction saw the other admin still active, both passed, and Chioni
+    ended with ZERO administrators — the exact lock-out this guard exists
+    to prevent (probed with real threads in
+    ``tests/test_adversarial_s4.py``).
+    """
+    admins = PlatformStaff.objects.filter(
+        is_active=True, role=PlatformStaff.Role.ADMIN
+    ).order_by("pk")
+    if lock:
+        admins = admins.select_for_update()
+    rows = list(admins)
+    return bool(rows) and all(row.user_id == user.pk for row in rows)
+
+
+@transaction.atomic
+def request_erasure(*, user):
+    """The user deposits an erasure request from their OWN space.
+
+    Any hat may ask (a patient, a guardian, a staff member, an operator):
+    the row references the ``User``, never a casquette. At most ONE open
+    request per person — the user row is locked so two concurrent taps
+    serialise into one request instead of an IntegrityError.
+
+    Audited ``erasure.requested`` — references only.
+    """
+    get_user_model().objects.select_for_update().get(pk=user.pk)
+    if ErasureRequest.objects.filter(
+        user=user, status=ErasureRequest.Status.PENDING
+    ).exists():
+        raise ValidationError(
+            "Une demande d'effacement est déjà en cours pour votre compte."
+        )
+    erasure_request = ErasureRequest.objects.create(user=user)
+    audit(
+        actor=user, action=AuditAction.ERASURE_REQUESTED, target=erasure_request,
+        erasure_request_id=erasure_request.pk, user_id=user.pk,
+    )
+    return erasure_request
+
+
+@transaction.atomic
+def process_erasure_request(*, actor, erasure_request, decision, refusal_reason=""):
+    """The Chioni operator (``admin``) executes or refuses the erasure.
+
+    Two decisions, both explicit and both traced:
+
+    - ``anonymiser`` — runs :func:`erasure_blockers` first. **A blocked
+      request is NOT auto-refused**: it stays ``en_attente`` and the
+      operator gets the French sentences telling them what to fix (name
+      another director, wait for the payment). Closing the request would
+      force the person to ask twice for something Chioni simply was not
+      ready to do yet ;
+    - ``refuser`` — motive MANDATORY. Unlike ``kyc_reason`` or
+      ``Invoice.cancel_reason``, this free text is written FOR the person
+      concerned and is rendered to them (RGPD art. 12.4). It still never
+      enters an audit payload (ADR 0007).
+
+    The request row is locked: two operators clicking at once serialise,
+    the second finds a request that is no longer pending and gets a 400.
+    """
+    erasure_request = (
+        ErasureRequest.objects.select_for_update()
+        .select_related("user")
+        .get(pk=erasure_request.pk)
+    )
+    if erasure_request.status != ErasureRequest.Status.PENDING:
+        raise ValidationError(
+            "Cette demande d'effacement a déjà été traitée."
+        )
+    if decision not in (ERASURE_DECISION_ANONYMIZE, ERASURE_DECISION_REFUSE):
+        raise ValidationError("Décision inconnue : « anonymiser » ou « refuser ».")
+
+    now = timezone.now()
+    if decision == ERASURE_DECISION_REFUSE:
+        reason = (refusal_reason or "").strip()
+        if not reason:
+            raise ValidationError(
+                "Le motif du refus est obligatoire : la personne a le droit "
+                "de savoir pourquoi sa demande n'est pas suivie."
+            )
+        erasure_request.status = ErasureRequest.Status.REFUSED
+        erasure_request.refusal_reason = reason
+        erasure_request.processed_by = actor
+        erasure_request.processed_at = now
+        erasure_request.save(
+            update_fields=[
+                "status", "refusal_reason", "processed_by", "processed_at",
+                "updated_at",
+            ]
+        )
+        audit(
+            actor=actor, action=AuditAction.ERASURE_REFUSED, target=erasure_request,
+            erasure_request_id=erasure_request.pk,
+            user_id=erasure_request.user_id,
+            has_reason=True,
+        )
+        return erasure_request
+
+    blockers = erasure_blockers(erasure_request.user, lock=True)
+    if blockers:
+        raise ValidationError(
+            [ERASURE_BLOCKER_MESSAGES[code] for code in blockers]
+        )
+    anonymize_user(actor=actor, user=erasure_request.user)
+    erasure_request.status = ErasureRequest.Status.PROCESSED
+    erasure_request.processed_by = actor
+    erasure_request.processed_at = now
+    erasure_request.save(
+        update_fields=["status", "processed_by", "processed_at", "updated_at"]
+    )
+    audit(
+        actor=actor, action=AuditAction.ERASURE_PROCESSED, target=erasure_request,
+        erasure_request_id=erasure_request.pk, user_id=erasure_request.user_id,
+    )
+    return erasure_request
+
+
+@transaction.atomic
+def anonymize_user(*, actor, user):
+    """Tombstone ``user``: every personal datum goes, the row stays.
+
+    NEVER a ``DELETE`` — anywhere. What this does, in order:
+
+    1. revokes every surviving guardianship link the person is party to,
+       **in both directions** (as a guardian AND, when they own a patient
+       profile, as a protégé): ``GuardianLink.revoke()`` cascades on the
+       active consents (ADR 0004), so no scope survives the account ;
+    2. deactivates their active staff memberships (the tenant must not
+       keep a phantom member it can no longer even call) and their
+       platform-operator row ;
+    3. anonymises the patient profile (identity + the six extended S3
+       fields) and its insurance lines, and the guardian profile ;
+    4. purges the OTP codes of the old phone — that table stores the
+       number IN CLEAR (it is an authentication utility table) ;
+    5. neutralises the account itself: deterministic ``anon-{pk}``
+       username, empty names and e-mail, ``phone`` back to ``NULL`` (the
+       identity pivot disappears — the unique column is nullable exactly
+       for this), unverified, unusable password, avatar file deleted from
+       storage, ``is_active=False``, ``anonymized_at`` posed.
+
+    **Idempotent** and safe on an already-inactive account: re-running
+    revokes nothing more, deletes no file that is gone, and keeps the
+    FIRST ``anonymized_at`` (the date of the erasure is itself a fact).
+
+    **The refusal guards are re-evaluated HERE, under the user row lock**
+    (revue adversariale S4). Two reasons, both proved by probes:
+
+    1. this service is public and irreversible — called on its own (a
+       shell, a future admin action, a management command) it used to
+       happily tombstone the LAST director of a center and lock the tenant
+       out of its own space. A guard that lives only in the caller is not
+       a guard ;
+    2. it closes the TOCTOU with a payment in flight: the check in
+       ``process_erasure_request`` ran before the lock, so a guardian's
+       ``pay/`` committing in between left a live PSP intent pointing at a
+       tombstone. ``create_payment_intent`` now takes the SAME user row
+       lock first, so the two paths serialise: whoever arrives second sees
+       the other's committed work and refuses.
+
+    Lock hierarchy, extended by one OUTERMOST level and unchanged below:
+    **utilisateur → intent → demande → facture → centre**.
+    """
+    User = get_user_model()
+    user = User.objects.select_for_update().get(pk=user.pk)
+    blockers = erasure_blockers(user, lock=True)
+    if blockers:
+        raise ValidationError([ERASURE_BLOCKER_MESSAGES[code] for code in blockers])
+    old_phone = user.phone
+    already_anonymized = user.anonymized_at is not None
+
+    patient_profile = PatientProfile.objects.filter(user=user).first()
+    guardian = GuardianProfile.objects.filter(user=user).first()
+
+    # 1 — guardianship dies with the account, both directions.
+    links_revoked = 0
+    link_filter = models.Q(pk__in=[])
+    if guardian is not None:
+        link_filter |= models.Q(guardian=guardian)
+    if patient_profile is not None:
+        link_filter |= models.Q(patient=patient_profile)
+    for link in (
+        GuardianLink.objects.filter(link_filter)
+        .exclude(status=GuardianLink.Status.REVOKED)
+        .select_related("guardian__user", "patient")
+    ):
+        link.revoke()
+        audit(
+            actor=actor, action=AuditAction.LINK_REVOKED, target=link,
+            link_id=link.pk, patient_id=link.patient_id,
+            guardian_id=link.guardian_id, reason="user_anonymized",
+        )
+        links_revoked += 1
+
+    # 2 — the hats close. Staff memberships go through their own service
+    # (audited ``staff.membership_deactivated``, visible in the director's
+    # journal: a member leaving is the tenant's business). The last-director
+    # guard inside it can no longer fire — ``erasure_blockers`` refused the
+    # whole erasure upstream.
+    memberships_deactivated = 0
+    for membership in user.staff_memberships.filter(is_active=True):
+        deactivate_staff_member(actor=actor, membership=membership)
+        memberships_deactivated += 1
+    operator = PlatformStaff.objects.filter(user=user, is_active=True).first()
+    if operator is not None:
+        operator.is_active = False
+        operator.save(update_fields=["is_active", "updated_at"])
+
+    # 3 — the profiles. The carnet itself is NOT touched (ADR 0007).
+    insurances_anonymized = 0
+    if patient_profile is not None:
+        patient_profile.first_name = ANONYMIZED_PATIENT_FIRST_NAME
+        patient_profile.last_name = ANONYMIZED_PATIENT_LAST_NAME_TEMPLATE.format(
+            pk=patient_profile.pk
+        )
+        patient_profile.birth_date = None
+        patient_profile.sex = ""
+        patient_profile.phone = ""
+        patient_profile.city = ""
+        patient_profile.address = ""
+        patient_profile.phone_alt = ""
+        patient_profile.national_id = ""
+        patient_profile.emergency_contact_name = ""
+        patient_profile.emergency_contact_phone = ""
+        patient_profile.emergency_contact_relationship = ""
+        patient_profile.save()
+        for insurance in PatientInsurance.objects.filter(patient=patient_profile):
+            insurance.insurer_name = ANONYMIZED_INSURER_LABEL
+            insurance.member_number = ""
+            insurance.notes = ""
+            insurance.save(
+                update_fields=[
+                    "insurer_name", "member_number", "notes", "updated_at",
+                ]
+            )
+            insurances_anonymized += 1
+    if guardian is not None:
+        # Country of residence is location data about a person — it goes.
+        # ``preferred_currency`` is a display preference, not a personal
+        # datum, and is left alone.
+        guardian.country_of_residence = ""
+        guardian.save(update_fields=["country_of_residence", "updated_at"])
+
+    # 4 — the only table storing a phone in clear.
+    otp_purged = 0
+    if old_phone:
+        otp_purged, _ = OtpCode.objects.filter(phone=old_phone).delete()
+
+    # 5 — the account itself.
+    clear_file(user, "avatar")
+    user.username = ANONYMIZED_USERNAME_TEMPLATE.format(pk=user.pk)
+    user.first_name = ""
+    user.last_name = ""
+    user.email = ""
+    user.phone = None
+    user.phone_verified_at = None
+    user.is_active = False
+    user.set_unusable_password()
+    if not already_anonymized:
+        user.anonymized_at = timezone.now()
+    user.save()
+
+    audit(
+        actor=actor, action=AuditAction.USER_ANONYMIZED, target=user,
+        user_id=user.pk,
+        had_patient_profile=patient_profile is not None,
+        had_guardian_profile=guardian is not None,
+        links_revoked=links_revoked,
+        memberships_deactivated=memberships_deactivated,
+        insurances_anonymized=insurances_anonymized,
+        otp_codes_purged=otp_purged,
+        replay=already_anonymized,
+    )
+    return user

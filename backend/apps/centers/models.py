@@ -7,11 +7,13 @@ through it so no data ever leaks between centers.
 """
 
 from django.conf import settings
+from django.core.exceptions import ValidationError
 from django.db import models
 from django.db.models.functions import Round
 
 from apps.common.models import ActCategory, TimeStampedModel
 from apps.common.money import validate_kmf_integral
+from apps.common.private_storage import PrivateMediaStorage
 
 
 class CenterScopedQuerySet(models.QuerySet):
@@ -60,7 +62,32 @@ class HealthCenter(TimeStampedModel):
         max_length=16,
         choices=KycStatus.choices,
         default=KycStatus.PENDING,
-        help_text="Un centre ne peut recevoir de paiements qu'une fois vérifié (actif).",
+        help_text=(
+            "Un centre ne peut recevoir de paiements de la diaspora qu'une "
+            "fois vérifié (actif). « suspendu » ferme le RAIL DIASPORA et lui "
+            "seul : le soin et la caisse locale continuent (ADR 0017)."
+        ),
+    )
+    # S4 (ADR 0017, décision 3) — trace de la DERNIÈRE décision KYC. Le motif
+    # est visible de la plateforme et du directeur du centre concerné, JAMAIS
+    # d'un patient ni d'un tuteur, et JAMAIS d'un payload d'audit (texte libre
+    # = même classe que le motif d'un litige — ADR 0007).
+    kyc_reason = models.TextField(
+        "motif de la décision KYC",
+        blank=True,
+        help_text=(
+            "Obligatoire pour une suspension. Visible de la plateforme et du "
+            "directeur du centre — jamais du patient ni du tuteur."
+        ),
+    )
+    kyc_updated_at = models.DateTimeField("KYC décidé le", null=True, blank=True)
+    kyc_updated_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        verbose_name="KYC décidé par",
+        on_delete=models.PROTECT,
+        related_name="kyc_decisions",
+        null=True,
+        blank=True,
     )
     # « Nullable » au sens produit : pas de logo = chaîne vide (convention
     # Django pour FileField — null=True y est déconseillé) ; les serializers
@@ -83,6 +110,96 @@ class HealthCenter(TimeStampedModel):
 
     def __str__(self) -> str:
         return f"{self.name} ({self.get_island_display()})"
+
+
+class KycDocument(TimeStampedModel):
+    """One supporting document of a center's KYC file (ADR 0017, décision 3).
+
+    Provided by the center's DIRECTOR (it is his paperwork), read by the
+    Chioni platform to decide the KYC transition. Two hard contracts,
+    inherited from ``medical.PatientDocument`` (ADR 0016 §5) — a director's
+    ID card deserves exactly the same care as a lab result:
+
+    - **Upload**: the bytes go through the ADR 0014 hardened pipeline
+      (JPEG/PNG/WebP by REAL content — the PDF stays deferred, arbitrage
+      réversible de l'ADR 0017 —, 2 MB, re-encode stripping EXIF/GPS, uuid
+      name). Enforced by the service, throttle ``uploads``.
+    - **Private diffusion**: the file lives under ``PRIVATE_MEDIA_ROOT``
+      (storage below), NEVER under ``MEDIA_URL``; no serializer exposes a
+      URL; reading goes through authenticated download endpoints that
+      replay the exact list permissions.
+
+    Archiving (``archived_at``/``archived_by``) is the correction path: a
+    KYC piece is never deleted — the decision it supported must stay
+    auditable. Archiving is FINAL (structural guard in ``save()``).
+    """
+
+    class DocType(models.TextChoices):
+        TRADE_REGISTER = "registre_commerce", "Registre du commerce"
+        HEALTH_LICENCE = "licence_sante", "Licence sanitaire"
+        DIRECTOR_ID = "piece_identite_directeur", "Pièce d'identité du directeur"
+        OTHER = "autre", "Autre"
+
+    center = models.ForeignKey(
+        HealthCenter,
+        verbose_name="centre",
+        on_delete=models.PROTECT,
+        related_name="kyc_documents",
+    )
+    doc_type = models.CharField(
+        "type de pièce", max_length=32, choices=DocType.choices
+    )
+    file = models.FileField(
+        "fichier",
+        storage=PrivateMediaStorage(),
+        upload_to="kyc_documents/%Y/%m/",
+        max_length=255,
+    )
+    uploaded_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        verbose_name="déposé par",
+        on_delete=models.PROTECT,
+        related_name="kyc_documents_uploaded",
+    )
+    archived_at = models.DateTimeField("archivé le", null=True, blank=True)
+    archived_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        verbose_name="archivé par",
+        on_delete=models.PROTECT,
+        related_name="kyc_documents_archived",
+        null=True,
+        blank=True,
+    )
+
+    objects = CenterScopedQuerySet.as_manager()
+
+    class Meta:
+        verbose_name = "pièce KYC"
+        verbose_name_plural = "pièces KYC"
+        ordering = ["-created_at"]
+
+    def __str__(self) -> str:
+        return f"{self.get_doc_type_display()} — {self.center.name}"
+
+    @property
+    def is_archived(self) -> bool:
+        return self.archived_at is not None
+
+    def save(self, *args, **kwargs):
+        # Archiving is FINAL: a KYC piece that supported a decision must
+        # never be resurrected (same rule as PatientDocument, ADR 0016).
+        if self.pk is not None:
+            previous = (
+                type(self)
+                .objects.filter(pk=self.pk)
+                .values_list("archived_at", flat=True)
+                .first()
+            )
+            if previous is not None and self.archived_at is None:
+                raise ValidationError(
+                    "Une pièce KYC archivée le reste : l'archivage est définitif."
+                )
+        super().save(*args, **kwargs)
 
 
 class StaffMembership(TimeStampedModel):

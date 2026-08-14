@@ -21,19 +21,14 @@ import { PageHead } from '@/components/shell/PageHead';
 import { useAuth } from '@/context/AuthContext';
 import { ApiError } from '@/lib/api';
 import { deleteAvatar, updateMe, uploadAvatar } from '@/lib/endpoints/auth';
-import { formatWait } from '@/lib/labels';
+import { UPLOAD_IMAGE_HINT, uploadThrottled } from '@/lib/labels';
+import { MyDataCard } from '@/screens/lite/MyDataCard';
 import { ErrorAlert, FieldError, IconArrowLeft, IconCheck, initialsOf, toApiError } from './shared';
 
 /** 429 du scope `uploads` (20/h) : remplacer le message anglais de DRF. */
 function toUploadError(err: unknown): ApiError {
   const e = toApiError(err);
-  if (e.status === 429) {
-    return new ApiError(429, [
-      e.retryAfterSeconds
-        ? `Trop d'envois rapprochés. Réessayez dans ${formatWait(e.retryAfterSeconds)}.`
-        : "Trop d'envois rapprochés. Patientez un moment avant de réessayer.",
-    ]);
-  }
+  if (e.status === 429) return new ApiError(429, [uploadThrottled(e.retryAfterSeconds)]);
   return e;
 }
 
@@ -122,7 +117,7 @@ export function ProfileSettings() {
     <>
       <PageHead
         title="Paramètres du profil"
-        subtitle="Votre photo et votre nom d'affichage — communs à toutes vos casquettes."
+        subtitle="Votre photo, votre nom d'affichage — communs à toutes vos casquettes — et vos droits sur vos données."
         actions={
           <>
             {dirty && (
@@ -146,7 +141,7 @@ export function ProfileSettings() {
             <div className="ax-card__header">
               <div className="ax-card__titles">
                 <h2 className="ax-card__title">Photo de profil</h2>
-                <p className="ax-card__subtitle">JPEG, PNG ou WebP — 2 Mo maximum. Un carré rend mieux.</p>
+                <p className="ax-card__subtitle">{UPLOAD_IMAGE_HINT}. Un carré rend mieux.</p>
               </div>
             </div>
             <div className="ax-card__body" style={{ paddingTop: 0, display: 'flex', flexDirection: 'column', gap: 'var(--ax-space-4)' }}>
@@ -289,6 +284,17 @@ export function ProfileSettings() {
               </div>
             </div>
           </div>
+        </div>
+
+        {/* MES DROITS (S4, ADR 0017 décision 7) — le MÊME composant que les
+            espaces patient et tuteur, en registre `staff` : les droits RGPD
+            appartiennent à la personne, pas à une casquette, et aucun rôle ne
+            garde cette carte (une secrétaire y a droit comme un directeur).
+            Rail droit plutôt que sous le formulaire : la colonne de gauche se
+            termine par la barre d'enregistrement collante, qui flotterait
+            par-dessus toute carte placée après elle dans la même colonne. */}
+        <div className="ax-col--4" style={{ alignSelf: 'start' }}>
+          <MyDataCard audience="staff" />
         </div>
       </div>
     </>

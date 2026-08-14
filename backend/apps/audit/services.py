@@ -16,6 +16,7 @@ values so nobody can dump a model instance "for convenience".
 from decimal import Decimal
 
 from apps.audit.models import AuditLog
+from apps.centers.models import HealthCenter
 
 #: Value types allowed inside an audit payload (scalars only — ADR 0007).
 _SCALAR_TYPES = (str, int, bool, float, Decimal, type(None))
@@ -37,6 +38,18 @@ class AuditAction:
     OTP_FAILED = "auth.otp_failed"
     ACCOUNT_CREATED = "auth.account_created"
     ACCOUNT_ACTIVATED = "auth.account_activated"
+
+    # RGPD — right to erasure (S4 lot 3, ADR 0007 implemented by ADR 0017
+    # décision 7). Payload contract, stricter than usual: references and
+    # BOOLEANS only. The refusal motive is free operator text written FOR
+    # the person concerned — it lives on the ``ErasureRequest`` row and is
+    # rendered to them, NEVER journalised (same class as a dispute reason).
+    # Counts of anonymised objects are fine; a name, a phone, an old
+    # username or an e-mail would defeat the whole point of the action.
+    ERASURE_REQUESTED = "erasure.requested"
+    ERASURE_PROCESSED = "erasure.processed"
+    ERASURE_REFUSED = "erasure.refused"
+    USER_ANONYMIZED = "user.anonymized"
 
     # Patient identity
     PATIENT_CREATED = "patient_profile.created"
@@ -77,6 +90,15 @@ class AuditAction:
     CENTER_UPDATED = "center.updated"
     TARIFF_CREATED = "tariff.created"
     TARIFF_UPDATED = "tariff.updated"
+
+    # Tenant lifecycle, driven by the Chioni platform (S4, ADR 0017).
+    # Payload contract: references and STATUS CODES only — the KYC decision
+    # motive (free text typed by an operator) lives on the HealthCenter row,
+    # NEVER in this payload (same class as a dispute or cancellation reason).
+    CENTER_CREATED = "center.created"
+    CENTER_KYC_CHANGED = "center.kyc_changed"
+    KYC_DOCUMENT_UPLOADED = "kyc_document.uploaded"
+    KYC_DOCUMENT_ARCHIVED = "kyc_document.archived"
 
     # Patient administrative-financial data (S3, ADR 0016) — payloads:
     # ids and comma-joined FIELD NAMES only, never an insurer name or a
@@ -134,16 +156,29 @@ class AuditAction:
     DISPUTE_RESOLVED = "dispute.resolved"
 
 
-def audit(*, actor, action, target=None, **refs):
+def audit(*, actor, action, target=None, center=None, **refs):
     """Write one immutable audit entry.
 
     ``actor``  — the ``User`` performing the action (None for system jobs).
     ``action`` — a constant from :class:`AuditAction`.
     ``target`` — optional model instance the action applies to.
+    ``center`` — the ``HealthCenter`` the action belongs to, or None
+                 (S4 — ADR 0017 décision 5). It is a COLUMN, not a payload
+                 key: it is the only reference the director's journal
+                 filters on and it must be indexable. Passing anything else
+                 than a ``HealthCenter``/None is refused here rather than
+                 deep inside the ORM, in the same spirit as the payload
+                 guard below.
     ``refs``   — scalar references only (pks, codes, counts). Values are
                  normalised to JSON-safe scalars; anything richer is refused
                  so PII/clinical payloads cannot happen by accident.
     """
+    if center is not None and not isinstance(center, HealthCenter):
+        raise TypeError(
+            "AuditLog «center» must be a HealthCenter instance or None "
+            f"(got {type(center).__name__}) — it is a column, not a payload "
+            "reference."
+        )
     payload = {}
     for key, value in refs.items():
         if not isinstance(value, _SCALAR_TYPES):
@@ -153,4 +188,6 @@ def audit(*, actor, action, target=None, **refs):
                 "never objects, PII or clinical data."
             )
         payload[key] = str(value) if isinstance(value, Decimal) else value
-    return AuditLog.log(actor=actor, action=action, target=target, **payload)
+    return AuditLog.log(
+        actor=actor, action=action, target=target, center=center, **payload
+    )

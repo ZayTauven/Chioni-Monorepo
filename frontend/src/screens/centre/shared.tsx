@@ -495,6 +495,7 @@ export function Modal({
   footer,
   width = 520,
   labelledById,
+  busy = false,
 }: {
   title: string;
   onClose: () => void;
@@ -502,16 +503,29 @@ export function Modal({
   footer?: ReactNode;
   width?: number;
   labelledById?: string;
+  /**
+   * Une écriture est EN VOL : les trois sorties involontaires (Échap, clic
+   * sur le fond, croix) sont neutralisées le temps de l'appel — seuls les
+   * boutons du pied, déjà `disabled`, gouvernent.
+   *
+   * Sans ça, un clic à côté pendant une anonymisation RGPD ou une suspension
+   * KYC démonte la modale : la requête aboutit quand même côté serveur, mais
+   * ni le succès ni l'erreur ne sont rendus et la liste n'est pas rechargée —
+   * l'exploitant croit son geste perdu et le rejoue. Sur un geste
+   * irréversible, « je ne sais pas si ça a été fait » est le pire état.
+   * Défaut `false` : comportement inchangé pour les modales de lecture.
+   */
+  busy?: boolean;
 }) {
   const cardRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape' && !busy) onClose();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  }, [onClose, busy]);
 
   // Keyboard care: focus enters the dialog on open (a [data-autofocus]
   // element wins over the first focusable) and returns to the trigger on
@@ -525,7 +539,7 @@ export function Modal({
     <div>
       <div
         className="ax-backdrop"
-        onClick={onClose}
+        onClick={busy ? undefined : onClose}
         style={{ position: 'fixed', inset: 0, zIndex: 50, background: 'rgba(0,0,0,.4)' }}
       />
       <div
@@ -547,7 +561,13 @@ export function Modal({
                 {title}
               </h2>
             </div>
-            <button type="button" className="ax-btn ax-btn--ghost ax-btn--icon ax-btn--sm" onClick={onClose} aria-label="Fermer">
+            <button
+              type="button"
+              className="ax-btn ax-btn--ghost ax-btn--icon ax-btn--sm"
+              onClick={onClose}
+              disabled={busy}
+              aria-label="Fermer"
+            >
               <IconClose />
             </button>
           </div>

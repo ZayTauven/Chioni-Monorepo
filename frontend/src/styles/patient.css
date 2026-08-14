@@ -298,12 +298,38 @@
   color: var(--ax-text-muted);
 }
 
+/* Les deux boutons restent visibles quand le corps de la modale défile.
+   Certaines décisions demandent un texte long (la demande de suppression de
+   compte fait le double d'un écran d'Android d'entrée de gamme) : sans cette
+   barre, la sortie sûre — qui reçoit le focus à l'ouverture — était hors de
+   vue, et rien ne disait qu'il y avait un choix à faire au bout. Pleine
+   largeur (marges négatives = padding du corps) pour que le filet de
+   séparation aille d'un bord à l'autre, fond OPAQUE pour que le texte ne
+   transparaisse pas sous les boutons. */
 .pat-confirm__actions {
-  inline-size: 100%;
+  position: sticky;
+  inset-block-end: 0;
+  z-index: 1;
+  align-self: stretch;
+  inline-size: auto;
   display: flex;
   flex-direction: column;
   gap: var(--ax-space-2);
   margin-block-start: var(--ax-space-2);
+  /* Pleine largeur = marges négatives EXACTEMENT égales au padding du corps
+     (24 px) : la barre atteint le bord de la boîte de rembourrage, jamais
+     au-delà — sinon `overflow-y: auto` ferait apparaître une barre de
+     défilement horizontale. Pas de marge négative EN BAS : elle ferait
+     dépasser la barre collée sous le bord visible, et son propre padding
+     serait rogné. */
+  margin-inline: calc(var(--ax-space-6) * -1);
+  padding: var(--ax-space-4) var(--ax-space-6);
+  background: var(--ax-surface-solid);
+  border-block-start: 1px solid var(--ax-border);
+  /* Collée, la barre touche le bas du dialogue : sans ces deux rayons, ses
+     angles carrés dépassaient des coins arrondis de la modale. */
+  border-end-start-radius: var(--ax-radius-lg);
+  border-end-end-radius: var(--ax-radius-lg);
 }
 
 .pat-confirm__actions .ax-btn {

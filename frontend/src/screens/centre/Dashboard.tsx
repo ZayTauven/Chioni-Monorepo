@@ -32,7 +32,10 @@ import {
   APPOINTMENT_STATUS_LABELS,
   CASH_METHOD_LABELS,
   DISPUTE_STATUS_LABELS,
-  KYC_STATUS_LABELS,
+  KYC_BANNER_LEAD,
+  KYC_BANNER_TITLE,
+  KYC_CLOSED_RAIL,
+  KYC_STILL_WORKS,
   PAYMENT_REQUEST_STATUS_LABELS,
   formatDate,
   formatKmf,
@@ -496,14 +499,32 @@ export function Dashboard() {
     <>
       <PageHead title={center.name} subtitle="Vue d'ensemble de l'activité du centre." />
 
+      {/* S4 (ADR 0017, arbitrage PO n° 1) — le bandeau dit d'abord CE QUI
+          CONTINUE, ensuite ce qui est fermé. Un centre suspendu soigne,
+          facture et encaisse : laisser croire l'inverse le renverrait au
+          papier, ce que la suspension ne doit jamais faire. */}
+      {/* Ton par statut : « en attente » est l'état NORMAL d'un centre qui
+          vient d'ouvrir — un bandeau d'avertissement jaune permanent lui
+          apprendrait à ignorer les bandeaux. Le jaune est réservé à la
+          suspension, qui appelle une action. */}
       {centerDetail.data && centerDetail.data.kyc_status !== 'actif' && (
-        <div className="ax-alert ax-alert--warning" role="status" style={{ marginBottom: 'var(--ax-space-5)' }}>
+        <div
+          className={`ax-alert ax-alert--${centerDetail.data.kyc_status === 'suspendu' ? 'warning' : 'info'}`}
+          role="status"
+          style={{ marginBottom: 'var(--ax-space-5)' }}
+        >
           <div className="ax-alert__content">
-            <p className="ax-alert__title">Encaissements en attente de vérification</p>
-            <p className="ax-alert__message">
-              Statut : {KYC_STATUS_LABELS[centerDetail.data.kyc_status]}. Tant que la vérification du centre par
-              l&apos;équipe Chioni n&apos;est pas terminée, les paiements de la diaspora ne peuvent pas être encaissés.
-            </p>
+            <p className="ax-alert__title">{KYC_BANNER_TITLE[centerDetail.data.kyc_status]}</p>
+            <p className="ax-alert__message">{KYC_BANNER_LEAD[centerDetail.data.kyc_status]}</p>
+            <p className="ax-alert__message">{KYC_STILL_WORKS}</p>
+            <p className="ax-alert__message">{KYC_CLOSED_RAIL}</p>
+            {hasRole(roles, ['directeur']) && (
+              <p className="ax-alert__message">
+                <Link href="/centre/parametres" className="ax-link">
+                  Voir le détail et déposer vos pièces justificatives
+                </Link>
+              </p>
+            )}
           </div>
         </div>
       )}

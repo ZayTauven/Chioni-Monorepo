@@ -1,6 +1,6 @@
 # ADR 0016 — Dossier patient enrichi (sprint S3)
 
-- **Statut** : acté (cadrage S3 — arbitrages marqués RÉVERSIBLES à confirmer par le PO)
+- **Statut** : acté — **arbitrages VALIDÉS par le PO le 2026-08-14** (re-segmentation clinique/administrative, PDF différé, directives anticipées hors périmètre, verrou tuteur S3). Ils restent réversibles au sens ADR (une décision ultérieure peut les rouvrir par addendum), mais ne sont plus « en attente de confirmation ».
 - **Date** : 2026-08-14
 - **Sources** : audit §F.2 + D.1, étude des besoins §5.2, ADR 0002 (carnet transversal), 0004 (consentements), 0008 (permissions), 0014 (uploads)
 

@@ -10,6 +10,8 @@ import type {
   Appointment,
   AppointmentStatus,
   AppointmentWithOverlaps,
+  AuditAction,
+  AuditLogPage,
   CashJournal,
   CashMethod,
   CashPayment,
@@ -24,6 +26,8 @@ import type {
   HealthCenter,
   Invoice,
   InvoiceStatus,
+  KycDocType,
+  KycDocument,
   MobileMoneyOperator,
   Paginated,
   Patient,
@@ -98,6 +102,77 @@ export function uploadCenterLogo(centerId: number, file: File): Promise<{ logo: 
 /** 400 when there is no logo; the old file is physically deleted. */
 export function deleteCenterLogo(centerId: number): Promise<{ logo: null }> {
   return apiFetch(`/centers/${centerId}/logo/`, { method: 'DELETE' });
+}
+
+/* ── S4 (ADR 0017) — KYC supporting documents: DIRECTOR ONLY ──────────────
+   The KYC file is the director's own paperwork: he provides it, the Chioni
+   platform reads it. Nobody else in the center sees it — a director's ID card
+   has no business under a secretary's eyes (every other role gets a 403).
+   Private storage: NEVER a file URL, the bytes flow through the authenticated
+   download endpoint only. */
+
+export function listKycDocuments(
+  centerId: number,
+  page = 1,
+): Promise<Paginated<KycDocument>> {
+  return apiFetch(`/centers/${centerId}/kyc-documents/?page=${page}`);
+}
+
+/**
+ * Multipart upload — real JPEG/PNG/WebP only (the center photographs its
+ * registry; the PDF is deferred, arbitrage réversible ADR 0017), 2 MB max,
+ * EXIF stripped server-side. Throttle scope `uploads` (20/h, shared with
+ * avatar/logo/patient documents) → map the 429 to French.
+ */
+export function uploadKycDocument(
+  centerId: number,
+  { file, doc_type }: { file: File; doc_type: KycDocType },
+): Promise<KycDocument> {
+  const form = new FormData();
+  form.append('file', file);
+  form.append('doc_type', doc_type);
+  return apiFetch(`/centers/${centerId}/kyc-documents/`, { method: 'POST', body: form });
+}
+
+/** Authenticated download — an archived piece stays downloadable. */
+export function downloadKycDocument(centerId: number, documentId: number): Promise<void> {
+  return apiDownload(
+    `/centers/${centerId}/kyc-documents/${documentId}/download/`,
+    `kyc-${documentId}`,
+  );
+}
+
+/** Correction WITHOUT destruction, and FINAL — already archived → 400. */
+export function archiveKycDocument(
+  centerId: number,
+  documentId: number,
+): Promise<KycDocument> {
+  return apiFetch(`/centers/${centerId}/kyc-documents/${documentId}/archive/`, {
+    method: 'POST',
+  });
+}
+
+/* ── S4 (ADR 0017 décision 5) — the center's audit journal: DIRECTOR ONLY ──
+   Not a BILLING view: the journal aggregates personnel decisions, money and
+   disputes. `action` MUST come from the whitelist (AUDIT_ACTION_LABELS) — any
+   other value, invented or deliberately hidden (clinical, consents), answers
+   the SAME 400 « Action inconnue. » so no oracle tells the director what
+   exists but stays hidden. */
+
+export interface AuditLogQuery extends StatsWindow {
+  action?: AuditAction;
+  page?: number;
+}
+
+export function listAuditLog(
+  centerId: number,
+  { action, from, to, page = 1 }: AuditLogQuery = {},
+): Promise<AuditLogPage> {
+  const query = new URLSearchParams({ page: String(page) });
+  if (action) query.set('action', action);
+  if (from) query.set('from', from);
+  if (to) query.set('to', to);
+  return apiFetch(`/centers/${centerId}/audit-log/?${query.toString()}`);
 }
 
 /* ── patients ── */

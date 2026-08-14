@@ -4,6 +4,9 @@ Every queryset here goes through the user's memberships: a center where the
 caller has no active membership answers 404, whatever their other hats.
 """
 
+from pathlib import PurePosixPath
+
+from django.http import FileResponse
 from django.shortcuts import get_object_or_404
 from drf_spectacular.utils import extend_schema
 from rest_framework import generics, status
@@ -13,9 +16,16 @@ from rest_framework.response import Response
 from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 
-from apps.centers.models import HealthCenter, StaffMembership, TariffItem
+from apps.centers.models import (
+    HealthCenter,
+    KycDocument,
+    StaffMembership,
+    TariffItem,
+)
 from apps.centers.serializers import (
     HealthCenterSerializer,
+    KycDocumentSerializer,
+    KycDocumentUploadSerializer,
     LogoUploadSerializer,
     PractitionerSerializer,
     StaffCreateSerializer,
@@ -25,6 +35,7 @@ from apps.centers.serializers import (
 )
 from apps.centers.services import (
     add_staff_member,
+    archive_kyc_document,
     deactivate_staff_member,
     reactivate_staff_member,
     remove_center_logo,
@@ -32,6 +43,7 @@ from apps.centers.services import (
     update_center,
     update_staff_member,
     update_tariff,
+    upload_kyc_document,
     create_tariff,
 )
 from apps.common.permissions import (
@@ -122,6 +134,109 @@ class CenterLogoView(APIView):
         center = self._get_center(request, pk)
         remove_center_logo(actor=request.user, center=center)
         return Response({"logo": None})
+
+
+def kyc_document_file_response(document):
+    """Stream a KYC piece to an AUTHORISED caller (ADR 0017 / ADR 0016 §5).
+
+    The caller's permissions were already replayed by the view. Contract of
+    the response, identical to the patient-document one:
+
+    - ``Content-Disposition: attachment`` with a NEUTRAL name
+      (``kyc-<id>.<ext>``) — the uuid storage name never leaks;
+    - ``X-Content-Type-Options: nosniff``;
+    - at deployment this becomes an ``X-Accel-Redirect`` to an internal
+      location over PRIVATE_MEDIA_ROOT.
+    """
+    extension = PurePosixPath(document.file.name).suffix
+    response = FileResponse(
+        document.file.open("rb"),
+        as_attachment=True,
+        filename=f"kyc-{document.pk}{extension}",
+    )
+    response["X-Content-Type-Options"] = "nosniff"
+    return response
+
+
+class CenterKycDocumentListCreateView(
+    CenterScopedViewMixin, generics.ListCreateAPIView
+):
+    """GET/POST /centers/{center_pk}/kyc-documents/ — DIRECTOR only (S4).
+
+    The KYC file is the director's paperwork: he provides it, the platform
+    reads it (ADR 0017, décision 3). Nobody else in the center sees it —
+    a director's ID card has no business under a secretary's eyes.
+    POST is multipart, runs the ADR 0014 pipeline (JPEG/PNG/WebP only) and
+    carries the STRICT ``uploads`` throttle scope (POST only: reading the
+    list must never starve on the upload budget).
+    """
+
+    permission_classes = [IsStaffOfCenter(DIRECTOR)]
+    parser_classes = [MultiPartParser, FormParser]
+
+    def get_throttles(self):
+        if self.request.method == "POST":
+            self.throttle_scope = "uploads"
+            return [ScopedRateThrottle()]
+        return super().get_throttles()
+
+    def get_serializer_class(self):
+        if self.request.method == "POST":
+            return KycDocumentUploadSerializer
+        return KycDocumentSerializer
+
+    def get_queryset(self):
+        return KycDocument.objects.for_center(self.center).order_by("-created_at")
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        document = upload_kyc_document(
+            actor=request.user,
+            center=self.center,
+            uploaded_file=serializer.validated_data["file"],
+            doc_type=serializer.validated_data["doc_type"],
+        )
+        return Response(
+            KycDocumentSerializer(document).data,
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class CenterKycDocumentDownloadView(CenterScopedViewMixin, APIView):
+    """GET /centers/{center_pk}/kyc-documents/{pk}/download/ — director.
+
+    THE only tenant-side read path of the bytes (private diffusion): the
+    piece is resolved in THIS center's perimeter (foreign id → 404), then
+    streamed. An archived piece stays downloadable — verifying what was
+    archived is part of correcting an error.
+    """
+
+    permission_classes = [IsStaffOfCenter(DIRECTOR)]
+
+    def get(self, request, center_pk, pk):
+        document = get_object_or_404(
+            KycDocument.objects.for_center(self.center), pk=pk
+        )
+        return kyc_document_file_response(document)
+
+
+class CenterKycDocumentArchiveView(CenterScopedViewMixin, APIView):
+    """POST /centers/{center_pk}/kyc-documents/{pk}/archive/ — director.
+
+    Correction WITHOUT destruction: a KYC decision must stay auditable
+    against the pieces that supported it. Final — already archived → 400.
+    """
+
+    permission_classes = [IsStaffOfCenter(DIRECTOR)]
+
+    @extend_schema(request=None, responses=KycDocumentSerializer)
+    def post(self, request, center_pk, pk):
+        document = get_object_or_404(
+            KycDocument.objects.for_center(self.center), pk=pk
+        )
+        document = archive_kyc_document(actor=request.user, document=document)
+        return Response(KycDocumentSerializer(document).data)
 
 
 class StaffListCreateView(CenterScopedViewMixin, generics.ListCreateAPIView):

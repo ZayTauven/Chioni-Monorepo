@@ -18,10 +18,17 @@ import { deleteCenterLogo, getCenter, updateCenter, uploadCenterLogo } from '@/l
 import {
   CENTER_TYPE_LABELS,
   ISLAND_LABELS,
+  KYC_BANNER_LEAD,
+  KYC_CLOSED_RAIL,
+  KYC_REASON_PRIVACY,
+  KYC_REASON_TITLE,
   KYC_STATUS_LABELS,
+  KYC_STILL_WORKS,
+  UPLOAD_IMAGE_HINT,
   formatDate,
 } from '@/lib/labels';
 import type { CenterType, HealthCenter, Island } from '@/lib/types';
+import { KycDocumentsCard } from './KycDocuments';
 import {
   CardSkeleton,
   DetailItem,
@@ -149,8 +156,8 @@ function LogoCard({
                   </button>
                 )}
               </div>
-              <span style={{ fontSize: 'var(--ax-text-xs)', color: 'var(--ax-text-subtle)' }}>
-                JPEG, PNG ou WebP — 2 Mo maximum.
+              <span style={{ fontSize: 'var(--ax-text-xs)', color: 'var(--ax-text-muted)' }}>
+                {UPLOAD_IMAGE_HINT}
               </span>
             </div>
           )}
@@ -376,20 +383,67 @@ export function Settings() {
               </div>
               {center && <StatusBadge tone={KYC_TONES[center.kyc_status]} label={KYC_STATUS_LABELS[center.kyc_status]} />}
             </div>
-            <div className="ax-card__body" style={{ paddingTop: 0 }}>
+            <div className="ax-card__body" style={{ paddingTop: 0, display: 'flex', flexDirection: 'column', gap: 'var(--ax-space-3)' }}>
               {center ? (
-                <p style={{ margin: 0, fontSize: 'var(--ax-text-sm)', color: 'var(--ax-text-muted)', lineHeight: 1.6 }}>
-                  {center.kyc_status === 'actif'
-                    ? 'Votre centre est vérifié : les paiements de la diaspora sont encaissés directement par le centre, en KMF, avec reçu pour chaque franc.'
-                    : center.kyc_status === 'en_attente'
-                      ? 'La vérification de votre centre par l’équipe Chioni est en cours. Tant qu’elle n’est pas terminée, les demandes de paiement ne peuvent pas être encaissées. Ce statut ne se modifie pas depuis l’application.'
-                      : 'Les encaissements de votre centre sont suspendus. Contactez l’équipe Chioni pour comprendre la situation et la régulariser. Ce statut ne se modifie pas depuis l’application.'}
-                </p>
+                <>
+                  <p style={{ margin: 0, fontSize: 'var(--ax-text-sm)', color: 'var(--ax-text)', lineHeight: 1.7 }}>
+                    {KYC_BANNER_LEAD[center.kyc_status]}
+                  </p>
+
+                  {/* S4 — le mot « suspendu » a un sens BORNÉ : ce qui continue
+                      est dit avant ce qui s'arrête, pour ne jamais laisser
+                      croire à une panne générale du centre. */}
+                  {center.kyc_status !== 'actif' && (
+                    <>
+                      <p style={{ margin: 0, fontSize: 'var(--ax-text-sm)', color: 'var(--ax-text-muted)', lineHeight: 1.7 }}>
+                        {KYC_STILL_WORKS}
+                      </p>
+                      <p style={{ margin: 0, fontSize: 'var(--ax-text-sm)', color: 'var(--ax-text-muted)', lineHeight: 1.7 }}>
+                        {KYC_CLOSED_RAIL}
+                      </p>
+                    </>
+                  )}
+
+                  {/* Motif de la dernière décision — rendu au DIRECTEUR SEUL
+                      par l'API (`null` pour tout autre rôle). Le titre et le
+                      ton SUIVENT le statut : `kyc_reason` porte le motif de la
+                      DERNIÈRE décision, y compris une activation — « Que
+                      faire ? » en jaune sur une bonne nouvelle donnait à un
+                      centre validé le sentiment d'être encore en faute. */}
+                  {center.kyc_reason && (
+                    <div
+                      className={`ax-alert ax-alert--${center.kyc_status === 'actif' ? 'info' : 'warning'}`}
+                      role="status"
+                    >
+                      <div className="ax-alert__content">
+                        <p className="ax-alert__title">{KYC_REASON_TITLE[center.kyc_status]}</p>
+                        <p className="ax-alert__message">{center.kyc_reason}</p>
+                        {center.kyc_updated_at && (
+                          <p className="ax-alert__message" style={{ fontSize: 'var(--ax-text-xs)' }}>
+                            Décision du {formatDate(center.kyc_updated_at)}. {KYC_REASON_PRIVACY}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* `--ax-text-subtle` (#6E7A92) tombe à 4,3:1 sur la surface
+                      des cartes : sous AA. Une phrase qui explique une règle
+                      n'est pas une légende décorative — elle passe en muted. */}
+                  <p style={{ margin: 0, fontSize: 'var(--ax-text-xs)', color: 'var(--ax-text-muted)', lineHeight: 1.6 }}>
+                    Ce statut ne se modifie pas depuis l&apos;application : seule l&apos;équipe
+                    Chioni le change, après examen de vos pièces justificatives.
+                  </p>
+                </>
               ) : (
                 <CardSkeleton lines={3} />
               )}
             </div>
           </section>
+
+          {/* S4 — pièces justificatives : DIRECTEUR SEUL, jamais montée pour un
+              autre rôle (fetch compris — l'API répond 403). */}
+          {isDirector && <KycDocumentsCard />}
 
           {centers.length > 1 && (
             <section className="ax-card" role="region" aria-label="Changer de centre">

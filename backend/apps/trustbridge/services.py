@@ -31,6 +31,7 @@ from datetime import timedelta
 from decimal import Decimal
 
 from django.conf import settings
+from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
 from django.db.models import (
@@ -106,13 +107,82 @@ def _locked(payment_request):
     return PaymentRequest.objects.select_for_update().get(pk=payment_request.pk)
 
 
+def _intent_center(intent):
+    """The tenant an intent belongs to — ``audit(center=…)`` on the PSP path.
+
+    S4 (ADR 0017, décision 5 & 6): the destination of the funds is always
+    structurally ``payment_request.invoice.center``, so the incident rows
+    of the reconciliation view (``payment_intent.failed``,
+    ``payment_intent.cancelled``, ``payment.webhook_refused``) can carry
+    their center without ever trusting caller input.
+
+    Read outside any surviving transaction on the refusal path: the
+    request and its invoice were committed long before, only the refused
+    cash-in rolled back.
+    """
+    return intent.payment_request.invoice.center
+
+
+#: S4 (ADR 0017, décision 3) — TWO different situations deserve TWO
+#: different explanations to the staff. « en attente » = the file is not
+#: finished yet (patience, provide the pieces); « suspendu » = Chioni cut
+#: the rail on purpose (contact us, the motive is on the center record and
+#: readable by the director). Both messages carry the word « KYC » so the
+#: historical regression tests keep matching, and both END on the same
+#: reassurance: the cash desk stays open — suspension never turns a center
+#: back to paper (arbitrage PO n° 1).
+KYC_PENDING_MESSAGE = (
+    "Le paiement par la diaspora n'est pas encore ouvert pour ce centre : "
+    "sa vérification (KYC) est en attente. La caisse du centre reste "
+    "ouverte : les encaissements en espèces ou mobile money fonctionnent "
+    "normalement."
+)
+KYC_SUSPENDED_MESSAGE = (
+    "Le paiement par la diaspora est suspendu pour ce centre : sa "
+    "vérification (KYC) a été suspendue par Chioni — le motif est visible "
+    "par le directeur du centre. La caisse du centre reste ouverte : les "
+    "encaissements en espèces ou mobile money fonctionnent normalement."
+)
+
+
 def _require_center_can_collect(center):
-    """Money NEVER goes to an individual, and only to a VERIFIED center."""
-    if center.kyc_status != HealthCenter.KycStatus.ACTIVE:
-        raise ValidationError(
-            "Ce centre ne peut pas encore encaisser de paiements : "
-            "sa vérification (KYC) n'est pas active."
-        )
+    """Money NEVER goes to an individual, and only to a VERIFIED center.
+
+    S4 (ADR 0017) — this guard is now called ALL ALONG the diaspora rail
+    (payment request creation, sharing, sending, intent, webhook cash-in),
+    not only at the two money-moving ends: quoting a guardian for a center
+    that cannot receive is a promise Chioni cannot keep.
+
+    What it deliberately does NOT gate, and why:
+
+    - the CASH DESK (``record_cash_payment``, ADR 0015) — suspending a
+      center must never stop it from treating and billing the patient in
+      front of it;
+    - the tail of an ALREADY PAID request (``confirm_care``,
+      ``close_payment_request`` and its receipt, ``acknowledge_care_
+      received``, disputes) — a guardian who has already paid is never
+      left without a receipt.
+
+    **The status is re-read from the DATABASE, never from the caller's
+    object** (revue adversariale S4). A guard that trusts an in-memory
+    ``HealthCenter`` trusts whoever loaded it: an ``Invoice`` built with a
+    ``center=`` instance fetched before a suspension carried a stale
+    ``actif`` all the way down this guard, and opened the diaspora rail on
+    a suspended tenant. One indexed pk read on the rail that moves money
+    is the right price for a guard that answers about the world rather
+    than about a variable. A center row deleted under us is treated as
+    « not collecting », never as « active ».
+    """
+    status = (
+        HealthCenter.objects.filter(pk=center.pk)
+        .values_list("kyc_status", flat=True)
+        .first()
+    )
+    if status == HealthCenter.KycStatus.ACTIVE:
+        return
+    if status == HealthCenter.KycStatus.SUSPENDED:
+        raise ValidationError(KYC_SUSPENDED_MESSAGE)
+    raise ValidationError(KYC_PENDING_MESSAGE)
 
 
 def _refuse_cancelled_invoice(invoice):
@@ -187,6 +257,7 @@ def create_invoice(*, actor, center, encounter, act_ids=None):
     invoice.recompute_total()
     audit(
         actor=actor, action=AuditAction.INVOICE_CREATED, target=invoice,
+        center=center,
         invoice_id=invoice.pk, center_id=center.pk, encounter_id=encounter.pk,
         patient_id=invoice.patient_id, line_count=len(acts),
         total_kmf=invoice.total_kmf, currency=str(Currency.KMF),
@@ -207,6 +278,7 @@ def issue_invoice(*, actor, invoice):
     invoice.save(update_fields=["status", "updated_at"])
     audit(
         actor=actor, action=AuditAction.INVOICE_ISSUED, target=invoice,
+        center=invoice.center,
         invoice_id=invoice.pk, center_id=invoice.center_id,
         total_kmf=invoice.total_kmf, currency=str(Currency.KMF),
     )
@@ -289,6 +361,7 @@ def cancel_invoice(*, actor, invoice, reason):
     )
     audit(
         actor=actor, action=AuditAction.INVOICE_CANCELLED, target=invoice,
+        center=invoice.center,
         invoice_id=invoice.pk, center_id=invoice.center_id,
         patient_id=invoice.patient_id, total_kmf=invoice.total_kmf,
         currency=str(Currency.KMF), status_before=previous_status,
@@ -504,6 +577,14 @@ def _record_cash_payment(
     No KYC requirement here: the money never transits the platform — it
     goes straight into the center's own till. No SMS either: the patient
     is standing at the counter and leaves with the receipt (ADR 0015).
+
+    S4 (ADR 0017, arbitrage PO n° 1) — this absence is now a DECISION, not
+    an oversight: a SUSPENDED center keeps cashing in at its counter.
+    Suspending closes the Trust Bridge (where Chioni engages its word
+    towards a relative abroad); it must never stop a center from treating
+    and being paid by the patient in front of it, nor send it back to
+    paper. Locked by ``tests/test_kyc_suspension_effects.py`` — do NOT add
+    a KYC guard here without reopening that arbitrage with the PO.
     """
     if method not in _COUNTER_METHODS:
         raise ValidationError(
@@ -599,6 +680,7 @@ def _record_cash_payment(
         invoice.save(update_fields=["status", "updated_at"])
     audit(
         actor=actor, action=AuditAction.CASH_PAYMENT_RECORDED, target=payment,
+        center=center,
         cash_payment_id=payment.pk, invoice_id=invoice.pk, center_id=center.pk,
         method=str(method), operator=operator or None,
         amount_kmf=amount_kmf, balance_after_kmf=new_balance,
@@ -672,6 +754,7 @@ def reverse_cash_payment(*, actor, cash_payment, reason):
         invoice.save(update_fields=["status", "updated_at"])
     audit(
         actor=actor, action=AuditAction.CASH_PAYMENT_REVERSED, target=reversal,
+        center=cash_payment.center,
         cash_payment_id=cash_payment.pk, reversal_id=reversal.pk,
         invoice_id=invoice.pk, center_id=cash_payment.center_id,
         method=str(cash_payment.method), amount_kmf=cash_payment.amount_kmf,
@@ -698,12 +781,16 @@ def create_payment_request(*, actor, invoice):
         raise ValidationError(
             "Une demande de paiement existe déjà pour cette facture."
         )
+    # S4 (ADR 0017) — the diaspora rail opens HERE. Refusing at the intent
+    # only meant a center could build the whole chain (request, shares,
+    # SMS) and strand the guardian at the payment button.
+    _require_center_can_collect(invoice.center)
     payment_request = PaymentRequest.objects.create(
         invoice=invoice, created_by=actor, status=Status.DRAFT
     )
     audit(
         actor=actor, action=AuditAction.PAYMENT_REQUEST_CREATED,
-        target=payment_request,
+        target=payment_request, center=invoice.center,
         payment_request_id=payment_request.pk, invoice_id=invoice.pk,
         center_id=invoice.center_id, patient_id=invoice.patient_id,
         total_kmf=invoice.total_kmf, currency=str(Currency.KMF),
@@ -722,6 +809,9 @@ def share_payment_request(*, actor, payment_request, guardian_link):
         raise ValidationError(
             "Le partage n'est possible que sur une demande en brouillon ou envoyée."
         )
+    # S4 (ADR 0017) — sharing IS the act of asking a relative abroad to
+    # pay: a suspended center must not reach a guardian at all.
+    _require_center_can_collect(payment_request.invoice.center)
     if guardian_link.status != GuardianLink.Status.ACTIVE:
         raise ValidationError(
             "Ce lien de tutelle n'est pas actif : partage refusé."
@@ -739,7 +829,7 @@ def share_payment_request(*, actor, payment_request, guardian_link):
     )
     audit(
         actor=actor, action=AuditAction.PAYMENT_REQUEST_SHARED,
-        target=payment_request,
+        target=payment_request, center=payment_request.invoice.center,
         payment_request_id=payment_request.pk, link_id=guardian_link.pk,
         guardian_id=guardian_link.guardian_id,
         patient_id=guardian_link.patient_id,
@@ -767,7 +857,7 @@ def unshare_payment_request(*, actor, payment_request, guardian_link):
     share.delete()
     audit(
         actor=actor, action=AuditAction.PAYMENT_REQUEST_UNSHARED,
-        target=payment_request,
+        target=payment_request, center=payment_request.invoice.center,
         payment_request_id=payment_request.pk, link_id=guardian_link.pk,
         guardian_id=guardian_link.guardian_id,
         patient_id=guardian_link.patient_id,
@@ -793,6 +883,12 @@ def send_payment_request(*, actor, payment_request):
         pk=payment_request.invoice_id
     )
     _refuse_cancelled_invoice(invoice)
+    # S4 (ADR 0017) — extension ASSUMÉE, dans l'esprit de la décision 3 :
+    # l'ADR nomme la création et le partage ; envoyer, c'est faire partir
+    # le SMS « payez » vers la diaspora. Un centre suspendu entre le
+    # partage et l'envoi ne doit pas convoquer un tuteur devant un bouton
+    # « Payer » qui refusera. Re-vérifié ici sous le même verrou.
+    _require_center_can_collect(invoice.center)
     if invoice_balance_kmf(invoice) <= 0:
         raise ValidationError(
             "Cette facture est déjà entièrement réglée : rien à demander."
@@ -800,7 +896,7 @@ def send_payment_request(*, actor, payment_request):
     _set_status(payment_request, Status.SENT)
     audit(
         actor=actor, action=AuditAction.PAYMENT_REQUEST_SENT,
-        target=payment_request,
+        target=payment_request, center=invoice.center,
         payment_request_id=payment_request.pk,
         invoice_id=payment_request.invoice_id,
         share_count=payment_request.shares.count(),
@@ -893,7 +989,24 @@ def create_payment_intent(*, guardian_user, payment_request):
     and the center must be KYC-active BEFORE the guardian is charged.
     A recent pending intent on the same request blocks a new one
     (:func:`_refuse_if_recent_pending_intent` — anti-double-débit).
+
+    S4 (revue adversariale) — the guardian's OWN ``User`` row is locked
+    FIRST, before anything else. It is the serialisation point with the
+    RGPD anonymisation (``accounts.services.anonymize_user``, which takes
+    the same lock and re-checks « paiement en cours » under it): without
+    it, an erasure processed while a guardian was inside ``pay/`` left a
+    live PSP intent — a real card debit — pointing at a tombstone account
+    that can no longer see its own receipt. Lock hierarchy, one level
+    deeper at the top and unchanged below:
+    **utilisateur → intent → demande → facture → centre**.
     """
+    guardian_user = (
+        get_user_model().objects.select_for_update().get(pk=guardian_user.pk)
+    )
+    if guardian_user.anonymized_at is not None or not guardian_user.is_active:
+        raise ValidationError(
+            "Ce compte n'est plus actif : aucun paiement ne peut être engagé."
+        )
     payment_request = _locked(payment_request)
     if payment_request.status != Status.SENT:
         raise ValidationError(
@@ -944,7 +1057,7 @@ def create_payment_intent(*, guardian_user, payment_request):
     intent.save(update_fields=["psp_reference", "status", "updated_at"])
     audit(
         actor=guardian_user, action=AuditAction.PAYMENT_INTENT_CREATED,
-        target=intent,
+        target=intent, center=invoice.center,
         intent_id=intent.pk, payment_request_id=payment_request.pk,
         guardian_id=link.guardian_id, center_id=payment_request.invoice.center_id,
         amount_eur=quote.total_eur, fees_eur=quote.fees_eur,
@@ -997,7 +1110,8 @@ def register_payment_success(*, intent, actor=None):
     except _LateWebhookRefused as refused:
         audit(
             actor=actor, action=AuditAction.PAYMENT_WEBHOOK_REFUSED,
-            target=intent, reason="late_webhook_refused", **refused.refs,
+            target=intent, center=_intent_center(intent),
+            reason="late_webhook_refused", **refused.refs,
         )
         raise ValidationError(refused.message)
 
@@ -1026,7 +1140,17 @@ def _register_payment_success(*, intent, actor=None):
             request_status=payment_request.status,
         )
     center = payment_request.invoice.center  # structural destination
-    _require_center_can_collect(center)
+    # S4 (ADR 0017, arbitrage PO du 14/08/2026) — NO KYC guard here, on
+    # purpose: a payment ALREADY IN FLIGHT lands. An intent only exists
+    # because the center was ACTIVE when it was created (the guard lives
+    # upstream, at create_payment_intent), so reaching this point means the
+    # guardian's card was debited on a then-open rail. Refusing here would
+    # leave a real debit with no receipt — the very opacity the Pont de
+    # Confiance fights — and the refund path does not exist in the MVP.
+    # Cashing in is NOT paying out: the ledger entry and the receipt are
+    # what the guardian is owed; the actual transfer of funds to a
+    # suspended center is a separate (unbuilt) payout process where the
+    # suspension does its real work. Only NEW payments are closed.
     # ADR 0015 — the intent was frozen on the invoice's remaining balance;
     # counter instalments (or a reversal) may have moved it since. Locking
     # the invoice row serialises this webhook against the cashiers, and a
@@ -1146,6 +1270,7 @@ def _register_payment_success(*, intent, actor=None):
     invoice.save(update_fields=["status", "updated_at"])
     audit(
         actor=actor, action=AuditAction.PAYMENT_RECORDED, target=payment_request,
+        center=center,
         payment_request_id=payment_request.pk, intent_id=intent.pk,
         cash_payment_id=cash_payment.pk,
         ledger_transaction_id=ledger_tx.pk, center_id=center.pk,
@@ -1172,6 +1297,7 @@ def register_payment_failure(*, intent, actor=None):
     intent.save(update_fields=["status", "updated_at"])
     audit(
         actor=actor, action=AuditAction.PAYMENT_INTENT_FAILED, target=intent,
+        center=_intent_center(intent),
         intent_id=intent.pk, payment_request_id=intent.payment_request_id,
     )
     return intent
@@ -1209,6 +1335,7 @@ def confirm_care(*, actor, payment_request):
     _set_status(payment_request, Status.CARE_CONFIRMED)
     audit(
         actor=actor, action=AuditAction.CARE_CONFIRMED, target=payment_request,
+        center=payment_request.invoice.center,
         payment_request_id=payment_request.pk,
         invoice_id=payment_request.invoice_id,
         center_id=payment_request.invoice.center_id,
@@ -1237,7 +1364,7 @@ def acknowledge_care_received(*, patient_user, payment_request):
     payment_request.save(update_fields=["patient_acknowledged_at", "updated_at"])
     audit(
         actor=patient_user, action=AuditAction.PATIENT_CARE_ACKNOWLEDGED,
-        target=payment_request,
+        target=payment_request, center=payment_request.invoice.center,
         payment_request_id=payment_request.pk,
         invoice_id=payment_request.invoice_id,
     )
@@ -1322,7 +1449,7 @@ def close_payment_request(*, actor, payment_request):
     _set_status(payment_request, Status.CLOSED)
     audit(
         actor=actor, action=AuditAction.PAYMENT_REQUEST_CLOSED,
-        target=payment_request,
+        target=payment_request, center=receipt.center,
         payment_request_id=payment_request.pk, receipt_id=receipt.pk,
         receipt_number=receipt.sequence_number,
         center_id=receipt.center_id, ledger_transaction_id=ledger_tx.pk,
@@ -1372,6 +1499,7 @@ def open_dispute(*, actor_user, payment_request, reason):
     )
     audit(
         actor=actor_user, action=AuditAction.DISPUTE_OPENED, target=dispute,
+        center=payment_request.invoice.center,
         dispute_id=dispute.pk, payment_request_id=payment_request.pk,
         previous_status=previous_status,
         opened_as="patient" if is_patient else "tuteur",
@@ -1400,6 +1528,7 @@ def resolve_dispute(*, actor, dispute, resolution_note):
     _set_status(payment_request, dispute.previous_status)
     audit(
         actor=actor, action=AuditAction.DISPUTE_RESOLVED, target=dispute,
+        center=payment_request.invoice.center,
         dispute_id=dispute.pk, payment_request_id=payment_request.pk,
         restored_status=dispute.previous_status,
     )
@@ -1461,7 +1590,7 @@ def cancel_stale_intents():
             intent.save(update_fields=["status", "updated_at"])
             audit(
                 actor=None, action=AuditAction.PAYMENT_INTENT_CANCELLED,
-                target=intent,
+                target=intent, center=_intent_center(intent),
                 intent_id=intent.pk,
                 payment_request_id=intent.payment_request_id,
                 reason="stale",

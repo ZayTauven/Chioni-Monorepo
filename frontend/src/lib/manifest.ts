@@ -26,7 +26,7 @@ export interface NavNode {
   alias: string | null;
   external?: boolean;
 }
-interface RawManifest {
+export interface RawManifest {
   meta?: Record<string, unknown>;
   nodes?: NavNode[];
 }
@@ -44,7 +44,16 @@ export interface ManifestIndex {
   trail: (node: NavNode | undefined | null) => NavNode[];
 }
 
-function index(data: RawManifest): ManifestIndex {
+/**
+ * Index ANY manifest that follows the Vireo node contract.
+ *
+ * S4 — exported so a second space can own its own manifest (the platform
+ * back-office) without polluting the centre one: `nav-manifest.json` is
+ * CENTRE-ONLY by its own `meta`, and the platform's four entries have no
+ * business in the centre sidebar, its ⌘K palette or its breadcrumb. One
+ * indexing implementation, one node contract, two data files.
+ */
+export function indexManifest(data: RawManifest): ManifestIndex {
   const nodes = Array.isArray(data.nodes) ? data.nodes : [];
   const byId = new Map<string, NavNode>();
   const bySlug = new Map<string, NavNode>();
@@ -82,20 +91,31 @@ function index(data: RawManifest): ManifestIndex {
   };
 }
 
-export const manifest: ManifestIndex = index(raw as RawManifest);
+/** The CENTRE manifest — the only one the Vireo shell (sidebar, breadcrumb,
+ *  ⌘K palette) reads. The platform space indexes its own (platform-manifest). */
+export const manifest: ManifestIndex = indexManifest(raw as RawManifest);
 
 /** Ordered, deduped list of section names for the top-level groups. */
-export function sections(): string[] {
+export function sectionsOf(idx: ManifestIndex): string[] {
   const seen: string[] = [];
-  for (const n of manifest.childrenOf('__root__')) {
+  for (const n of idx.childrenOf('__root__')) {
     if (n.section && !seen.includes(n.section)) seen.push(n.section);
   }
   return seen;
 }
 
 /** Top-level group nodes for a given section, order-sorted. */
+export function groupsInSectionOf(idx: ManifestIndex, section: string): NavNode[] {
+  return idx.childrenOf('__root__').filter((n) => n.section === section);
+}
+
+/** Centre-space shorthands (unchanged surface for the existing shell). */
+export function sections(): string[] {
+  return sectionsOf(manifest);
+}
+
 export function groupsInSection(section: string): NavNode[] {
-  return manifest.childrenOf('__root__').filter((n) => n.section === section);
+  return groupsInSectionOf(manifest, section);
 }
 
 /**

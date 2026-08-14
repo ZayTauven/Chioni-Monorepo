@@ -46,3 +46,40 @@ Uniquement ce que l'API expose réellement. Pas d'écran rendez-vous, caisse, me
 - Les invariants d'affichage sensibles se vérifient en revue guardian : le tuteur ne voit **jamais** `label` d'une ligne (nature générique seule, ADR 0005) ; l'écran patient « mes tuteurs » traite `attente_confirmation_titulaire` comme un appel à l'action prioritaire (porte de confirmation, ADR 0010) ; aucun montant n'est jamais envoyé par le client (`pay/` à corps vide).
 - La suppression d'écrans Vireo est réversible via `vireo template/` ; l'élagage ne se discute donc pas écran par écran.
 - L'extraction i18n (phase 2) portera sur des écrans déjà en français — coût assumé.
+
+## Addendum S4 — le 4ᵉ espace « plateforme » (2026-08-14, ADR 0017)
+
+Le back-office Chioni rejoint les trois espaces. Choix arrêtés à l'implémentation :
+
+1. **Route group `app/(plateforme)/plateforme/*`**, garde `RequireSpace('plateforme')`.
+   La porte est `platform_staff !== null` dans `/auth/me/` — jamais déduite d'un droit
+   d'admin Django (`is_staff`/`is_superuser` n'existent pas dans le payload).
+   `spacesOf()`, `homeOfSpace()` et le `SpaceChooser` s'étendent ; `routeAfterSignIn`
+   est inchangé (sa règle « une seule casquette → son espace » couvre le cas).
+2. **`CenterProvider` n'est JAMAIS monté dans cet espace** — un exploitant gouverne des
+   tenants, il n'appartient à aucun. La règle est rendue vérifiable par lecture des
+   imports : les écrans de `src/screens/plateforme/` n'importent que
+   `screens/plateforme/shared.tsx`, qui ne réexporte aucune primitive liée au contexte.
+3. **Chrome sobre plutôt que shell complet** : `src/components/shell-platform/`
+   reprend la structure DOM Vireo (`.ax-layout` → sidebar + `.ax-shell` → header +
+   `<main>` + footer) SANS le loader de page, la lueur ambiante, le customizer ni la
+   palette ⌘K. Le sélecteur de centre actif du header disparaît par nature.
+4. **Un SECOND manifeste de navigation** (`src/data/platform-nav-manifest.json`) plutôt
+   que des nœuds ajoutés à celui du centre. Motif : `nav-manifest.json` se déclare
+   CENTRE-ONLY dans son propre `meta` et alimente trois surfaces partagées (sidebar,
+   fil d'Ariane, palette ⌘K) qui vivent toutes dans le shell du centre — y ajouter
+   « Centres » ou « Demandes d'effacement » aurait fait fuiter des entrées de
+   back-office dans la palette d'un directeur, et imposé un filtre d'espace à chacune de
+   ces surfaces. Le **contrat de nœud** reste partagé (mêmes types, même fonction
+   d'indexation `indexManifest` exportée de `lib/manifest.ts`) ; seules les DONNÉES
+   diffèrent. Un troisième espace manifesté suivrait le même patron.
+5. **`/plateforme` EST le registre des centres** : pas de tableau de bord exploitant en
+   S4 (il naîtrait vide, et le module Support riche est S5). La fiche d'un tenant vit
+   sous `/plateforme/centres/[id]`.
+6. **Le rôle `support` ne voit aucune commande d'écriture montée** (patron du bloc
+   finances du dashboard centre) : `usePlatformRole().canWrite` gate le rendu, pas
+   seulement l'action. Un back-office qui propose des gestes qu'il refusera apprend à
+   ses exploitants à s'en méfier.
+7. **Les droits RGPD vivent dans `src/screens/lite/MyDataCard.tsx`**, partagée par les
+   espaces patient ET tuteur : ils appartiennent à la personne, pas à une casquette.
+   Elle n'utilise que des classes `ax-*` neutres (ni `pat-*`, ni `tuteur-*`).

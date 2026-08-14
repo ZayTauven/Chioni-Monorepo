@@ -215,7 +215,7 @@ Sprint de clôture du plan : il implémente les arbitrages tranchés par le PO e
 
 **Backend / durcissements**
 
-- `ConsentAdmin` sans `readonly_fields` (un superuser peut éditer un consentement hors service/audit) — à durcir avec le lot admin de S4 s'il arrive avant SV, sinon ici.
+- ~~`ConsentAdmin` sans `readonly_fields`~~ — **SOLDÉ en S4 (lot 2, 14/08/2026)** : mixins partagés `apps/common/admin.py`, tout `medical`/`patients`/`Invoice`/`PaymentRequest`/`Dispute` en lecture seule stricte, verrouillé par `tests/test_admin_hardening.py` (dont un test de fermeture du registre qui casse si un modèle sensible nouveau n'est pas déclaré).
 - TOCTOU mineur `close_encounter` × `create_prescription` (une ordonnance peut se glisser dans la seconde de la clôture — sans enjeu d'argent aujourd'hui, à fermer si la clôture gagne des effets financiers).
 - `CashPayment` non fenêtré comme `LedgerEntry` (E4) — contrat de revue permanent ADR 0015 : re-vérifier qu'aucun code introduit depuis ne crée de `CashPayment` hors service.
 - Compte ombre partagé entre tenants : identité éditable par chaque directeur (à trancher si le cas apparaît en réel ; sinon assumer au procès-verbal).
@@ -223,10 +223,17 @@ Sprint de clôture du plan : il implémente les arbitrages tranchés par le PO e
 - Encaissement contre-passé retiré rétroactivement de sa journée dans les séries (piste de rapprochement = champ `reversals`) — retraité par l'export comptable figé de S10 ; si S10 n'est pas passé, assumer ici.
 - Endpoint de lecture de l'état persistant du consentement clinique côté centre (aujourd'hui l'UI n'affiche que le résultat de la session ; nécessaire aussi pour auditer la garde SV.1).
 - **S3 (guardian, 14/08/2026)** : pas de triggers PostgreSQL append-only sur les 4 nouvelles tables cliniques (`VitalSigns`, `PatientDocument`, `PatientMedicalFile`, `PatientInsurance`) — invariants en `save()`/`clean()` seulement, durcissement DB à trancher avec le lot S4/SV.
-- **S3 (guardian)** : admins des nouveaux modèles S3 sans `readonly_fields` — même lot de durcissement que `ConsentAdmin`.
+- ~~**S3 (guardian)** : admins des nouveaux modèles S3 sans `readonly_fields`~~ — **SOLDÉ en S4 (lot 2)**, même lot que `ConsentAdmin`.
 - **S3 (guardian)** : écriture d'assurance transversale — un BILLING de tout centre du périmètre du patient peut modifier/désactiver une ligne saisie ailleurs (audité, conforme ADR 0016 §6) ; à re-trancher à l'arrivée du tiers-payant.
 - **S3 (guardian)** : `VitalSigns.measured_at` librement fixable (passé/futur, hors fenêtre de la consultation) — qualité de données, pas sécurité ; borner si le besoin apparaît.
 - **S3 (guardian)** : après fusion de doublons, un document produit par le centre A sur un doublon sans consultation à A devient invisible de A (il reste au patient) — perte de visibilité assumée, jamais de gain.
+- **S4 (lot 1)** : `HealthCenter.kyc_status` sans machine à états dans `save()` (la porte unique est le service + l'admin read-only) ; historique des motifs KYC non conservé (`kyc_reason` = dernière décision, l'audit garde la chronologie des statuts) ; `POST /platform/centers/{pk}/directors/` non conditionné à « zéro directeur ».
+- **S4 (lot 2)** : le journal du directeur **commence à la migration** (aucune ligne antérieure ne porte de centre — append-only, jamais rétro-écrit) ; le `payload` d'audit est rendu tel quel, donc le contrat « références only » d'ADR 0007 devient un contrat **d'exposition** et pas seulement de stockage (à re-vérifier à chaque nouvel `audit()` sur une action whitelistée) ; pas de throttle dédié ni d'export CSV sur le journal et la réconciliation.
+- **S4 (lot 2)** : `StaffMembershipAdmin` et `PlatformStaffAdmin` restent les deux seules portes d'écriture sensibles de l'admin (amorçage de secours) — à refermer avec le module Support de S5.
+- **S4 (guardian, 14/08/2026)** : la garde « un exploitant ne s'amorce pas directeur » (faille élevée n° 1 corrigée) supprime le chemin self-service mais **un exploitant disposant d'un second numéro reste amorçable** — c'est ce qu'achète la séparation des tâches, pas davantage ; la parade réelle est organisationnelle (qui détient un compte `PlatformStaff`).
+- **S4 (guardian)** : `PlatformStaffAdmin` reste écrivable — un superuser Django est à un formulaire de la 4ᵉ casquette (prix assumé du bootstrap, à refermer avec S5) ; `refusal_reason` RGPD lisible par un `support` et non borné (même convention que les 3 autres textes libres du projet) ; `hats.is_platform_operator` compte une ligne désactivée alors que `is_center_staff` ne compte que l'actif.
+- **S4 (guardian)** : `erasure_blockers` ne bloque pas sur un **litige ouvert** ; un doublon de profil patient non revendiqué peut porter le téléphone d'une personne anonymisée (**à trancher avec le DPO**) ; le devis diaspora n'est pas gardé par le KYC (le refus arrive au `pay/`).
+- **S4 (lot 3, RGPD)** : pas de rétractation d'une demande d'effacement par la personne ; aucune notification du traitement ; pas de délai de grâce ; `anon-{pk}` déterministe réserve de fait ce préfixe de username ; un tuteur anonymisé perd ses liens sans notification au patient concerné ; une demande en attente n'empêche aucune action ; pas de trigger PostgreSQL sur `ErasureRequest` ; `hats`/`blockers` calculés par ligne (à passer en agrégats SQL avec le module Support S5).
 
 **Frontend / UX**
 
@@ -242,6 +249,12 @@ Sprint de clôture du plan : il implémente les arbitrages tranchés par le PO e
 - Double message d'annulation patient (« Prévenez le centre » puis « Merci d'avoir prévenu ») — trancher la formulation de la modale ou assumer.
 - Journal de caisse : contre-passations non navigables (item `reversal` sans id de facture — endpoint à enrichir) ; `received_by`/`reversed_by` en ids bruts sans résolution de nom pour non-directeur ; `StaffUser` sans état d'activation (griser l'identité proactivement).
 - `frontend/tsconfig.tsbuildinfo` suivi par git (churn de build) — à ignorer ou assumer.
+- **S4 (UX care, 14/08/2026)** : la `Modal` du socle centre (`screens/centre/shared.tsx`) porte le même patron de focus que la modale grand public — sur une modale plus haute que 90 vh, elle s'ouvre **déjà défilée vers le bas** (le `focus()` sur la sortie sûre, dernière du DOM, fait défiler son conteneur). Corrigé côté patient/tuteur (`preventScroll` + remise à zéro + barre d'actions collante) ; côté centre le correctif exige AUSSI une barre d'actions collante (sinon le bouton focalisé sort de la vue : un défaut d'accessibilité en remplace un autre) — **passe dédiée à prévoir, avec vérification visuelle**.
+- **S4 (guardian frontend, 14/08/2026)** : les modales destructrices ANTÉRIEURES à S4 (annulation de facture, contre-passation de caisse, archivage de document patient…) restent quittables en vol (Échap / clic de fond pendant l'appel) — le prop `busy` existe désormais sur la `Modal` du socle, une passe d'une ligne par appel les couvrirait.
+- **S4 (guardian frontend)** : `chioni:center` et les marqueurs `chioni:intent-<id>` (sessionStorage) survivent à la déconnexion — aucun secret, mais une trace d'usage sur un appareil partagé ; à verser au durcissement de `signOut`.
+- **S4 (guardian frontend)** : `apiDownload`/`apiDownloadJson` révoquent l'object URL synchronement après le `click()` — correct côté sécurité, mais pattern connu pour annuler le téléchargement sur certains navigateurs : **à vérifier au test manuel sur Android d'entrée de gamme** (documents patients, pièces KYC, export RGPD).
+- **S4 (guardian frontend)** : `RequireSpace` est une garde client et `me` n'est réhydraté qu'au montage — un exploitant désactivé garde son chrome jusqu'au prochain chargement de page (l'API refuse tout) ; structurel à l'ADR 0011, vrai pour les 4 espaces.
+- **S4** : miroir centre « votre paiement diaspora a été refusé » non construit (le directeur voit la ligne brute dans son journal, l'écran ne prétend pas l'expliquer) — information légitime pour le centre ET le tuteur, à trancher ; pas d'export CSV du journal ni de la réconciliation.
 
 **Déploiement (check-list de mise en production — à exécuter, pas seulement relire)**
 

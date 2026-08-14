@@ -337,18 +337,31 @@ class TestCashIn:
                 guardian_user=scn.guardian_user, payment_request=scn.payment_request
             )
 
-    def test_kyc_suspension_blocks_the_cash_in_itself(self):
+    def test_a_payment_in_flight_still_lands_after_a_suspension(self):
+        """S4, arbitrage PO du 14/08/2026 — the rail closes for NEW
+        payments; a card already debited is honoured.
+
+        The intent only exists because the center was ACTIVE when it was
+        opened (the guard lives upstream). Refusing the webhook here would
+        leave a real debit with no receipt and no refund path — the exact
+        opacity the Pont de Confiance fights. Cashing in is not paying out:
+        withholding the funds of a suspended center is the payout process's
+        job, not the ledger's.
+        """
         scn = build_scenario(status=Status.SENT)
         intent = services.create_payment_intent(
             guardian_user=scn.guardian_user, payment_request=scn.payment_request
         )
         scn.center.kyc_status = HealthCenter.KycStatus.SUSPENDED
         scn.center.save(update_fields=["kyc_status", "updated_at"])
-        with pytest.raises(ValidationError, match="KYC"):
-            services.register_payment_success(intent=intent)
+
+        services.register_payment_success(intent=intent)
+
         intent.refresh_from_db()
-        assert intent.status == PaymentIntent.Status.PROCESSING
-        assert intent.ledger_transaction_id is None
+        assert intent.status == PaymentIntent.Status.SUCCEEDED
+        assert intent.ledger_transaction_id is not None
+        scn.payment_request.refresh_from_db()
+        assert scn.payment_request.status == Status.PAID
 
     def test_success_writes_a_balanced_ledger_and_flips_all_states(self):
         scn = build_scenario(status=Status.PAID)

@@ -17,7 +17,7 @@
   2. Erreurs de service métier (les plus fréquentes sur les POST d'action) → **tableau JSON nu** : `["Ce lien n'est pas en attente de votre confirmation."]` (statut 400)
   3. Erreurs framework → `{"detail": "...", "code"?: "..."}` (401/403/404/405/429)
 - **Sémantique des refus (norme S1, ADR 0008 addendum)** : anonyme → 401 ; centre étranger ou objet d'autrui référencé par l'**URL** (IDOR) → **404** ; membre sans le bon rôle → 403 ; référence portée par le **CORPS** d'une requête (`patient`, `encounter`, `guardian_link`, `source_id`… d'un POST) hors périmètre → **400 explicite** dont le message couvre indifféremment l'id étranger et l'id inexistant.
-- **429** : message anglais `"Request was throttled. Expected available in N seconds."` + header `Retry-After`. **S1** : throttle global généreux par utilisateur (600/min — jamais atteint par un usage normal) sur tous les endpoints, + scope STRICT `uploads` (20/h par utilisateur) partagé par `POST /auth/me/avatar/` et `POST /centers/{pk}/logo/` — prévoir l'affichage du 429 sur ces deux formulaires.
+- **429** : message anglais `"Request was throttled. Expected available in N seconds."` + header `Retry-After`. **S1** : throttle global généreux par utilisateur (600/min — jamais atteint par un usage normal) sur tous les endpoints, + scope STRICT `uploads` (20/h par utilisateur) partagé par `POST /auth/me/avatar/` et `POST /centers/{pk}/logo/` — prévoir l'affichage du 429 sur ces deux formulaires. **S4 lot 3** : scope `data_export` (10/h) sur `GET /auth/me/export/`.
 - **Swagger** : `/api/docs/` et `/api/schema/` publics en DEV seulement (admin en prod).
 
 ## Auth
@@ -29,12 +29,46 @@
 | `POST /auth/token/` | `{"username","password"}` | 200 `{"access","refresh"}` | Staff/back-office. 401 `{"detail": "Aucun compte actif..."}` |
 | `POST /auth/token/refresh/` | `{"refresh"}` | 200 `{"access","refresh"}` | **Rotation : le refresh est à usage unique** (l'ancien est blacklisté). Sérialiser les refresh (mutex single-flight) sinon 401. Access 30 min, refresh 7 j. |
 | `POST /auth/logout/` | `{"refresh"}` | **205**, corps vide | |
-| `GET /auth/me/` | — | 200 (voir ci-dessous) | Le routeur des 3 espaces. |
+| `GET /auth/me/` | — | 200 (voir ci-dessous) | Le routeur des 4 espaces. |
 | `PATCH /auth/me/` | `{"first_name"?, "last_name"?}` | 200 (payload `me` complet) | Nom d'affichage UNIQUEMENT — `phone` (pivot d'identité) et `username` ne sont jamais modifiables (valeurs soumises ignorées). |
 | `POST /auth/me/avatar/` | **multipart** `file` | 200 `{"avatar": "<url absolue>"}` | Photo de profil de l'utilisateur LUI-MÊME (toute casquette). JPEG/PNG/WebP réels seulement (jamais SVG), 2 Mo max, 2048×2048 max, EXIF strippé, nom de fichier régénéré. 400 : `["Image invalide : formats acceptés JPEG, PNG ou WebP (2 Mo maximum)."]` etc. Remplacement = l'ancien fichier est supprimé du serveur. |
 | `DELETE /auth/me/avatar/` | — | 200 `{"avatar": null}` | 400 si aucun avatar. Fichier physiquement supprimé. |
+| `GET /auth/me/erasure-request/` | — | 200 `{id, status, requested_at, processed_at, refusal_reason}` | **404** `{"detail": "Vous n'avez déposé aucune demande d'effacement."}` si aucune demande — état normal, pas une erreur. Rend la demande la PLUS RÉCENTE, quel que soit son statut. |
+| `POST /auth/me/erasure-request/` | **corps vide** | 201 même shape | Droit à l'effacement (RGPD art. 17). Toute casquette. Une seule demande ouverte à la fois → 400 `["Une demande d'effacement est déjà en cours pour votre compte."]`. |
+| `GET /auth/me/export/` | — | 200 (voir « RGPD » ci-dessous) | Portabilité (art. 20). Throttle `data_export` 10/h → prévoir le 429. |
 
-### `GET /auth/me/` — routeur des 3 espaces
+### RGPD — mes droits sur mon compte (S4 lot 3, ADR 0007 + 0017 décision 7)
+
+**Ce n'est PAS un bouton « supprimer mon compte ».** L'utilisateur DÉPOSE une demande depuis son espace ; l'équipe Chioni l'exécute. Arbitrage produit assumé : un compte qui finance des soins ne doit pas disparaître en un clic, ni sous la pression d'un tiers ayant accès au téléphone de la personne. **L'écran doit le dire honnêtement** : « votre demande sera traitée par l'équipe Chioni », jamais « votre compte va être supprimé ».
+
+- `status` : `en_attente` | `traitee` | `refusee`.
+- `refusal_reason` : texte libre écrit par l'exploitant **et destiné à la personne** (RGPD art. 12.4) — **c'est le seul texte libre d'exploitant du projet que le sujet lit** (contrairement à `kyc_reason`, `cancel_reason`, `Dispute.reason`). L'afficher intégralement sur un refus. Vide sinon.
+- Après un refus, une NOUVELLE demande est possible (la contrainte d'unicité ne porte que sur les demandes ouvertes) : proposer le bouton à nouveau, sans le présenter comme un recours formel.
+- Un compte `traitee` est désactivé : il ne peut plus se connecter du tout (ni OTP, ni mot de passe). Il n'y a **pas** d'écran « après effacement » à construire.
+
+**`GET /auth/me/export/`** — JSON de ce que l'appelant voit DÉJÀ dans son espace, casquette par casquette. **Aucune donnée nouvelle n'est révélée** : l'export rejoue exactement les requêtes et les serializers des écrans. Racine :
+
+```json
+{
+  "generated_at": "2026-08-14T18:30:00+03:00",
+  "account": {"id", "username", "first_name", "last_name", "email", "phone",
+              "avatar", "phone_verified_at", "date_joined", "last_login",
+              "erasure_requests": [...]},
+  "patient": null,
+  "guardian": null,
+  "center_staff": null,
+  "platform_staff": null
+}
+```
+
+- Une casquette non portée vaut **`null`** (≠ objet vide) : « je n'ai pas d'espace tuteur » et « mon espace tuteur est vide » sont deux vérités différentes.
+- `patient` (si profil revendiqué) : `{profile, guardian_links, appointments, encounters, prescriptions, record_entries, medical_file, vital_signs, documents, insurances, payment_requests, receipts, cash_receipts}` — items **identiques** aux endpoints `/patients/me/*` correspondants. `documents` = **métadonnées seules**, jamais d'URL ni d'octets (contrat ADR 0016 §5 inchangé) ; documents archivés exclus, comme dans la liste patient.
+- `guardian` (si profil tuteur) : `{profile, links, proteges, invitations, payment_requests, receipts}` — miroirs exacts de `/guardian/profile/`, `/guardian/links/`, `/guardian/proteges/`, `/guardian/invitations/`, `/guardian/payment-requests/`, `/guardian/receipts/`. **Jamais le carnet du protégé**, même avec un consentement `detail_clinique` : aucune lecture clinique tuteur n'existe dans le produit (verrou de sprint ADR 0016), donc aucune ici. Un lien révoqué vide `proteges` et `payment_requests` exactement comme il vide les écrans.
+- `center_staff` : `{memberships: [...]}` au format de `/auth/me/` — **les memberships du salarié, pas les données de son centre**.
+- `platform_staff` : `{id, role, is_active}`.
+- Rendu tel quel dans un fichier téléchargeable côté client (`Blob` + `a.download`) : le backend ne pose pas de `Content-Disposition` ici, c'est un JSON d'API ordinaire.
+
+### `GET /auth/me/` — routeur des 4 espaces
 
 ```json
 {
@@ -47,7 +81,8 @@
                          "logo": "http://localhost:8000/media/centers/1/logo/9b1c….png"}, "role": "medecin"}
   ],
   "patient_profile": {"id": 7, "first_name": "…", "last_name": "…", "claim_status": "actif"},
-  "guardian_profile": {"id": 4, "country_of_residence": "FR", "preferred_currency": "EUR"}
+  "guardian_profile": {"id": 4, "country_of_residence": "FR", "preferred_currency": "EUR"},
+  "platform_staff": {"id": 2, "role": "admin", "is_active": true}
 }
 ```
 
@@ -56,6 +91,7 @@
 - **Espace centre** : `staff_memberships` non vide (memberships ACTIFS seulement). Rôles : `directeur, medecin, infirmier, sage_femme, secretaire, caissier, pharmacien`. Multi-centres possible → sélecteur ; `center.id` alimente tous les `/centers/{center_pk}/…`.
 - **Espace patient** : `patient_profile !== null` (toujours `claim_status: "actif"` quand présent). `null` → proposer `POST /patients/me/` (porte B).
 - **Espace tuteur** : `guardian_profile !== null`. `null` → proposer `POST /guardian/profile/`.
+- **Espace plateforme (S4)** : `platform_staff !== null` (seule une ligne ACTIVE remonte — un exploitant désactivé reçoit `null`, exactement comme quelqu'un qui ne l'a jamais été). `role` : `support` (lecture) | `admin` (écriture). **Ne JAMAIS déduire cet espace de quoi que ce soit d'autre** : `is_staff`/`is_superuser` n'existent pas dans le payload et ne donnent aucun droit d'API. `CenterContext` n'est jamais monté pour cet espace (l'exploitant n'est pas un tenant).
 - Casquettes **cumulables** ; aucun `role` global.
 
 ## Espace patient (`IsPatientSelf` : 403 `"Réservé au patient titulaire d'un profil revendiqué."` sinon)
@@ -129,7 +165,10 @@
 
 Rôles requis notables : BILLING = `directeur, secretaire, caissier` ; cliniques = `medecin, infirmier, sage_femme` (+ `pharmacien` lecture ordonnances) ; directeur seul : staff, litiges resolve, édition centre.
 
-- `GET /centers/` — mes centres. `GET|PATCH /centers/{pk}/` — `{id, name, type(hopital_public|clinique_privee|centre_sante|cabinet|pharmacie), island(ngazidja|ndzuwani|mwali), city, address, phone, email, kyc_status(en_attente|actif|suspendu, read-only), logo(url absolue|null, read-only), created_at}`. KYC ≠ actif → encaissement bloqué.
+- `GET /centers/` — mes centres. `GET|PATCH /centers/{pk}/` — `{id, name, type(hopital_public|clinique_privee|centre_sante|cabinet|pharmacie), island(ngazidja|ndzuwani|mwali), city, address, phone, email, kyc_status(en_attente|actif|suspendu, read-only), kyc_reason(texte|null, read-only), kyc_updated_at(ISO|null, read-only), logo(url absolue|null, read-only), created_at}`.
+  - **KYC (S4, ADR 0017)** : `kyc_status` n'est **jamais** modifiable par le tenant (valeur soumise silencieusement ignorée) — seule la plateforme Chioni le change. `kyc_reason` = motif de la dernière décision, **rendu au DIRECTEUR du centre concerné SEULEMENT** (`null` pour tout autre rôle, même classe de texte libre que `cancel_reason`) : afficher un bandeau « Que faire ? » sur le seul écran directeur.
+  - **Effet de `suspendu` — RAIL DIASPORA SEUL** : soins, carnet, documents, RDV, patients, personnel, tarifs, **facturation et caisse (espèces / mobile money, reçus « G- »)** continuent normalement. Ce qui répond 400 : créer une demande de paiement, la partager, l'envoyer, ouvrir un paiement tuteur. Message rendu tel quel (deux textes DISTINCTS selon `en_attente` / `suspendu`, tous deux terminés par « La caisse du centre reste ouverte… ») — l'afficher intégralement, ne pas le résumer par « erreur ». Une demande DÉJÀ payée va à son terme : `confirm-care`, `close/` et le reçu fonctionnent sur un centre suspendu.
+- **Pièces justificatives du KYC (S4 — DIRECTEUR SEUL ; les autres rôles → 403)** : `GET|POST /centers/{c}/kyc-documents/` (POST **multipart** `{file, doc_type(registre_commerce|licence_sante|piece_identite_directeur|autre)}`, throttle `uploads` 20/h) → item `{id, center, doc_type, uploaded_by, archived_at(null|date), created_at}` — **jamais d'URL de fichier** (stockage privé, ADR 0016 §5) : lecture des octets UNIQUEMENT via `GET .../kyc-documents/{id}/download/` (binaire, `Content-Disposition: attachment; filename="kyc-<id>.<ext>"`, nosniff). Upload : mêmes règles que logo/avatar (JPEG/PNG/WebP **réels**, 2 Mo, EXIF strippé) — **le PDF est refusé** (le centre photographie son registre). `POST .../kyc-documents/{id}/archive/` → 200 (correction sans destruction, définitif ; déjà archivé → 400). Pièce d'un autre centre → 404.
 - **Logo du centre** (directeur seul) : `POST /centers/{pk}/logo/` — **multipart** `file` → 200 `{"logo": "<url absolue>"}` ; `DELETE` → 200 `{"logo": null}` (400 si aucun logo). Mêmes règles d'upload que l'avatar (JPEG/PNG/WebP réels, 2 Mo, 2048² max, EXIF strippé) ; remplacement/suppression effacent physiquement l'ancien fichier. Jamais via le PATCH JSON du centre.
 - **Patients** : `GET(?q=)|POST /centers/{c}/patients/` ; item `{id, first_name, last_name, birth_date, sex, phone, city, address, phone_alt, national_id, emergency_contact_name, emergency_contact_phone, emergency_contact_relationship, claim_status(non_revendique|invite|actif), created_at}` — **S3** : identité administrative élargie (6 champs optionnels ; téléphones normalisés E.164, invalide → 400). Création porte C : + `guardian_phone?`, `guardian_relationship?` (write-only → lien `invitation_envoyee`). PATCH d'un profil revendiqué → 400 (identité gérée par le patient — les nouveaux champs suivent la même règle R-API-2). Fusion : `POST .../patients/merge/` `{"source_id","target_id"}` — **S1 : rôles BILLING seuls** (la fusion déplace des liens de tutelle ; soignants/pharmacien → 403) ; id hors périmètre du centre → **400 explicite** `"Ce patient n'est pas connu de ce centre : fusion refusée."` (plus 404 — refs de corps). **La fusion ré-ancre aussi (S3)** : documents, assurances, fiche médicale (reprise seulement si la cible n'en a pas), signes vitaux (via leurs consultations).
 - **Détection de doublons au guichet (S3)** : `GET /centers/{c}/patients/similar/?phone=&last_name=&first_name=&birth_date=` (tout staff) → liste paginée au format patient du registre. Règle : même téléphone E.164 (`phone` OU `phone_alt`), OU nom approchant (`last_name` icontains, `first_name` affine) + même `birth_date`. **Non bloquant** : informer le guichet, qui décide (créer quand même / ouvrir la fiche / fusionner) — à appeler avant la création porte C. Aucun critère utilisable → 400 ; téléphone ou date invalide → 400 par champ.
@@ -176,6 +215,79 @@ Rôles requis notables : BILLING = `directeur, secretaire, caissier` ; cliniques
 - **Édition d'un membre** (directeur) : `GET|PATCH /centers/{c}/staff/{pk}/` — PATCH `{role?, first_name?, last_name?}` → 200 (item complet). Règles : membership **actif** seulement (sinon 400) ; `role` refuse un rôle déjà détenu dans ce centre et la rétrogradation du **dernier directeur actif** (400 explicites) ; `first_name`/`last_name` modifiables UNIQUEMENT tant que le compte est un compte ombre jamais revendiqué — compte activé (OTP ou mot de passe) → 400 `["Ce compte est activé : seule la personne concernée peut modifier son identité."]`, la personne passe par `PATCH /auth/me/`. Audité (`staff.membership_updated`).
 - **Tarifs** : `GET|POST /centers/{c}/tariffs/` (+`/{pk}/` PATCH) → `{id, code, label, generic_category*, price_kmf, is_active, created_at}` (écriture : directeur, caissier).
 - `generic_category` : `consultation, analyses_examens, medicaments, hospitalisation, acte_technique, soins_infirmiers, maternite, autre`.
+- **Journal d'audit du centre (S4 lot 2 — DIRECTEUR SEUL, ADR 0017 décision 5)** : `GET /centers/{c}/audit-log/?action=&from=&to=` — liste paginée, **plus récent d'abord**, + une clé `journal_starts_at` à la racine (aux côtés de `count/next/previous/results`).
+  - **Rôle** : directeur uniquement. Caissier, secrétaire, médecin, infirmier, sage-femme, pharmacien → **403** (ce n'est pas une vue BILLING : le journal agrège les décisions de personnel, l'argent et les litiges). Centre étranger → 404.
+  - Item : `{id, created_at, action, actor(id|null), actor_display(nom|null), target_type("app.model"|null), object_id, payload{…}}`. `payload` = **références seules** (ids, codes, montants en chaînes) — jamais un nom, jamais un texte libre, jamais de contenu clinique (contrat ADR 0007).
+  - `actor_display` n'est rempli **que si l'acteur est membre de CE centre** (actif ou désactivé — l'historique reste lisible). Un patient, un tuteur, un exploitant Chioni ou une tâche système → `null` : afficher « — » ou l'id, ne jamais deviner un nom.
+  - **Liste blanche d'actions** (rien d'autre n'existe dans ce flux) : `staff.membership_created|_updated|_deactivated|_reactivated`, `center.created|updated|kyc_changed`, `kyc_document.uploaded|archived`, `tariff.created|updated`, `invoice.created|issued|cancelled`, `payment_request.created|sent|shared|unshared|care_confirmed|patient_acknowledged|closed`, `payment_intent.created|failed|cancelled`, `payment.recorded`, `payment.webhook_refused`, `cash_payment.recorded|reversed`, `dispute.opened|resolved`, `patient_profile.merged`.
+  - **Jamais** : le clinique (`encounter.*`, `prescription.*`, `health_record_entry.*`, `vital_signs.*`, `patient_document.*`, `patient_medical_file.*`) ni les consentements (`consent.*`) — la segmentation clinique de S3 tient aussi ici. Ne pas construire d'écran « qui a vu quel dossier ».
+  - `?action=` hors liste blanche (valeur inventée **ou** action clinique volontairement masquée) → **400 identique** `{"action": ["Action inconnue."]}` — pas d'oracle : ne pas proposer les actions cachées dans un sélecteur, se limiter à la liste blanche ci-dessus.
+  - `?from=&to=` : **même contrat que les stats** (jours locaux Comores inclusifs, défaut 30 j, max 366 j, 400 par champ sur date malformée/impossible, `from` > `to`, période trop longue).
+  - `journal_starts_at` (ISO|`null`) = date de la **première entrée du centre**, y compris une entrée non listée. Le journal ne rétro-remplit rien (table append-only + trigger PostgreSQL) : afficher honnêtement « Le journal de votre centre commence le … » et ne jamais laisser croire que l'historique est complet depuis l'ouverture du centre. `null` = aucune entrée : état vide, pas une erreur.
+
+## Espace plateforme — back-office Chioni (`/platform/…`, S4 lots 1–2, ADR 0017)
+
+**Porte unique : `platform_staff !== null` dans `/auth/me/`.** Anonyme → 401 ; authentifié sans casquette exploitant (y compris un superuser Django) → **403** `"Réservé à l'équipe Chioni."` ; exploitant `support` sur une route d'écriture → **403** `"Cette action est réservée aux administrateurs de la plateforme Chioni."`. Centre inexistant dans l'URL → 404.
+
+> **Invariant produit non négociable** : aucune route `/platform/` ne renvoie de patient — ni nom, ni téléphone, ni date de naissance, ni la moindre donnée clinique. Le périmètre de l'exploitant est le **tenant**. Ne construire aucun écran plateforme qui prétendrait afficher un dossier patient : la donnée n'existe pas dans ces payloads (verrouillé par test de champs négatif).
+
+| Endpoint | Rôle | Notes |
+|---|---|---|
+| `GET /platform/centers/?kyc_status=&q=` | support+admin | Liste paginée de TOUS les centres. `q` : nom ou ville. `kyc_status` inconnu → 400 `{"kyc_status": […]}`. |
+| `GET /platform/centers/similar/?name=&city=&island=` | support+admin | Détection de doublons **non bloquante** avant création (miroir de la porte C patient) : aucune contrainte d'unicité sur le nom — deux « Clinique El-Maarouf » peuvent coexister. Aucun critère (`name` et `city` vides) → 400 ; `island` inconnue → 400 par champ. |
+| `POST /platform/centers/` | **admin** | Onboarding : centre **+ premier directeur** dans UNE transaction. Corps `{name*, type*, island*, city*, address?, phone?, email?, director_phone*, director_first_name?, director_last_name?}`. Le centre naît **toujours** `en_attente` (un `kyc_status` envoyé est ignoré). 201 = payload centre + `director{id, user_id, center, role, is_active, created_at}`. Téléphone invalide → 400 **et rien n'est créé** (pas de centre orphelin). |
+| `GET /platform/centers/{pk}/` | support+admin | Idem item de liste. |
+| `POST /platform/centers/{pk}/directors/` | **admin** | Amorçage de secours (centre sans directeur : accident, départ). `{phone*, first_name?, last_name?}` → 201 membership. Rôle déjà détenu → 400. |
+| `POST /platform/centers/{pk}/kyc/` | **admin** | `{status*, reason?}`. Machine à états : `en_attente → actif|suspendu`, `actif → suspendu`, `suspendu → actif`. **`reason` obligatoire pour `suspendu`** → sinon 400 `"Le motif est obligatoire pour suspendre un centre : …"`. Même statut → 400 ; transition impossible → 400 `"Transition KYC refusée : …"`. |
+| `GET /platform/centers/{pk}/kyc-documents/` | support+admin | Les pièces déposées par le directeur (archivées comprises, leur état est visible). Même item que côté centre — **jamais d'URL de fichier**. |
+| `GET /platform/centers/{pk}/kyc-documents/{id}/download/` | support+admin | Binaire, `attachment; filename="kyc-<id>.<ext>"`, nosniff. |
+| `GET /platform/reconciliation/?from=&to=&reason=&center=` | support+admin | **S4 lot 2** — les incidents de paiement PSP (voir ci-dessous). |
+| `GET /platform/erasure-requests/?status=` | support+admin | **S4 lot 3** — la file RGPD (voir ci-dessous). `status` inconnu → 400 `{"status": […]}`. |
+| `POST /platform/erasure-requests/{pk}/process/` | **admin** | `{decision: "anonymiser"\|"refuser", refusal_reason?}`. Demande inexistante → 404 ; déjà traitée → 400. |
+
+### Réconciliation PSP (`GET /platform/reconciliation/`, S4 lot 2, ADR 0017 décision 6)
+
+Liste paginée, **plus récent d'abord**. Lecture seule, `support` **et** `admin`. C'est une vue d'exploitation **technique** : des ids, des statuts, des montants, un code d'incident — **jamais un nom de patient, jamais un nom de tuteur, jamais un libellé d'acte** (verrouillé par test de champs négatif, comme tout `/platform/`).
+
+Item : `{id, created_at, action, incident, center(id|null), center_name(string|null), refs{…}}`.
+
+- `action` ∈ `payment.webhook_refused` | `payment_intent.cancelled` | `payment_intent.failed`.
+- `incident` = **vocabulaire fermé**, c'est lui qu'on affiche et qu'on filtre :
+  | code | ce qui s'est passé | ce que ça coûte |
+  |---|---|---|
+  | `webhook_intent_not_payable` | succès PSP sur une intention déjà `echoue`/`annule` (purge des zombies) | le tuteur a peut-être été débité |
+  | `webhook_request_not_payable` | succès PSP sur une demande qui n'est plus `envoyee` | idem |
+  | `webhook_invoice_cancelled` | succès PSP sur une facture annulée par le centre | idem |
+  | `webhook_balance_changed` | succès PSP alors que le solde a bougé (encaissement guichet entre-temps) | idem |
+  | `intent_stale_cancelled` | intention abandonnée annulée par la purge horaire | rien, mais à annuler côté PSP |
+  | `intent_failed` | le prestataire a signalé un échec | rien |
+- `refs` : sous-ensemble de `{intent_id, payment_request_id, invoice_id, intent_status, request_status, intent_kmf, balance_kmf}` — **seules les clés présentes** sont rendues (liste blanche stricte : un service qui enrichirait le payload demain ne fuitera pas ici).
+- `center`/`center_name` : le tenant. **`null` pour un incident antérieur à S4 lot 2** (la colonne n'existait pas et le journal est append-only) — afficher « centre inconnu », ne pas masquer la ligne.
+- Filtres : `?reason=<code d'incident>` (valeur hors vocabulaire → 400 `{"reason": […]}`), `?center=<id>` (non numérique → 400 par champ ; id inexistant → page vide), `?from=&to=` (même contrat de fenêtre que les stats : jours locaux Comores, 30 j par défaut, 366 max).
+
+> **Le miroir côté centre n'existe pas** (« votre paiement diaspora a été refusé » pour le centre et pour le tuteur) : hors périmètre S4, consigné en vigilance dans l'ADR 0017. Le directeur voit toutefois ces mêmes lignes brutes dans son journal d'audit (`payment.webhook_refused`) — ce n'est pas un écran d'explication, ne pas le présenter comme tel.
+
+### File RGPD (`GET /platform/erasure-requests/`, S4 lot 3, ADR 0017 décision 7)
+
+Liste paginée, plus récente d'abord. Lecture `support` **et** `admin` (répondre « où en est ma demande ? » est un geste de support) ; exécution **`admin` seul** (l'anonymisation est irréversible, le refus est un acte juridique).
+
+Item : `{id, user, status, requested_at, processed_at, processed_by, refusal_reason, hats, blockers}`.
+
+- `user` / `processed_by` : des **identifiants de compte**, jamais un nom ni un téléphone. **L'exploitant n'a pas besoin de l'identité pour effacer** : la demande a été déposée par la personne AUTHENTIFIÉE depuis son propre espace — l'auth de Chioni est la preuve d'identité, pas un nom saisi. L'invariant « aucune PII de patient côté plateforme » tient donc ici aussi (verrouillé par test, y compris quand le demandeur est un patient).
+- `hats` : `{is_patient, is_guardian, is_center_staff, is_platform_operator}` — des booléens, pour que l'exploitant mesure les conséquences (« ce compte porte un carnet, qui ne sera pas effacé »).
+- `blockers` : liste de codes, **vide = exécutable**. Les afficher AVANT le bouton, jamais découvrir le refus au clic :
+  | code | ce qu'il faut faire d'abord |
+  |---|---|
+  | `dernier_directeur` | nommer un autre directeur dans le centre concerné |
+  | `paiement_en_cours` | attendre que le paiement PSP aboutisse (ou que la purge horaire l'annule) |
+  | `dernier_admin_plateforme` | nommer un autre administrateur Chioni |
+- `POST .../process/` avec `{"decision": "anonymiser"}` sur une demande bloquée → **400** avec les phrases françaises correspondantes, et **la demande RESTE `en_attente`** (elle n'est pas refermée : la personne n'a pas à redemander une fois l'obstacle levé).
+- `{"decision": "refuser"}` exige `refusal_reason` non vide → 400 `["Le motif du refus est obligatoire : …"]`. Le motif est ensuite **lu par la personne** dans son espace.
+- **Effet de `anonymiser`, à écrire noir sur blanc dans l'écran de confirmation** : identité neutralisée (`anon-<id>`, téléphone à NULL, avatar supprimé), compte désactivé, liens de tutelle révoqués (des deux côtés), consentements révoqués, memberships désactivés, codes OTP purgés. **Rien n'est supprimé** : ledger, journal d'audit, factures, reçus et **le carnet de santé** restent (ADR 0007 — le carnet appartient au patient et relève du droit local de conservation ; il devient orphelin d'identité). Un patient anonymisé apparaît sous « Patient anonymisé #<id> » dans les listes du centre.
+
+Item centre plateforme : `{id, name, type, island, city, address, phone, email, kyc_status, kyc_reason, kyc_updated_at, created_at, staff_active_count, director_active_count, kyc_document_count}` — **exactement ces champs**. `director_active_count == 0` est le signal « ce centre est verrouillé hors de son propre espace, amorcer un directeur ».
+
+Le premier directeur naît en **compte ombre** : aucun mot de passe n'est transmis, il prend possession de son compte par OTP. Ne jamais afficher ni promettre un identifiant/mot de passe dans l'écran d'onboarding — dire « le directeur recevra un code par SMS à sa première connexion ».
 
 ## N'existe PAS côté API (ne pas construire d'écran branché dessus)
-Prise de RDV par le patient (self-booking — la lecture et l'annulation d'un `prevu` existent depuis S2, voir Espace patient ; la prise reste au guichet), agenda côté tuteur (aucun accès tuteur aux RDV), lecture du ledger, lecture d'audit, création de centre, reset de mot de passe, messagerie, **toute donnée S3 côté tuteur** (fiche médicale, signes vitaux, documents, assurances, identité élargie — verrou de sprint ADR 0016 : rien de nouveau n'est exposé au tuteur, même porteur de `detail_clinique` ; le payload protégé reste `{id, first_name, last_name, claim_status}`), upload PDF (différé — photos JPEG/PNG/WebP seulement), directives anticipées (hors périmètre S3, cadrage dédié à venir). La photo de profil n'apparaît JAMAIS dans les vues croisées patient/tuteur (le tuteur ne voit pas la photo du patient ni l'inverse) : ne pas prévoir d'emplacement pour. Les écrans correspondants sont soit à exclure du MVP frontend, soit des placeholders « bientôt » clairement assumés.
+Prise de RDV par le patient (self-booking — la lecture et l'annulation d'un `prevu` existent depuis S2, voir Espace patient ; la prise reste au guichet), agenda côté tuteur (aucun accès tuteur aux RDV), lecture du ledger, **miroir centre/tuteur d'un paiement diaspora refusé** (hors périmètre S4 — le directeur voit la ligne brute dans son journal d'audit, ce n'est pas un écran d'explication), **annulation d'une demande d'effacement par la personne** (S4 lot 3 : on dépose, on ne retire pas — à rouvrir si le terrain le demande), **restauration d'un compte anonymisé** (structurellement impossible : il n'y a plus rien à restaurer), **inscription en self-service d'un centre** (hors périmètre S4 : elle suppose un plan et une facturation — S5 ; en S4 un centre entre par l'exploitant), **édition d'un centre par la plateforme** (le profil du centre reste au directeur ; la plateforme décide le KYC, pas l'adresse), **annuaire du personnel côté plateforme** (compteurs seulement en S4 — le module Support riche est S5), reset de mot de passe, messagerie, **toute donnée S3 côté tuteur** (fiche médicale, signes vitaux, documents, assurances, identité élargie — verrou de sprint ADR 0016 : rien de nouveau n'est exposé au tuteur, même porteur de `detail_clinique` ; le payload protégé reste `{id, first_name, last_name, claim_status}`), upload PDF (différé — photos JPEG/PNG/WebP seulement), directives anticipées (hors périmètre S3, cadrage dédié à venir). La photo de profil n'apparaît JAMAIS dans les vues croisées patient/tuteur (le tuteur ne voit pas la photo du patient ni l'inverse) : ne pas prévoir d'emplacement pour. Les écrans correspondants sont soit à exclure du MVP frontend, soit des placeholders « bientôt » clairement assumés.

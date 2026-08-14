@@ -8,6 +8,7 @@ from itertools import count
 
 from django.contrib.auth import get_user_model
 
+from apps.accounts.models import PlatformStaff
 from apps.centers.models import HealthCenter, StaffMembership, TariffItem
 from apps.medical.models import ActPerformed, Encounter
 from apps.patients.models import GuardianLink, GuardianProfile, PatientProfile
@@ -40,6 +41,19 @@ def make_center(name="Clinique Salama", **kwargs):
     }
     defaults.update(kwargs)
     return HealthCenter.objects.create(name=name, **defaults)
+
+
+def make_platform_staff(user=None, role=PlatformStaff.Role.ADMIN, is_active=True):
+    """A Chioni operator — the FOURTH hat (S4, ADR 0017).
+
+    Returns (user, platform_staff). NB: the user carries NO ``is_staff``
+    flag on purpose — admin flags are not product rights.
+    """
+    user = user or make_user()
+    operator = PlatformStaff.objects.create(
+        user=user, role=role, is_active=is_active
+    )
+    return user, operator
 
 
 def make_staff(user=None, center=None, role=StaffMembership.Role.DOCTOR):

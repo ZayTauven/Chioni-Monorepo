@@ -221,6 +221,36 @@ export function Modal({
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
   useFocusTrap(dialogRef, open);
+  /*
+   * Le focus va à `[data-autofocus]` quand la modale en désigne un — sinon
+   * `useFocusTrap` prend le PREMIER élément focalisable, c'est-à-dire le
+   * bouton d'action. Une personne au clavier ou au lecteur d'écran arrivait
+   * donc sur « Envoyer », jamais sur la sortie. Même contrat que la Modal du
+   * socle centre (patron de l'archivage S3).
+   */
+  useEffect(() => {
+    if (!open) return;
+    const node = dialogRef.current;
+    if (!node) return;
+    /*
+     * `focus()` fait DÉFILER son conteneur pour montrer l'élément visé. La
+     * sortie sûre étant la dernière du dialogue, toute modale plus haute que
+     * l'écran s'ouvrait déjà défilée tout en bas : on y lisait la fin d'une
+     * liste et deux boutons, jamais la première phrase (« votre demande sera
+     * examinée… »). Le cas n'est pas rare — la demande de suppression de
+     * compte fait le double d'un écran d'Android d'entrée de gamme.
+     *
+     * `preventScroll` + remise à zéro du corps : le focus RESTE sur la sortie
+     * (durcissement guardian, il ne bouge pas), et le texte se lit par le
+     * début. Les boutons, eux, restent visibles grâce à la barre collante
+     * (`.pat-confirm__actions`, patient.css) — sans elle, le focus initial
+     * serait hors de vue, ce qui est un défaut d'accessibilité en soi.
+     */
+    node.querySelector<HTMLElement>('[data-autofocus]')?.focus({ preventScroll: true });
+    node.querySelectorAll<HTMLElement>('.ax-modal__body').forEach((body) => {
+      body.scrollTop = 0;
+    });
+  }, [open]);
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
@@ -252,6 +282,12 @@ export function Modal({
  * One-decision confirmation dialog. `message` MUST state the consequence in
  * one sentence (« Ce refus est définitif. »). Buttons are stacked and
  * full-width — big targets first, escape route below.
+ *
+ * Focus lands on the ESCAPE route (`data-autofocus` on « Annuler »), never on
+ * the action: a dialog that opens with the consequential button focused turns
+ * a stray Enter into a decision. A `children` form field may claim the focus
+ * back by carrying `data-autofocus` itself — it comes first in the DOM, and
+ * the Modal keeps the first match.
  */
 export function ConfirmModal({
   open,
@@ -281,6 +317,17 @@ export function ConfirmModal({
 }) {
   const titleId = 'pat-confirm-title';
   const descId = 'pat-confirm-desc';
+  /*
+   * L'échec est écrit EN HAUT du dialogue, sous le titre — et le geste, lui,
+   * se fait en bas. Dans une modale qui défile, la personne cliquait
+   * « Envoyer », rien ne semblait bouger, et l'explication l'attendait hors
+   * de vue. On ramène donc le corps à son début quand une erreur arrive : le
+   * message est lu, et les boutons restent là (barre collante).
+   */
+  const bodyRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (error != null) bodyRef.current?.scrollTo({ top: 0 });
+  }, [error]);
   return (
     <Modal
       open={open}
@@ -289,7 +336,7 @@ export function ConfirmModal({
       labelledBy={titleId}
       describedBy={descId}
     >
-      <div className="ax-modal__body pat-confirm">
+      <div className="ax-modal__body pat-confirm" ref={bodyRef}>
         <span className={`ax-modal__status ax-modal__status--${danger ? 'danger' : 'info'}`}>
           {danger ? (
             <svg viewBox="0 0 24 24" width={24} height={24} fill="none" stroke="currentColor" strokeWidth={1.75} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 9v4" /><path d="M12 16v.01" /><path d="M5 19h14a2 2 0 0 0 1.84 -2.75l-7.1 -12.25a2 2 0 0 0 -3.5 0l-7.1 12.25a2 2 0 0 0 1.75 2.75" /></svg>
@@ -317,6 +364,7 @@ export function ConfirmModal({
             className="ax-btn ax-btn--ghost ax-btn--lg ax-btn--block"
             onClick={onClose}
             disabled={busy}
+            data-autofocus=""
           >
             {cancelLabel}
           </button>

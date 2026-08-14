@@ -20,9 +20,10 @@
 
     { "id": "centre.tarifs", "title": "Tarifs", "slug": "centre/tarifs", "icon": "cash", "parent": null, "section": "GESTION", "order": 10, "badge": null, "keywords": ["tarifs", "prix", "actes", "catalogue", "kmf"], "inMenu": true, "alias": null },
     { "id": "centre.personnel", "title": "Personnel", "slug": "centre/personnel", "icon": "users-group", "parent": null, "section": "GESTION", "order": 11, "badge": null, "keywords": ["personnel", "équipe", "rôles", "comptes", "staff"], "inMenu": true, "alias": null },
-    { "id": "centre.parametres", "title": "Mon centre", "slug": "centre/parametres", "icon": "building-hospital", "parent": null, "section": "GESTION", "order": 12, "badge": null, "keywords": ["mon centre", "paramètres", "coordonnées", "kyc", "établissement", "logo"], "inMenu": true, "alias": null },
+    { "id": "centre.parametres", "title": "Mon centre", "slug": "centre/parametres", "icon": "building-hospital", "parent": null, "section": "GESTION", "order": 12, "badge": null, "keywords": ["mon centre", "paramètres", "coordonnées", "kyc", "établissement", "logo", "pièces justificatives", "vérification"], "inMenu": true, "alias": null },
+    { "id": "centre.journal", "title": "Journal du centre", "slug": "centre/journal", "icon": "article", "parent": null, "section": "GESTION", "order": 13, "badge": null, "keywords": ["journal", "audit", "historique", "traçabilité", "qui a fait quoi"], "inMenu": true, "alias": null },
 
-    { "id": "centre.profil", "title": "Mon profil", "slug": "centre/profil", "icon": "users", "parent": null, "section": "GESTION", "order": 13, "badge": null, "keywords": ["mon profil", "compte", "photo", "avatar", "casquettes", "rôles"], "inMenu": false, "alias": null },
-    { "id": "centre.profil.parametres", "title": "Paramètres du profil", "slug": "centre/profil/parametres", "icon": "settings", "parent": null, "section": "GESTION", "order": 14, "badge": null, "keywords": ["profil", "photo de profil", "nom", "prénom", "modifier mon profil"], "inMenu": false, "alias": null }
+    { "id": "centre.profil", "title": "Mon profil", "slug": "centre/profil", "icon": "users", "parent": null, "section": "GESTION", "order": 14, "badge": null, "keywords": ["mon profil", "compte", "photo", "avatar", "casquettes", "rôles"], "inMenu": false, "alias": null },
+    { "id": "centre.profil.parametres", "title": "Paramètres du profil", "slug": "centre/profil/parametres", "icon": "settings", "parent": null, "section": "GESTION", "order": 15, "badge": null, "keywords": ["profil", "photo de profil", "nom", "prénom", "modifier mon profil"], "inMenu": false, "alias": null }
   ]
 }

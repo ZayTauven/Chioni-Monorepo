@@ -2,8 +2,9 @@
  * Chioni — auth endpoints (contract §Auth).
  */
 
-import { apiFetch } from '../api';
-import type { Me, OtpVerifyResponse, TokenPair } from '../types';
+import { ApiError, apiDownloadJson, apiFetch } from '../api';
+import { todayIsoDate } from '../labels';
+import type { ErasureRequestMine, Me, OtpVerifyResponse, TokenPair } from '../types';
 
 /**
  * Request an SMS code. Anti-enumeration: the success message is ALWAYS the
@@ -55,4 +56,44 @@ export function uploadAvatar(file: File): Promise<{ avatar: string }> {
 /** 400 when there is no avatar; the file is physically deleted. */
 export function deleteAvatar(): Promise<{ avatar: null }> {
   return apiFetch('/auth/me/avatar/', { method: 'DELETE' });
+}
+
+/* ── S4 (ADR 0017 décision 7) — my RGPD rights on my own account ── */
+
+/**
+ * The MOST RECENT erasure request of the caller, whatever its status (a
+ * refusal and its motive must stay readable). **404 = no request at all** —
+ * a normal state, not an error: callers map it to `null`.
+ */
+export async function getMyErasureRequest(): Promise<ErasureRequestMine | null> {
+  try {
+    return await apiFetch<ErasureRequestMine>('/auth/me/erasure-request/');
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 404) return null;
+    throw err;
+  }
+}
+
+/**
+ * Deposit an erasure request (art. 17) — EMPTY body, any hat. This is NOT a
+ * « delete my account » button: the request is executed by the Chioni team.
+ * A second open request → 400 « Une demande d'effacement est déjà en cours… ».
+ */
+export function createErasureRequest(): Promise<ErasureRequestMine> {
+  return apiFetch('/auth/me/erasure-request/', { method: 'POST', body: {} });
+}
+
+/**
+ * Portability (art. 20): a JSON of what the caller ALREADY sees in their own
+ * space — the backend replays the very same querysets and serializers, so
+ * nothing new is revealed. Ordinary API JSON (no Content-Disposition): the
+ * file is built client-side from the parsed body. Throttle `data_export`
+ * 10/h → surface the 429 honestly.
+ */
+export async function downloadMyDataExport(): Promise<string> {
+  const filename = `chioni-mes-donnees-${todayIsoDate()}.json`;
+  await apiDownloadJson('/auth/me/export/', filename);
+  // Rendu à l'appelant pour que la confirmation puisse NOMMER le fichier :
+  // « c'est enregistré » ne sert à rien si on ne sait pas quoi chercher.
+  return filename;
 }

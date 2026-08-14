@@ -1,9 +1,9 @@
 """Account serializers.
 
 ``MeSerializer`` — audience: the AUTHENTICATED USER about themself. It is
-what the frontend consumes to route the three spaces (center / patient /
-guardian): identity + every hat the user wears. It exposes nothing about
-OTHER people beyond minimal center labels.
+what the frontend consumes to route the four spaces (center / patient /
+guardian / Chioni platform since S4): identity + every hat the user
+wears. It exposes nothing about OTHER people beyond minimal center labels.
 
 ``OtpRequestSerializer`` / ``OtpVerifySerializer`` — bodies of the OTP
 endpoints (ADR 0010). The phone is normalised to E.164 HERE (R-API-5),
@@ -13,6 +13,7 @@ so services and throttles downstream only ever see one spelling.
 from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework import serializers
 
+from apps.accounts.models import ErasureRequest, PlatformStaff
 from apps.centers.models import HealthCenter, StaffMembership
 from apps.common.phones import normalize_phone
 from apps.common.uploads import media_url
@@ -60,6 +61,23 @@ class _OwnGuardianProfileSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
 
+class _OwnPlatformStaffSerializer(serializers.ModelSerializer):
+    """The Chioni-operator hat (S4, ADR 0017) — the fourth space's key.
+
+    Only an ACTIVE row ever reaches this serializer (``me_payload`` uses
+    ``platform_staff()``, which returns None otherwise) — so the frontend
+    gate is simply ``platform_staff !== null``, exactly like
+    ``patient_profile``. ``is_active`` rides along for readability and is
+    always ``true``; a deactivated operator is indistinguishable from
+    somebody who never was one.
+    """
+
+    class Meta:
+        model = PlatformStaff
+        fields = ["id", "role", "is_active"]
+        read_only_fields = fields
+
+
 class MeSerializer(serializers.Serializer):
     """Identity + hats of the current user (read-only aggregate).
 
@@ -78,6 +96,7 @@ class MeSerializer(serializers.Serializer):
     staff_memberships = _StaffMembershipSerializer(many=True, read_only=True)
     patient_profile = _OwnPatientProfileSerializer(read_only=True, allow_null=True)
     guardian_profile = _OwnGuardianProfileSerializer(read_only=True, allow_null=True)
+    platform_staff = _OwnPlatformStaffSerializer(read_only=True, allow_null=True)
 
 
 class MeUpdateSerializer(serializers.Serializer):
@@ -103,6 +122,27 @@ class AvatarUploadSerializer(serializers.Serializer):
     file = serializers.FileField(
         error_messages={"required": "Le fichier image est requis."},
     )
+
+
+class ErasureRequestSerializer(serializers.ModelSerializer):
+    """The user's OWN erasure request, as they see it (S4 lot 3).
+
+    ``refusal_reason`` IS rendered here — deliberately, and unlike every
+    other free operator text of the project (``kyc_reason``,
+    ``Invoice.cancel_reason``, ``Dispute.reason``): a refused erasure must
+    be explained to the person concerned (RGPD art. 12.4). It is written
+    FOR them. It still never enters an audit payload (ADR 0007).
+
+    ``processed_by`` stays out: who at Chioni handled the file is internal
+    — the person needs the decision and its motive, not a name.
+    """
+
+    class Meta:
+        model = ErasureRequest
+        fields = [
+            "id", "status", "requested_at", "processed_at", "refusal_reason",
+        ]
+        read_only_fields = fields
 
 
 class LogoutSerializer(serializers.Serializer):

@@ -31,6 +31,8 @@ import type { StaffRole } from '@/lib/types';
  * that never mount a role-restricted block. « Litiges » carries the free-text
  * dispute reasons: BILLING roles only (backend 403 for the others).
  */
+const DIRECTOR_ONLY: StaffRole[] = ['directeur'];
+
 const NAV_ROLE_GATES: Record<string, StaffRole[]> = {
   'centre.litiges': BILLING_ROLES,
   // Journal de caisse et impayés : écrans BILLING-only (les non-BILLING ne
@@ -38,6 +40,10 @@ const NAV_ROLE_GATES: Record<string, StaffRole[]> = {
   // reste visible : la lecture est ouverte à tout le staff (arbitrage C.3).
   'centre.caisse': BILLING_ROLES,
   'centre.impayes': BILLING_ROLES,
+  // S4 (ADR 0017 décision 5) — le journal d'audit agrège personnel, argent et
+  // litiges : DIRECTEUR SEUL, et pas « rôles BILLING ». Les cinq autres rôles
+  // reçoivent un 403 côté API : l'entrée n'a aucune raison de leur apparaître.
+  'centre.journal': DIRECTOR_ONLY,
 };
 
 /** Shared with the command palette — one source of truth for nav visibility.

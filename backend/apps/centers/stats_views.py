@@ -26,18 +26,21 @@ individual data rows. Empty center → clean zero-filled series, no division
 by zero (``attendance_rate_pct`` is null when nothing is measurable).
 """
 
-from datetime import datetime, time, timedelta
+from datetime import timedelta
 from decimal import ROUND_HALF_UP, Decimal
 
 from django.db.models import Count, Sum
 from django.db.models.functions import TruncDate
 from django.utils import timezone
-from django.utils.dateparse import parse_date
 from drf_spectacular.utils import extend_schema
-from rest_framework.exceptions import ValidationError as DrfValidationError
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.common.periods import (
+    DEFAULT_PERIOD_DAYS,
+    MAX_PERIOD_DAYS,
+    parse_period,
+)
 from apps.common.permissions import CenterScopedViewMixin, IsStaffOfCenter
 from apps.medical.models import Encounter
 from apps.patients.models import PatientProfile
@@ -46,64 +49,20 @@ from apps.trustbridge.models import CashPayment, CashPaymentReversal, Invoice
 from apps.common.roles import BILLING_ROLES
 from apps.trustbridge.services import unpaid_invoices_qs
 
-#: Longest inclusive period served (a leap year).
-MAX_PERIOD_DAYS = 366
-#: Default window when ``from``/``to`` are omitted.
-DEFAULT_PERIOD_DAYS = 30
+# The period contract (inclusive local Comoros days, 30 j default / 366 max,
+# 400 per field on every impossible input) moved to ``apps.common.periods``
+# at S4 lot 2: the director's audit journal and the platform reconciliation
+# reuse it verbatim, and a views module must not import another views module.
+# Re-exported here so this module's public surface is unchanged.
+__all__ = [
+    "CenterActivityStatsView",
+    "CenterFinanceStatsView",
+    "DEFAULT_PERIOD_DAYS",
+    "MAX_PERIOD_DAYS",
+    "parse_period",
+]
 
 _ZERO = Decimal("0")
-
-
-def _parse_day(raw, field):
-    """One query-param day or a 400 — ``parse_date`` returns None on a
-    malformed string but RAISES ValueError on a well-formed impossible
-    date (« 2026-02-30 »): both are the caller's typo, both answer the
-    same 400 (exact refusal semantics of the day queue / cash journal)."""
-    try:
-        day = parse_date(raw)
-    except ValueError:
-        day = None
-    if day is None:
-        raise DrfValidationError({field: ["Format attendu : AAAA-MM-JJ."]})
-    return day
-
-
-def parse_period(request):
-    """``(from_day, to_day, start, end)`` — inclusive local-day period.
-
-    ``start``/``end`` are aware datetimes in ``TIME_ZONE`` (Indian/Comoro)
-    covering ``[from_day 00:00, to_day + 1 day 00:00)`` — the ADR 0013
-    local-bounds pattern. Defaults: ``to`` = today (local), ``from`` =
-    ``to`` − 29 days (30 inclusive days). Refusals (400 per field):
-    invalid dates, ``from`` after ``to``, span over 366 days, dates the
-    calendar cannot bound (« 9999-12-31 »).
-    """
-    raw_from = request.query_params.get("from")
-    raw_to = request.query_params.get("to")
-    to_day = _parse_day(raw_to, "to") if raw_to else timezone.localdate()
-    if raw_from:
-        from_day = _parse_day(raw_from, "from")
-    else:
-        try:
-            from_day = to_day - timedelta(days=DEFAULT_PERIOD_DAYS - 1)
-        except OverflowError:
-            raise DrfValidationError({"to": ["Date hors limites."]})
-    if from_day > to_day:
-        raise DrfValidationError(
-            {"from": ["La date de début doit précéder la date de fin."]}
-        )
-    if (to_day - from_day).days + 1 > MAX_PERIOD_DAYS:
-        raise DrfValidationError(
-            {"from": [f"Période trop longue : {MAX_PERIOD_DAYS} jours maximum."]}
-        )
-    try:
-        start = timezone.make_aware(datetime.combine(from_day, time.min))
-        end = timezone.make_aware(datetime.combine(to_day, time.min)) + timedelta(
-            days=1
-        )
-    except OverflowError:
-        raise DrfValidationError({"to": ["Date hors limites."]})
-    return from_day, to_day, start, end
 
 
 def _iter_days(from_day, to_day):

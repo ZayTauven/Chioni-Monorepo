@@ -228,6 +228,14 @@ export async function apiDownload(path: string, fallbackName: string): Promise<v
   const ext = EXT_BY_MIME[blob.type];
   const filename = fromHeader ?? (ext ? `${fallbackName}.${ext}` : fallbackName);
 
+  saveBlob(blob, filename);
+}
+
+/**
+ * Hand a blob to the browser as a download (object URL, click, revoke).
+ * Shared by the two download paths so the DOM dance lives in one place.
+ */
+function saveBlob(blob: Blob, filename: string): void {
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement('a');
   anchor.href = url;
@@ -236,4 +244,30 @@ export async function apiDownload(path: string, fallbackName: string): Promise<v
   anchor.click();
   anchor.remove();
   URL.revokeObjectURL(url);
+}
+
+/**
+ * Save an authenticated JSON endpoint AS A FILE (S4 — RGPD portability).
+ *
+ * Differs from apiDownload on one point only: the backend does NOT set a
+ * Content-Disposition here — `GET /auth/me/export/` is an ordinary API JSON,
+ * so the filename is ours to choose. Same Bearer + single-flight refresh path
+ * and same ApiError normalisation as every other call (a `data_export` 429
+ * therefore surfaces with its Retry-After).
+ */
+export async function apiDownloadJson(path: string, filename: string): Promise<void> {
+  let res = await rawFetch(path, {});
+  if (res.status === 401 && getRefreshToken()) {
+    const refreshed = await refreshTokens();
+    if (!refreshed) {
+      redirectToSignIn();
+      throw await toApiError(res);
+    }
+    res = await rawFetch(path, {});
+  }
+  if (!res.ok) {
+    throw await toApiError(res);
+  }
+  const text = await res.text();
+  saveBlob(new Blob([text], { type: 'application/json' }), filename);
 }

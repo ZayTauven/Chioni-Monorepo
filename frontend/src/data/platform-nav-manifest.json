@@ -1,0 +1,13 @@
+{
+  "$schema": "vireo-nav-manifest/v1",
+  "meta": {
+    "comment": "Chioni — navigation manifest of the PLATEFORME space only (back-office Chioni, S4/ADR 0017). SEPARATE from nav-manifest.json, which its own meta declares CENTRE-ONLY: the operator is not a tenant, his entries have no business in the centre sidebar, breadcrumb or ⌘K palette. Same node contract as Vireo ({id,title,slug,icon,parent,section,order,badge,keywords,inMenu,alias}) and the same indexing code (indexManifest) — one contract, two data files. Slugs include the 'plateforme/' prefix so hrefForSlug maps 1:1 to routes.",
+    "sections": ["TENANTS", "EXPLOITATION"]
+  },
+  "nodes": [
+    { "id": "plateforme.centres", "title": "Centres", "slug": "plateforme", "icon": "building-hospital", "parent": null, "section": "TENANTS", "order": 1, "badge": null, "keywords": ["centres", "tenants", "kyc", "vérification", "onboarding", "établissements"], "inMenu": true, "alias": null },
+
+    { "id": "plateforme.reconciliation", "title": "Réconciliation", "slug": "plateforme/reconciliation", "icon": "arrows-exchange", "parent": null, "section": "EXPLOITATION", "order": 2, "badge": null, "keywords": ["réconciliation", "incidents", "paiements", "psp", "webhook", "intentions"], "inMenu": true, "alias": null },
+    { "id": "plateforme.effacements", "title": "Demandes d'effacement", "slug": "plateforme/effacements", "icon": "lock", "parent": null, "section": "EXPLOITATION", "order": 3, "badge": null, "keywords": ["effacement", "rgpd", "anonymisation", "suppression", "données personnelles"], "inMenu": true, "alias": null }
+  ]
+}

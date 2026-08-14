@@ -225,6 +225,16 @@ export function Profile() {
             <p style={{ margin: 0, fontSize: 'var(--ax-text-xs)', color: 'var(--ax-text-muted)' }}>
               Votre photo et votre nom d&rsquo;affichage sont communs à toutes vos casquettes.
             </p>
+            {/* Un droit qu'on ne trouve pas est un droit qu'on n'exerce pas :
+                la carte « Mes données personnelles » vit dans les paramètres,
+                on la nomme ici pour qu'elle se cherche une seule fois. */}
+            <p style={{ margin: 0, fontSize: 'var(--ax-text-xs)', color: 'var(--ax-text-muted)' }}>
+              Copie de vos données et suppression de votre compte :{' '}
+              <Link href="/centre/profil/parametres" className="ax-link">
+                paramètres du profil
+              </Link>
+              .
+            </p>
           </div>
         </section>
       </div>

@@ -16,7 +16,7 @@ import { homeOfSpace, spacesOf, useAuth } from '@/context/AuthContext';
 import { createPatientMe } from '@/lib/endpoints/patients';
 import { createGuardianProfile } from '@/lib/endpoints/guardian';
 import { ApiError } from '@/lib/api';
-import { SEX_LABELS_SELF } from '@/lib/labels';
+import { PLATFORM_ROLE_HELP, SEX_LABELS_SELF } from '@/lib/labels';
 import type { Sex } from '@/lib/types';
 
 const COUNTRIES: Array<[string, string]> = [
@@ -185,6 +185,21 @@ export function SpaceChooser() {
                   <div className="ax-card__body" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--ax-space-1)' }}>
                     <h2 style={cardTitleStyle}>Mon espace tuteur</h2>
                     <p style={cardTextStyle}>Soutenir mes proches en payant leurs soins directement au centre.</p>
+                  </div>
+                </Link>
+              )}
+              {/* S4 — la 4ᵉ casquette. Elle n'apparaît que pour un exploitant
+                  actif (`platform_staff` de /auth/me/), jamais déduite d'un
+                  quelconque droit d'admin Django. */}
+              {spaces.includes('plateforme') && (
+                <Link href={homeOfSpace('plateforme')} className="ax-card ax-card--interactive" style={{ textDecoration: 'none' }}>
+                  <div className="ax-card__body" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--ax-space-1)' }}>
+                    <h2 style={cardTitleStyle}>Plateforme Chioni</h2>
+                    <p style={cardTextStyle}>
+                      {me.platform_staff
+                        ? PLATFORM_ROLE_HELP[me.platform_staff.role]
+                        : 'Back-office : centres, vérifications et exploitation.'}
+                    </p>
                   </div>
                 </Link>
               )}

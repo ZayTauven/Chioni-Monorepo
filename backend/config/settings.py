@@ -215,6 +215,12 @@ REST_FRAMEWORK = {
         # vigilance vague 1). 20/h per user covers any legitimate retouch
         # session while starving a CPU-burn loop.
         "uploads": env("THROTTLE_UPLOADS", default="20/hour"),
+        # S4 lot 3 (RGPD art. 20) — `/auth/me/export/` fans out across a
+        # dozen querysets of the caller's own space. Generous for a human
+        # exercising a right (a few retries, a re-download), tight enough
+        # that the endpoint never becomes a cheap scraping surface for a
+        # stolen token.
+        "data_export": env("THROTTLE_DATA_EXPORT", default="10/hour"),
     },
 }
 

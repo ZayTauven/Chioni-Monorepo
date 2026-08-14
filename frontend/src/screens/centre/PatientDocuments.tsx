@@ -22,7 +22,15 @@ import {
   listPatientDocuments,
   uploadPatientDocument,
 } from '@/lib/endpoints/centers';
-import { DOC_TYPE_LABELS, formatDate, formatWait } from '@/lib/labels';
+import {
+  DOC_TYPE_LABELS,
+  UPLOAD_FORMAT_REFUSED,
+  UPLOAD_IMAGE_HINT,
+  formatBytes,
+  formatDate,
+  uploadThrottled,
+  uploadTooLarge,
+} from '@/lib/labels';
 import type { PatientDocumentStaff, PatientDocumentType } from '@/lib/types';
 import {
   CardSkeleton,
@@ -44,19 +52,8 @@ const MAX_BYTES = 2 * 1024 * 1024;
 /** 429 du scope `uploads` (20/h, partagé avatar/logo) : message en français. */
 function toUploadError(err: unknown): ApiError {
   const e = toApiError(err);
-  if (e.status === 429) {
-    return new ApiError(429, [
-      e.retryAfterSeconds
-        ? `Trop d'envois rapprochés. Réessayez dans ${formatWait(e.retryAfterSeconds)}.`
-        : "Trop d'envois rapprochés. Patientez un moment avant de réessayer.",
-    ]);
-  }
+  if (e.status === 429) return new ApiError(429, [uploadThrottled(e.retryAfterSeconds)]);
   return e;
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes >= 1048576) return `${(bytes / 1048576).toFixed(1)} Mo`;
-  return `${Math.max(1, Math.round(bytes / 1024))} Ko`;
 }
 
 const DOWNLOAD_ICON = (
@@ -93,12 +90,12 @@ function UploadDocumentModal({
     if (!picked) return;
     if (!ACCEPTED_MIME.includes(picked.type)) {
       setFile(null);
-      setFileIssue('Formats acceptés : photo JPEG, PNG ou WebP. Le PDF n’est pas encore pris en charge.');
+      setFileIssue(UPLOAD_FORMAT_REFUSED);
       return;
     }
     if (picked.size > MAX_BYTES) {
       setFile(null);
-      setFileIssue(`Photo trop lourde (${formatBytes(picked.size)}). Le maximum est de 2 Mo.`);
+      setFileIssue(uploadTooLarge(picked.size));
       return;
     }
     setFileIssue(null);
@@ -195,7 +192,7 @@ function UploadDocumentModal({
                   : 'Photo du document — cliquez ou déposez ici'}
             </div>
             <div style={{ fontSize: 'var(--ax-text-xs)', color: 'var(--ax-text-subtle)' }}>
-              {file ? `${formatBytes(file.size)} · cliquez pour remplacer` : 'JPEG, PNG ou WebP · 2 Mo maximum'}
+              {file ? `${formatBytes(file.size)} · cliquez pour remplacer` : UPLOAD_IMAGE_HINT}
             </div>
             <input
               type="file"

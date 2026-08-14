@@ -23,7 +23,13 @@ from django.core.management import call_command
 from django.core.management.base import CommandError
 from django.test import override_settings
 
-from apps.centers.models import HealthCenter, StaffMembership, TariffItem
+from apps.accounts.models import ErasureRequest, PlatformStaff
+from apps.centers.models import (
+    HealthCenter,
+    KycDocument,
+    StaffMembership,
+    TariffItem,
+)
 from apps.common.models import ActCategory
 from apps.medical.models import (
     Consent,
@@ -188,6 +194,40 @@ class TestSeedDemoScenario:
         assert insurance.is_active is True
 
     @override_settings(DEBUG=True)
+    def test_platform_hat_and_kyc_file_are_seeded(self):
+        """S4 (ADR 0017) — the fourth space is demonstrable: one Chioni
+        operator (WITHOUT any Django admin flag) and one KYC piece on the
+        demo center, stored privately."""
+        run_command()
+
+        operator = PlatformStaff.objects.get(user__username="plateforme.demo")
+        assert operator.role == PlatformStaff.Role.ADMIN
+        assert operator.is_active
+        # The whole point of the sprint: the hat is a row, not a flag.
+        assert not operator.user.is_staff and not operator.user.is_superuser
+        assert operator.user.check_password("ChioniDemo!2026")
+
+        center = HealthCenter.objects.get(name="Clinique Ylang")
+        document = KycDocument.objects.for_center(center).get()
+        assert document.doc_type == KycDocument.DocType.TRADE_REGISTER
+        assert document.archived_at is None
+        with pytest.raises(ValueError):
+            document.file.url  # private diffusion: no public URL, ever
+
+    @override_settings(DEBUG=True)
+    def test_a_pending_erasure_request_waits_in_the_back_office(self):
+        """S4 lot 3 (ADR 0017 §7) — the RGPD queue has something real to
+        show, deposited by the guardian whose link is parked behind the
+        claimant-confirmation gate (processing it touches no money)."""
+        run_command()
+
+        erasure_request = ErasureRequest.objects.get()
+        assert erasure_request.user.username == "tuteur2.demo"
+        assert erasure_request.status == ErasureRequest.Status.PENDING
+        assert erasure_request.processed_at is None
+        assert erasure_request.refusal_reason == ""
+
+    @override_settings(DEBUG=True)
     def test_recap_output_names_the_accounts_and_the_demo_flow(self):
         output = run_command()
 
@@ -195,6 +235,7 @@ class TestSeedDemoScenario:
         for username in (
             "admin", "directeur.demo", "medecin.demo", "secretaire.demo",
             "caissier.demo", "patient.demo", "tuteur.demo", "tuteur2.demo",
+            "plateforme.demo",
         ):
             assert username in output
         assert "simulate_psp_payment --latest" in output
@@ -232,6 +273,10 @@ class TestSeedDemoIdempotence:
             "vital_signs": VitalSigns.objects.count(),
             "documents": PatientDocument.objects.count(),
             "insurances": PatientInsurance.objects.count(),
+            # S4 (ADR 0017) — tenant lifecycle tables.
+            "platform_staff": PlatformStaff.objects.count(),
+            "kyc_documents": KycDocument.objects.count(),
+            "erasure_requests": ErasureRequest.objects.count(),
         }
 
 

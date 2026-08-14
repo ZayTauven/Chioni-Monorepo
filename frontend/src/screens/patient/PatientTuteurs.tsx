@@ -299,6 +299,7 @@ export function PatientTuteurs() {
             id="tu-phone"
             type="tel"
             inputMode="tel"
+            data-autofocus=""
             className={`ax-input ax-input--lg${inviteFieldError ? ' is-invalid' : ''}`}
             placeholder="+33 6 12 34 56 78"
             value={invitePhone}

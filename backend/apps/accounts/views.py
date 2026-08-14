@@ -11,6 +11,7 @@
 
 from drf_spectacular.utils import extend_schema
 from rest_framework import status
+from rest_framework.exceptions import NotFound
 from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
@@ -20,8 +21,11 @@ from rest_framework_simplejwt.exceptions import TokenError
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
+from apps.accounts.export import build_user_export
+from apps.accounts.models import ErasureRequest
 from apps.accounts.serializers import (
     AvatarUploadSerializer,
+    ErasureRequestSerializer,
     LogoutSerializer,
     MeSerializer,
     MeUpdateSerializer,
@@ -30,6 +34,7 @@ from apps.accounts.serializers import (
 )
 from apps.accounts.services import (
     remove_user_avatar,
+    request_erasure,
     request_otp,
     set_user_avatar,
     update_own_identity,
@@ -41,7 +46,7 @@ from apps.accounts.throttling import (
     OtpVerifyPerIpThrottle,
 )
 from apps.common.permissions import claimed_patient_profile, guardian_profile
-from apps.common.permissions import active_membership_qs
+from apps.common.permissions import active_membership_qs, platform_staff
 from apps.common.uploads import media_url
 
 #: The ONE response body of `/auth/otp/request/` — byte-identical whether
@@ -57,7 +62,12 @@ def me_payload(user, request=None):
     """Identity + hats aggregate serialised by ``MeSerializer`` (`/auth/me/`
     and the OTP verify response share this exact contract). ``request``
     makes ``avatar`` (and nested center ``logo``, via serializer context)
-    an ABSOLUTE URL — pass it whenever one is available."""
+    an ABSOLUTE URL — pass it whenever one is available.
+
+    S4 (ADR 0017): ``platform_staff`` is the FOURTH hat — it unlocks the
+    Chioni back-office space. It is derived from the dedicated model, NOT
+    from ``is_staff``/``is_superuser``: a Django admin account is not an
+    operator (and never was meant to be one)."""
     return {
         "id": user.pk,
         "username": user.username,
@@ -68,6 +78,7 @@ def me_payload(user, request=None):
         "staff_memberships": active_membership_qs(user).select_related("center"),
         "patient_profile": claimed_patient_profile(user),
         "guardian_profile": guardian_profile(user),
+        "platform_staff": platform_staff(user),
     }
 
 
@@ -160,6 +171,65 @@ class MeAvatarView(APIView):
     def delete(self, request):
         remove_user_avatar(user=request.user)
         return Response({"avatar": None})
+
+
+class MeErasureRequestView(APIView):
+    """`GET|POST /auth/me/erasure-request/` — my right to erasure (art. 17).
+
+    Open to EVERY authenticated hat: a patient, a guardian, a staff member
+    of a center, a Chioni operator. The row references the account, never
+    a casquette.
+
+    **Deliberately not a delete button** (arbitrage PO n° 3): the request
+    is deposited here and EXECUTED by the Chioni back-office. A compte
+    finançant des soins ne doit pas disparaître en un clic — ni sous la
+    pression d'un tiers ayant accès au téléphone de la personne.
+
+    GET answers the LATEST request (whatever its state, so a refusal and
+    its motive stay readable), or 404 when the person never asked — the
+    same contract as `GET /guardian/profile/`.
+    """
+
+    @extend_schema(responses=ErasureRequestSerializer)
+    def get(self, request):
+        erasure_request = (
+            ErasureRequest.objects.filter(user=request.user)
+            .order_by("-requested_at", "-id")
+            .first()
+        )
+        if erasure_request is None:
+            raise NotFound("Vous n'avez déposé aucune demande d'effacement.")
+        return Response(ErasureRequestSerializer(erasure_request).data)
+
+    @extend_schema(request=None, responses={201: ErasureRequestSerializer})
+    def post(self, request):
+        erasure_request = request_erasure(user=request.user)
+        return Response(
+            ErasureRequestSerializer(erasure_request).data,
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class MeExportView(APIView):
+    """`GET /auth/me/export/` — portability of my own data (art. 20).
+
+    JSON of what the caller ALREADY sees in their space, hat by hat — the
+    export re-plays the exact querysets and serializers of the screens and
+    reveals nothing new (see ``apps.accounts.export``). A guardian does
+    NOT get their protégé's carnet here; a patient does not get the other
+    party's dispute motive.
+
+    Dedicated throttle scope (patron of ``uploads``): one call fans out
+    across a dozen querysets — generous enough for a human exercising a
+    right, tight enough that it never becomes a scraping surface.
+    """
+
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "data_export"
+
+    @extend_schema(responses={200: None})
+    def get(self, request):
+        return Response(build_user_export(user=request.user, request=request))
 
 
 class OtpRequestView(APIView):
