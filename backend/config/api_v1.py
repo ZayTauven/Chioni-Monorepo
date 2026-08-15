@@ -30,6 +30,13 @@ urlpatterns = [
     path("", include("apps.patients.urls")),
     path("", include("apps.medical.urls")),
     path("", include("apps.scheduling.urls")),
+    # S6 (ADR 0019) — `centers/{c}/inpatient/…` (staff) et
+    # `patients/me/stays/` (le patient). Aucune route `/guardian/`.
+    path("", include("apps.inpatient.urls")),
+    # S7 (ADR 0020) — `centers/{c}/hrm/…` SEULEMENT : le dossier RH d'une
+    # personne existe DANS un centre, jamais au-dessus (invariant 1).
+    # Aucune route `guardian/`, `patients/me/` ni `platform/`.
+    path("", include("apps.hrm.urls")),
     path("", include("apps.trustbridge.urls")),
     # S5 — `centers/{c}/subscription/` (directeur seul) : l'app porte
     # l'objet, l'URL dit quelle casquette le lit.

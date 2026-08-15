@@ -16,6 +16,7 @@ import {
   getMyMedicalFile,
   listEncounters,
   listMyDocuments,
+  listMyStays,
   listMyVitalSigns,
   listPrescriptions,
   listRecordEntries,
@@ -27,6 +28,12 @@ import {
   formatKmf,
   GENERIC_CATEGORY_LABELS,
   RECORD_ENTRY_TYPE_LABELS,
+  STAY_CANCELLED_PATIENT_HINT,
+  STAY_PATIENT_ENCOUNTER_LINK,
+  STAY_PATIENT_ONGOING_HINT,
+  STAY_PATIENT_SECTION_TITLE,
+  stayPatientEncounterNote,
+  stayPatientPeriod,
   vitalSummary,
 } from '@/lib/labels';
 import type { PatientMedicalFile, RecordEntry, RecordEntryType } from '@/lib/types';
@@ -38,6 +45,7 @@ import {
   LoadMoreButton,
   PrescriptionStatusBadge,
   SkeletonCards,
+  StayStatusBadge,
 } from './ui';
 
 type TabKey = 'consultations' | 'ordonnances' | 'documents' | 'sante';
@@ -62,20 +70,100 @@ const ENTRY_ORDER: RecordEntryType[] = [
 
 function ConsultationsTab({ enabled }: { enabled: boolean }) {
   const list = useLoadMore(listEncounters, enabled);
+  /*
+   * S6 — les hospitalisations vivent dans CE panneau plutôt que dans un
+   * cinquième onglet : un séjour EST un épisode de soin, adossé à une
+   * consultation qui figure déjà dans la liste ci-dessous. Un onglet de plus
+   * aurait coupé l'histoire en deux et allongé une barre d'onglets qui passe
+   * déjà à la ligne sur un petit écran.
+   *
+   * La carte du séjour vient donc EN TÊTE, et la consultation correspondante
+   * porte une PHRASE entière (« Cette visite couvre votre hospitalisation
+   * du 3 au 8 août 2026 ») — c'est elle qui répond à la seule question que la
+   * personne se pose devant une visite de plusieurs jours. Le renvoi
+   * réciproque n'est écrit sur le séjour que si la consultation est
+   * effectivement chargée : sinon il désignerait le vide.
+   */
+  const stays = useLoadMore(listMyStays, enabled);
+  const stayByEncounter = new Map(stays.items.map((stay) => [stay.encounter, stay]));
+  const shownEncounters = new Set(list.items.map((enc) => enc.id));
 
+  /* Le squelette suit les CONSULTATIONS seules. Les séjours arrivent par un
+     second appel : le faire gouverner l'écran laissait le carnet entier blanc
+     quand ce petit appel traînait — or il ne concerne qu'une minorité de
+     personnes, et jamais celles qui attendent le plus leur liste de visites. */
   if (list.loading) return <SkeletonCards />;
   if (list.error != null && list.items.length === 0)
     return <ErrorAlert error={list.error} onRetry={list.reload} />;
-  if (list.items.length === 0)
-    return (
-      <EmptyState
-        title="Aucune consultation pour le moment"
-        message="Vos visites dans un centre de santé apparaîtront ici."
-      />
-    );
+
+  if (list.items.length === 0) {
+    // Rien à afficher tant que les séjours n'ont pas répondu : mieux vaut le
+    // squelette qu'un « carnet vide » démenti une seconde plus tard.
+    if (stays.loading) return <SkeletonCards />;
+    if (stays.items.length === 0) {
+      /* Les séjours ont ÉCHOUÉ et il n'y a aucune consultation : annoncer un
+         carnet vide serait un mensonge — la personne a peut-être un séjour que
+         le réseau n'a pas rendu. On montre le seul état honnête : l'échec, et
+         le bouton pour réessayer. */
+      if (stays.error != null) return <ErrorAlert error={stays.error} onRetry={stays.reload} />;
+      return (
+        <EmptyState
+          title="Aucune consultation pour le moment"
+          message="Vos visites dans un centre de santé apparaîtront ici."
+        />
+      );
+    }
+  }
 
   return (
     <div className="pat-stack">
+      {stays.items.length > 0 && (
+        <section className="ax-card" role="region" aria-label={STAY_PATIENT_SECTION_TITLE}>
+          <div className="ax-card__body pat-gate__body">
+            <h3 className="pat-row__title" style={{ margin: 0 }}>
+              {STAY_PATIENT_SECTION_TITLE}
+            </h3>
+            {/*
+              L'état vient EN PREMIER et sur sa propre ligne. Deux raisons :
+              c'est la réponse à la question que la personne se pose (« suis-je
+              encore hospitalisée ? »), et « Vous êtes hospitalisé(e) » est une
+              PHRASE dans une pastille `white-space: nowrap` — en fin de ligne
+              flex, elle écrasait le nom du centre sur un écran de 320 px.
+            */}
+            <ul className="pat-stays">
+              {stays.items.map((stay) => (
+                <li key={stay.id} className="pat-stay">
+                  <StayStatusBadge status={stay.status} />
+                  <span className="pat-row__title">{stay.center_name}</span>
+                  <span className="pat-row__meta">
+                    {stayPatientPeriod(stay.admitted_at, stay.discharged_at, stay.status)}
+                  </span>
+                  {stay.status === 'en_cours' && (
+                    <span className="pat-row__meta">{STAY_PATIENT_ONGOING_HINT}</span>
+                  )}
+                  {stay.status === 'annule' && (
+                    <span className="pat-row__meta">{STAY_CANCELLED_PATIENT_HINT}</span>
+                  )}
+                  {/* Le renvoi n'est écrit que si la consultation est VRAIMENT
+                      dans la liste chargée — sinon il désignerait le vide. */}
+                  {stay.status !== 'annule' && shownEncounters.has(stay.encounter) && (
+                    <span className="pat-row__meta">{STAY_PATIENT_ENCOUNTER_LINK}</span>
+                  )}
+                </li>
+              ))}
+            </ul>
+            <LoadMoreButton
+              hasMore={stays.hasMore}
+              loading={stays.loadingMore}
+              onClick={stays.loadMore}
+            />
+          </div>
+        </section>
+      )}
+
+      {/* Les séjours n'ont pas pu charger : on le dit, la liste reste lisible. */}
+      {stays.error != null && <ErrorAlert error={stays.error} onRetry={stays.reload} />}
+
       {list.items.map((enc) => (
         <section key={enc.id} className="ax-card" role="region" aria-label="Consultation">
           <div className="ax-card__body pat-gate__body">
@@ -86,6 +174,23 @@ function ConsultationsTab({ enabled }: { enabled: boolean }) {
               </div>
               <EncounterStatusBadge status={enc.status} />
             </div>
+            {/*
+              La réponse à « pourquoi cette visite dure-t-elle plusieurs
+              jours ? », en une phrase entière plutôt qu'en étiquette
+              « Hospitalisation : … » — un fragment de formulaire n'explique
+              rien à qui n'a jamais utilisé d'application. Un séjour ANNULÉ
+              n'annote rien : il n'a jamais eu lieu, le dire ici
+              contredirait sa propre carte.
+            */}
+            {stayByEncounter.get(enc.id) !== undefined &&
+              stayByEncounter.get(enc.id)!.status !== 'annule' && (
+                <p className="pat-row__meta" style={{ margin: 0 }}>
+                  {stayPatientEncounterNote(
+                    stayByEncounter.get(enc.id)!.admitted_at,
+                    stayByEncounter.get(enc.id)!.discharged_at,
+                  )}
+                </p>
+              )}
             {enc.reason && (
               <p className="pat-row__meta" style={{ margin: 0 }}>
                 <b>Motif&nbsp;:</b> {enc.reason}

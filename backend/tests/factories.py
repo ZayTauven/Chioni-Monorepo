@@ -227,6 +227,150 @@ def make_encounter(patient=None, center=None, practitioner=None, **kwargs):
     )
 
 
+def make_room(center=None, name=None):
+    """A room. Direct ORM on purpose (like ``make_center``): this factory
+    sets a STATE — ``create_room`` and its audit have their own tests."""
+    from apps.inpatient.models import Room
+
+    return Room.objects.create(
+        center=center or make_center(), name=name or f"Chambre {next(_seq)}"
+    )
+
+
+def make_bed(room=None, center=None, name=None, is_active=True):
+    """A bed of ``room`` (a room is created in ``center`` when omitted)."""
+    from apps.inpatient.models import Bed
+
+    return Bed.objects.create(
+        room=room or make_room(center=center),
+        name=name or f"Lit {next(_seq)}",
+        is_active=is_active,
+    )
+
+
+def make_stay(patient=None, center=None, bed=None, encounter=None,
+              admitted_by=None, **kwargs):
+    """A stay IN PROGRESS with its pivot encounter (created when omitted).
+
+    Direct ORM on purpose: this factory sets a STATE — the admission
+    service, its state machine and its audit are exercised by their own
+    tests. ``bed``, when given, is occupied through a real
+    ``BedAssignment`` (the exclusivity constraint applies).
+    """
+    from apps.inpatient.models import BedAssignment, Stay
+
+    center = center or (bed.room.center if bed is not None else make_center())
+    patient = patient or make_patient()
+    encounter = encounter or make_encounter(patient=patient, center=center)
+    admitted_by = admitted_by or make_user()
+    kwargs.setdefault("admitted_at", timezone.now() - timedelta(days=1))
+    stay = Stay(
+        patient=patient, center=center, encounter=encounter,
+        admitted_by=admitted_by, **kwargs,
+    )
+    stay.save()
+    if bed is not None:
+        BedAssignment.objects.create(
+            stay=stay, bed=bed, assigned_at=stay.admitted_at,
+            assigned_by=admitted_by,
+        )
+    return stay
+
+
+def make_department(center=None, name=None):
+    """Un service RH. Direct ORM on purpose (like ``make_center``): this
+    factory sets a STATE — ``create_department``, son audit et son gel ont
+    leurs propres tests."""
+    from apps.hrm.models import Department
+
+    return Department.objects.create(
+        center=center or make_center(), name=name or f"Service {next(_seq)}"
+    )
+
+
+def make_job_title(center=None, name=None):
+    """Une fonction. Rappel de l'ADR 0020 décision 2 : c'est un LIBELLÉ,
+    jamais un droit — aucune permission ne le lit."""
+    from apps.hrm.models import JobTitle
+
+    return JobTitle.objects.create(
+        center=center or make_center(), name=name or f"Fonction {next(_seq)}"
+    )
+
+
+def make_employment(user=None, center=None, hired_at=None, **kwargs):
+    """Un dossier RH — le PIVOT du module (unique par (user, center)).
+
+    Direct ORM on purpose : ``create_employment`` porte la garde « cette
+    personne fait partie du personnel » et le gel, testés chez eux. La
+    fabrique pose l'ÉTAT dont un scénario a besoin.
+    """
+    from apps.hrm.models import Employment
+
+    center = center or make_center()
+    employment = Employment(
+        user=user or make_user(),
+        center=center,
+        hired_at=hired_at or (timezone.localdate() - timedelta(days=365)),
+        **kwargs,
+    )
+    employment.save()
+    return employment
+
+
+def make_holiday(center=None, date=None, name="Fête de l'Indépendance"):
+    from apps.hrm.models import Holiday
+
+    return Holiday.objects.create(
+        center=center or make_center(),
+        date=date or timezone.localdate(),
+        name=name,
+    )
+
+
+def make_attendance(employment=None, date=None, status=None, noted_by=None):
+    from apps.hrm.models import AttendanceRecord
+
+    employment = employment or make_employment()
+    record = AttendanceRecord(
+        employment=employment,
+        date=date or timezone.localdate(),
+        status=status or AttendanceRecord.Status.PRESENT,
+        noted_by=noted_by or make_user(),
+    )
+    record.save()
+    return record
+
+
+def make_leave(employment=None, leave_type=None, start_date=None,
+               end_date=None, status=None, decided_by=None):
+    """Une demande de congé dans l'état voulu.
+
+    Direct ORM on purpose : la machine à états, la garde de chevauchement
+    et le gel vivent dans ``hrm.services`` et y sont testés. Un état
+    terminal reçoit sa ``decided_at`` (contrainte DB
+    ``leave_decision_matches_status``).
+    """
+    from apps.hrm.models import LeaveRequest
+
+    employment = employment or make_employment()
+    start_date = start_date or (timezone.localdate() + timedelta(days=7))
+    status = status or LeaveRequest.Status.REQUESTED
+    leave = LeaveRequest(
+        employment=employment,
+        leave_type=leave_type or LeaveRequest.Type.ANNUAL,
+        start_date=start_date,
+        end_date=end_date or (start_date + timedelta(days=4)),
+        status=status,
+        requested_by=employment.user,
+    )
+    if status != LeaveRequest.Status.REQUESTED:
+        leave.decided_by = decided_by or make_user()
+        leave.decided_at = timezone.now()
+    leave.save()
+    return leave
+
+
 def make_act(encounter=None, tariff_item=None):
     encounter = encounter or make_encounter()
     return ActPerformed.objects.create(

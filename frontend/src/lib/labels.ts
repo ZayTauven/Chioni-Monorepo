@@ -8,6 +8,7 @@
 
 import type {
   AppointmentStatus,
+  AttendanceStatus,
   AuditAction,
   BillingPeriod,
   BloodGroup,
@@ -29,7 +30,10 @@ import type {
   Island,
   KycDocType,
   KycStatus,
+  LeaveStatus,
+  LeaveType,
   MobileMoneyOperator,
+  PublicAttendanceStatus,
   PatientDocumentType,
   PaymentIntentStatus,
   PaymentRequestStatus,
@@ -39,6 +43,8 @@ import type {
   Relationship,
   Sex,
   StaffRole,
+  StayPriority,
+  StayStatus,
   SubscriptionInvoiceStatus,
   SubscriptionPaymentMethod,
   SubscriptionStatus,
@@ -249,6 +255,398 @@ export const APPOINTMENT_STATUS_PATIENT: Record<AppointmentStatus, string> = {
   manque: 'Manqué',
   annule: 'Annulé',
 };
+
+/* ── S6 — hospitalisation (ADR 0019) ────────────────────────────────────────
+   Le séjour héberge, la consultation soigne. Deux registres de phrases : celui
+   du service (dense, opérationnel) et celui du patient (une phrase, sans
+   jargon) — le second n'est JAMAIS une traduction littérale du premier. */
+
+/** Statut d'un séjour, côté centre. */
+export const STAY_STATUS_LABELS: Record<StayStatus, string> = {
+  en_cours: 'En cours',
+  sortie: 'Sorti',
+  annule: 'Annulé',
+};
+
+/** Ordre des pastilles de filtre — l'état de travail d'abord. */
+export const STAY_STATUSES: StayStatus[] = ['en_cours', 'sortie', 'annule'];
+
+/**
+ * Statut d'un séjour comme le PATIENT le lit. Formulation dégenrée
+ * (« hospitalisé(e) ») : l'écran ne connaît pas toujours le sexe de la
+ * personne, et se tromper sur ce mot-là est un manque d'égard.
+ *
+ * `annule` n'est JAMAIS rendu en rouge (voir `STAY_CANCELLED_PATIENT_HINT`) :
+ * c'est presque toujours une correction de saisie du centre, pas un échec du
+ * patient — le même arbitrage que « Manqué » sur un rendez-vous.
+ */
+export const STAY_STATUS_PATIENT: Record<StayStatus, string> = {
+  en_cours: 'Vous êtes hospitalisé(e)',
+  sortie: 'Séjour terminé',
+  annule: 'Séjour annulé',
+};
+
+/** Ce que « Séjour annulé » veut dire pour la personne — dit, jamais deviné. */
+export const STAY_CANCELLED_PATIENT_HINT =
+  'Le centre a retiré ce séjour de votre carnet. C’est presque toujours une erreur de saisie corrigée : vous n’avez rien à faire.';
+
+export const STAY_PATIENT_SECTION_TITLE = 'Mes hospitalisations';
+
+/**
+ * L'hospitalisation en cours n'a pas encore de fin — le dire honnêtement, et
+ * sans mot administratif : « établissement » est du vocabulaire de dossier,
+ * « le centre de santé » est le mot que Mariama emploie.
+ */
+export const STAY_PATIENT_ONGOING_HINT =
+  'Vous êtes actuellement soigné(e) sur place. Le centre de santé notera votre sortie ici quand vous quitterez les lieux.';
+
+/**
+ * Le pont entre le séjour et SA consultation, dit dans les deux sens.
+ *
+ * Sans lui, le carnet montre deux blocs qui parlent du même épisode sans se
+ * relier : une carte « hospitalisation du 3 au 8 » en tête, puis, plus bas, une
+ * consultation d'un seul jour qui semble sans rapport. La question que se pose
+ * la personne — « pourquoi cette visite-là dure-t-elle plusieurs jours ? » —
+ * doit trouver sa réponse SUR la consultation, pas dans un raisonnement.
+ */
+export function stayPatientEncounterNote(
+  admittedAt: string,
+  dischargedAt: string | null,
+): string {
+  const period = dischargedAt
+    ? `du ${formatDate(admittedAt)} au ${formatDate(dischargedAt)}`
+    : `commencée le ${formatDate(admittedAt)}`;
+  return `Cette visite couvre votre hospitalisation ${period}.`;
+}
+
+/** Rendu sur la carte du séjour SEULEMENT si la consultation est bien affichée. */
+export const STAY_PATIENT_ENCOUNTER_LINK =
+  'Les soins reçus pendant ce séjour sont notés dans la consultation de ce séjour, plus bas dans cette liste.';
+
+/** Priorité déclarée à l'admission (triage du service). */
+export const STAY_PRIORITY_LABELS: Record<StayPriority, string> = {
+  normale: 'Normale',
+  urgente: 'Urgente',
+  critique: 'Critique',
+};
+
+export const STAY_PRIORITIES: StayPriority[] = ['normale', 'urgente', 'critique'];
+
+/* — le lit — */
+
+/** Un séjour sans assignation ouverte : un état NORMAL, jamais une anomalie. */
+export const STAY_NO_BED_LABEL = 'Sans lit';
+
+export const STAY_NO_BED_HINT =
+  'Ce patient est hospitalisé sans lit attribué, en attente d’une place. Refuser l’admission faute de lit reviendrait à refuser un patient qui est là.';
+
+export const BED_FIELD_HINT =
+  'Facultatif : un patient peut être admis sans lit, et la place lui être attribuée plus tard.';
+
+export const BED_NONE_FREE =
+  'Aucun lit libre à cet instant. L’admission reste possible : le patient sera enregistré sans lit.';
+
+export const BED_ASSIGN_TITLE = 'Attribuer un lit';
+export const BED_TRANSFER_TITLE = 'Transférer vers un autre lit';
+
+export const BED_TRANSFER_HINT =
+  'Le lit occupé est libéré et le nouveau lui est attribué. L’historique garde la trace des deux — un transfert s’empile, il ne réécrit rien.';
+
+export const BED_FREE_ONLY_NOTICE =
+  'Seuls les lits libres à cet instant sont proposés. Si quelqu’un vient d’en prendre un, l’enregistrement sera refusé : un lit n’accueille jamais deux personnes.';
+
+export const BED_RELEASE_TITLE = 'Libérer le lit ?';
+
+export const BED_RELEASE_HINT =
+  'Le patient reste hospitalisé, sans lit attribué, et la place redevient disponible pour quelqu’un d’autre.';
+
+export const BED_INACTIVE_LABEL = 'Hors service';
+
+/* — les médecins qui suivent — */
+
+export const ATTENDING_TITLE = 'Médecins qui suivent le patient';
+
+export const ATTENDING_HINT =
+  'Plusieurs soignants peuvent suivre un même séjour. Cochez la liste complète : elle remplace la précédente.';
+
+export const ATTENDING_EMPTY = 'Aucun médecin assigné pour l’instant.';
+
+/* — sortie et annulation — */
+
+export const STAY_DISCHARGE_TITLE = 'Enregistrer la sortie ?';
+
+/** Les trois effets réels de la sortie, dans l'ordre où ils comptent. */
+export const STAY_DISCHARGE_EFFECTS: string[] = [
+  'Le lit est libéré immédiatement et redevient disponible.',
+  'La consultation du séjour est clôturée : plus d’ordonnance ni d’entrée au carnet.',
+  'La facturation des journées reste possible après la sortie — c’est même le moment habituel.',
+];
+
+export const STAY_DISCHARGE_FINAL =
+  'Une sortie est définitive : un séjour terminé ne se rouvre pas.';
+
+export const STAY_CANCEL_TITLE = 'Annuler cette admission ?';
+
+export const STAY_CANCEL_LEAD =
+  'À n’utiliser que si l’admission a été saisie par erreur : un séjour annulé n’a jamais eu lieu. Si le patient est bien venu, enregistrez une sortie.';
+
+export const STAY_CANCEL_REASON_LABEL = 'Motif de l’annulation';
+
+export const STAY_CANCEL_REASON_PRIVACY =
+  'Ce motif n’est lu que par l’équipe soignante — ni le patient, ni le guichet, ni le journal du centre ne le voient.';
+
+export const STAY_CANCEL_FINAL = 'Une annulation est définitive.';
+
+/** Rendu AVANT le clic quand des journées sont déjà facturées (le backend le
+ *  refuserait de toute façon — mais découvrir un refus au clic est un défaut). */
+export const STAY_CANCEL_BLOCKED_BY_ACTS =
+  'Ce séjour porte déjà des actes facturés : il ne peut plus être annulé comme une erreur de saisie. Enregistrez une sortie.';
+
+/* — admission — */
+
+export const ADMISSION_TITLE = 'Admettre un patient';
+
+export const ADMISSION_PIVOT_NOTICE =
+  'L’admission ouvre la consultation du séjour. C’est sur elle que se prennent les mesures, les ordonnances et les actes, du premier au dernier jour.';
+
+export const ADMISSION_REASON_HINT =
+  'Le motif d’admission est une donnée clinique : il est lu par l’équipe soignante seule, jamais par le guichet.';
+
+/* — surveillance — */
+
+export const STAY_SURVEILLANCE_TITLE = 'Surveillance';
+
+export const STAY_SURVEILLANCE_HINT =
+  'Les mesures d’un patient hospitalisé se prennent sur la consultation du séjour : mêmes unités, mêmes bornes qu’en consultation ordinaire, et elles rejoignent son carnet.';
+
+/* — facturation des journées (rôles BILLING) — */
+
+export const BILL_DAYS_TITLE = 'Facturer des journées d’hospitalisation';
+
+export const BILL_DAYS_HOWTO =
+  'Chaque journée devient un acte de la grille tarifaire. Les actes se posent sur la consultation du séjour ; la facture se crée ensuite depuis « Factures », et reprendra ces journées avec les autres soins.';
+
+/**
+ * Les deux constats de la revue guardian S6 ont été corrigés au backend le
+ * 15/08/2026 (clé d'idempotence obligatoire + plafond de journées). L'écran
+ * porte donc la GARANTIE, pas l'avertissement : dire « attention, ce geste
+ * n'est pas rejouable » serait devenu un mensonge, et l'inverse — se taire —
+ * laisserait un caissier hésiter devant un bouton après un timeout.
+ */
+export const BILL_DAYS_REPLAY_SAFE =
+  'Si la connexion coupe, réessayez sans crainte : les journées ne seront pas posées deux fois.';
+
+export const BILL_DAYS_DURATION_LABEL = 'Durée du séjour';
+
+export const BILL_DAYS_CAP_LABEL = 'Journées facturables';
+
+/**
+ * La règle du plafond, en mots de guichet. Le calcul côté écran suit celui du
+ * backend (journées civiles entamées) mais le fuseau du navigateur peut
+ * différer de l'heure des Comores d'une journée aux bornes : le nombre affiché
+ * est une INDICATION, et c'est le refus du serveur qui fait foi — on l'affiche
+ * alors tel quel, avec ses dates et son décompte.
+ */
+export const BILL_DAYS_CAP_RULE =
+  'Toute journée commencée est facturable, et pas une de plus : on ne facture jamais plus de journées que le séjour n’en a duré.';
+
+/**
+ * L'écart de fuseau, dit SANS jargon (ni « fuseau », ni « client », ni « UTC »).
+ *
+ * Le décompte affiché est calculé par le navigateur ; le refus vient du serveur,
+ * à l'heure des Comores. Aux bornes d'une journée, les deux peuvent différer de
+ * un. Se taire ferait passer un refus légitime pour une panne ; expliquer le
+ * mécanisme perdrait un caissier. On dit donc ce qu'il faut faire : lire le
+ * message, il porte le bon compte.
+ */
+export const BILL_DAYS_CLOCK_NOTICE =
+  'Ce décompte suit l’heure de cet appareil. S’il diffère d’une journée, le message affiché à l’enregistrement donne le bon compte : c’est celui-là qui fait foi.';
+
+/** Le refus de dépassement, AVANT le clic — une phrase par idée, sans faute. */
+export function billDaysOverCapMessage(
+  cap: number,
+  billed: number,
+  asked: number,
+  remaining: number,
+): string {
+  const opened = `Ce séjour ouvre ${cap} journée${cap > 1 ? 's' : ''} facturable${cap > 1 ? 's' : ''} en tout`;
+  const already =
+    billed > 0
+      ? `, dont ${billed} déjà posée${billed > 1 ? 's' : ''}`
+      : ', dont aucune posée pour l’instant';
+  const left =
+    remaining > 0
+      ? `il en reste ${remaining} à facturer`
+      : 'il n’en reste aucune à facturer';
+  return `${opened}${already}. Vous en demandez ${asked} : ${left}, l’enregistrement sera refusé au-delà.`;
+}
+
+/** Un séjour annulé n'a jamais eu lieu : rien à facturer, rien à « rester ». */
+export const BILL_DAYS_CANCELLED_STAY =
+  'Cette admission a été annulée : elle ne peut porter aucune journée facturée.';
+
+/** Le champ est pré-rempli avec ce qui RESTE facturable — jamais au-delà. */
+export const BILL_DAYS_PREFILL_HINT =
+  'Pré-rempli avec ce qu’il reste de facturable. Corrigez-le si votre centre en compte moins : le montant reste votre décision.';
+
+/**
+ * Plus rien à poser : le dire avant le formulaire, pas après le refus — mais
+ * sans FERMER le formulaire pour autant.
+ *
+ * Le décompte est calculé par le navigateur : aux bornes d'une journée, une
+ * horloge d'appareil décalée peut compter un jour de moins que l'heure des
+ * Comores. Désactiver le champ sur cette base rendait la dernière journée d'un
+ * séjour définitivement infacturable depuis l'écran, sans recours ni
+ * explication. On informe, le serveur tranche.
+ */
+export const BILL_DAYS_ALL_BILLED =
+  'D’après ce décompte, toutes les journées de ce séjour sont déjà facturées : il n’y a normalement rien à ajouter. S’il vous semble qu’il en manque une, saisissez-la quand même — la réponse affichée donnera le compte exact.';
+
+/** « reste 3 journées à facturer » / « reste 1 journée à facturer ». */
+export function billDaysRemainingLabel(count: number): string {
+  if (count <= 0) return 'plus aucune journée à facturer';
+  return `reste ${count} journée${count > 1 ? 's' : ''} à facturer`;
+}
+
+export const BILL_DAYS_NO_TARIFF_TITLE = 'Aucun tarif d’hospitalisation';
+
+/** L'écriture d'un tarif est ouverte au directeur et au caissier : une
+ *  secrétaire lit ce message et sait à qui s'adresser plutôt que de buter. */
+export const BILL_DAYS_NO_TARIFF =
+  'La grille du centre ne contient aucun acte de catégorie « Hospitalisation », et une journée ne peut se facturer qu’avec un tarif de cette nature. Le directeur ou le caissier peut en créer un depuis « Tarifs » : la journée d’hospitalisation est un acte tarifé ordinaire.';
+
+/* — occupation — */
+
+export const OCCUPANCY_RATE_LABEL = 'Taux d’occupation';
+
+export const OCCUPANCY_EMPTY_TITLE = 'Aucune chambre déclarée';
+
+export const OCCUPANCY_EMPTY_DIRECTOR =
+  'Décrivez le parc du centre : une chambre, puis ses lits. C’est la condition pour attribuer un lit à un patient — l’admission, elle, fonctionne déjà sans.';
+
+export const OCCUPANCY_EMPTY_STAFF =
+  'Le parc de chambres et de lits n’est pas encore décrit. Le directeur du centre peut l’ajouter. L’admission d’un patient fonctionne déjà sans lit.';
+
+export const ROOM_ADD_LABEL = 'Nouvelle chambre';
+export const BED_ADD_LABEL = 'Ajouter un lit';
+
+export const ROOM_BED_DIRECTOR_ONLY =
+  'Seul le directeur du centre déclare les chambres et les lits.';
+
+/** Limite assumée de cette version (ADR 0019 addendum §14) — dite, pas cachée. */
+export const ROOM_BED_NO_EDIT_NOTICE =
+  'Une chambre ou un lit déjà déclaré ne se renomme ni ne se retire depuis Chioni pour l’instant.';
+
+/* — ce que l'écran d'hospitalisation annonce à chaque casquette — */
+
+export const INPATIENT_SUBTITLE_CLINICAL =
+  'Qui occupe quel lit, ce qu’il reste de places, et les séjours du centre.';
+
+/**
+ * Ce que le guichet ne voit pas est dit POSITIVEMENT (règle produit : « Les
+ * détails médicaux restent privés », jamais « réservé aux soignants », qui
+ * sonne comme un refus opposé à la personne qui lit).
+ */
+export const INPATIENT_SUBTITLE_ADMIN =
+  'Qui occupe quel lit et ce qu’il reste de places. Les informations médicales, elles, restent entre le patient et les soignants.';
+
+/** Le plafond de chargement du tableau — dit toujours, pas dans une carte qui
+ *  n'apparaît que s'il y a des patients sans lit. */
+export const OCCUPANCY_TRUNCATED_NOTICE =
+  'Ce centre compte plus de 100 séjours en cours : le tableau s’arrête aux 100 plus récents. L’onglet « Séjours » les parcourt tous.';
+
+/* — filtre de priorité : côté écran, sur la page affichée seulement — */
+
+export const STAY_PRIORITY_FILTER_NOTICE =
+  'Le filtre de priorité s’applique aux séjours de la page affichée.';
+
+/** Cul-de-sac évité : la page suivante existe peut-être, on le dit ET on laisse
+ *  la pagination à l'écran. */
+export const STAY_PRIORITY_FILTER_EMPTY_PAGE =
+  'Aucun séjour de cette priorité sur cette page. Les suivantes en contiennent peut-être : utilisez la pagination ci-dessous.';
+
+/* — compteurs et durées — */
+
+/** 0 → « Aucun lit libre », 1 → « 1 lit libre », n → « n lits libres ». */
+export function freeBedsLabel(count: number): string {
+  if (count <= 0) return 'Aucun lit libre';
+  return `${count} lit${count > 1 ? 's' : ''} libre${count > 1 ? 's' : ''}`;
+}
+
+/** « 12 lits occupés sur 20 ». */
+export function occupancySummary(occupied: number, total: number): string {
+  return `${occupied} lit${occupied > 1 ? 's' : ''} occupé${occupied > 1 ? 's' : ''} sur ${total}`;
+}
+
+/** « 3 patients sans lit » — l'information qui manque le plus au tableau. */
+export function staysWithoutBedLabel(count: number): string {
+  return `${count} patient${count > 1 ? 's' : ''} hospitalisé${count > 1 ? 's' : ''} sans lit`;
+}
+
+/** 0 → « Aucune journée facturée » · n → « n journées facturées ». */
+export function billedDaysLabel(count: number): string {
+  if (count <= 0) return 'Aucune journée facturée';
+  return `${count} journée${count > 1 ? 's' : ''} facturée${count > 1 ? 's' : ''}`;
+}
+
+/** « 1 jour » · « 5 jours ». */
+export function dayCountLabel(count: number): string {
+  return `${count} jour${count > 1 ? 's' : ''}`;
+}
+
+/**
+ * Durée d'un séjour en **jours entamés** (l'admission compte pour un jour),
+ * calculée sur les jours du calendrier local. Un séjour en cours se mesure
+ * jusqu'à aujourd'hui.
+ *
+ * C'est une INFORMATION, jamais une règle de facturation : le backend ne
+ * relie pas ce nombre au geste `bill-days`, et l'écran ne prétend pas le
+ * faire non plus (voir `BILL_DAYS_FREE_COUNT_NOTICE`).
+ */
+export function stayDurationDays(admittedAt: string, dischargedAt: string | null): number {
+  const start = new Date(admittedAt);
+  const end = dischargedAt ? new Date(dischargedAt) : new Date();
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return 1;
+  const startDay = new Date(start.getFullYear(), start.getMonth(), start.getDate()).getTime();
+  const endDay = new Date(end.getFullYear(), end.getMonth(), end.getDate()).getTime();
+  const spanned = Math.round((endDay - startDay) / 86_400_000) + 1;
+  return spanned < 1 ? 1 : spanned;
+}
+
+/**
+ * « 5 jours » · « 5 jours (en cours) » quand la sortie n'est pas enregistrée.
+ *
+ * Un séjour ANNULÉ n'a pas de durée : `cancel_stay` ne pose pas de
+ * `discharged_at` (l'admission n'a jamais eu lieu), et compter les jours depuis
+ * une admission effacée affichait « 5 jours (en cours) » à côté du badge
+ * « Annulé » — deux informations qui se contredisent sur la même ligne.
+ */
+export function stayDurationLabel(
+  admittedAt: string,
+  dischargedAt: string | null,
+  status?: StayStatus,
+): string {
+  if (status === 'annule') return '—';
+  const days = dayCountLabel(stayDurationDays(admittedAt, dischargedAt));
+  return dischargedAt ? days : `${days} (en cours)`;
+}
+
+/**
+ * La période d'un séjour, dite au PATIENT : « Du 3 au 8 août 2026 ».
+ *
+ * Même raison que ci-dessus, en plus sensible : « Depuis le 3 août 2026 » sur
+ * un séjour annulé dit à quelqu'un qu'il est encore hospitalisé. On ne rend
+ * alors que la date d'enregistrement, et la phrase d'explication fait le reste.
+ */
+export function stayPatientPeriod(
+  admittedAt: string,
+  dischargedAt: string | null,
+  status?: StayStatus,
+): string {
+  if (status === 'annule') return `Enregistré le ${formatDate(admittedAt)}`;
+  if (!dischargedAt) return `Depuis le ${formatDate(admittedAt)}`;
+  return `Du ${formatDate(admittedAt)} au ${formatDate(dischargedAt)}`;
+}
 
 export const CASH_METHOD_LABELS: Record<CashMethod, string> = {
   especes: 'Espèces',
@@ -519,6 +917,11 @@ export const AUDIT_ACTION_LABELS: Record<AuditAction, string> = {
   'kyc_document.archived': 'Pièce justificative archivée',
   'tariff.created': 'Tarif créé',
   'tariff.updated': 'Tarif modifié',
+  /* S6 — configuration du parc d'hébergement. Le libellé ne nomme jamais la
+     chambre ni le lit : le backend n'en journalise que les identifiants (un
+     nom de chambre peut être « Isolement tuberculose »). */
+  'room.created': 'Chambre déclarée',
+  'bed.created': 'Lit déclaré',
   'invoice.created': 'Facture créée',
   'invoice.issued': 'Facture émise',
   'invoice.cancelled': 'Facture annulée',
@@ -580,6 +983,7 @@ export const AUDIT_ACTION_GROUPS: Array<{ label: string; actions: AuditAction[] 
     ],
   },
   { label: 'Tarifs', actions: ['tariff.created', 'tariff.updated'] },
+  { label: 'Chambres et lits', actions: ['room.created', 'bed.created'] },
   {
     label: 'Factures',
     actions: ['invoice.created', 'invoice.issued', 'invoice.cancelled'],
@@ -700,6 +1104,9 @@ export const AUDIT_PAYLOAD_LABELS: Record<string, string> = {
   code: 'Code de l’acte',
   price_kmf: 'Prix (KMF)',
   generic_category: 'Catégorie générique',
+  /* S6 — parc d'hébergement (références seules, jamais un nom de chambre). */
+  room_id: 'Chambre',
+  bed_id: 'Lit',
   /* factures et actes */
   invoice_id: 'Facture',
   encounter_id: 'Consultation',
@@ -1797,3 +2204,372 @@ export const OPERATOR_LIST_AUSTERE_NOTICE =
 export const OPERATOR_ADMIN_ONLY_TITLE = 'Réservé aux administrateurs';
 export const OPERATOR_ADMIN_ONLY_MESSAGE =
   'Savoir qui détient la casquette d’exploitant relève de la gouvernance de Chioni : seuls les administrateurs de la plateforme accèdent à cet écran.';
+
+/* ── ressources humaines (S7, ADR 0020) ──────────────────────────────────
+   Ce module parle de PERSONNES QUI TRAVAILLENT, pas de ressources. Le
+   vocabulaire suit celui du registre papier qu'on numérise — « feuille de
+   présence », « absent ce jour » — et évite systématiquement le registre du
+   contrôle : ni « pointage », ni « taux de présence » brandi comme un
+   jugement, ni « effectif ». C'est une contrainte de conception, pas une
+   coquetterie : la ligne n° 1 du produit (« aider mieux, jamais surveiller »)
+   cesse ici d'être une formule sur les patients. */
+
+/** Le statut RÉEL d'une journée (feuille du directeur, données de la personne). */
+export const ATTENDANCE_STATUS_LABELS: Record<AttendanceStatus, string> = {
+  present: 'Présent',
+  absent: 'Absent',
+  conge: 'En congé',
+  repos: 'Repos',
+  ferie: 'Jour férié',
+};
+
+/** Ordre de saisie : les deux cas courants d'abord, le férié en sortie. */
+export const ATTENDANCE_STATUSES: AttendanceStatus[] = [
+  'present',
+  'absent',
+  'conge',
+  'repos',
+  'ferie',
+];
+
+/**
+ * Le planning collectif. **`conge` n'existe pas ici et n'existera jamais** :
+ * le backend le fond dans `absent` (ADR 0020 décision 6). « Absent ce jour »
+ * plutôt qu'« Absent » sec — on ne sait pas pourquoi la personne n'est pas
+ * là, et c'est exactement le but.
+ */
+export const PUBLIC_ATTENDANCE_LABELS: Record<PublicAttendanceStatus, string> = {
+  present: 'Présent',
+  absent: 'Absent ce jour',
+  repos: 'Repos',
+  ferie: 'Jour férié',
+};
+
+/** Une journée non notée. **Jamais « présent » par défaut** — c'est un trou. */
+export const ATTENDANCE_UNSET_LABEL = 'Non renseigné';
+
+/** L'option « vider » n'existe pas côté API : on ne peut que noter. */
+export const ATTENDANCE_UNSET_OPTION = '— à noter';
+
+export const LEAVE_TYPE_LABELS: Record<LeaveType, string> = {
+  annuel: 'Congé annuel',
+  maladie: 'Congé maladie',
+  maternite: 'Congé maternité',
+  paternite: 'Congé paternité',
+  deuil: 'Congé de deuil',
+  sans_solde: 'Congé sans solde',
+  autre: 'Autre congé',
+};
+
+/** Ordre du sélecteur : le cas de loin le plus courant en tête. */
+export const LEAVE_TYPES: LeaveType[] = [
+  'annuel',
+  'maladie',
+  'maternite',
+  'paternite',
+  'deuil',
+  'sans_solde',
+  'autre',
+];
+
+/**
+ * `annule` est le geste de LA PERSONNE (elle retire sa demande) : « Retiré »,
+ * jamais « Annulé », qui se lirait comme une décision prise contre elle.
+ */
+export const LEAVE_STATUS_LABELS: Record<LeaveStatus, string> = {
+  demande: 'En attente',
+  approuve: 'Approuvé',
+  refuse: 'Refusé',
+  annule: 'Retiré',
+};
+
+export const LEAVE_STATUSES: LeaveStatus[] = ['demande', 'approuve', 'refuse', 'annule'];
+
+/** « 1 journée » / « 4 journées » — un AFFICHAGE, jamais un solde de droits. */
+export function leaveDaysLabel(days: number): string {
+  return days > 1 ? `${days} journées` : `${days} journée`;
+}
+
+/** « du 3 septembre 2026 au 7 septembre 2026 », ou la date seule si un jour. */
+export function leaveRangeLabel(start: string, end: string): string {
+  if (start === end) return `le ${formatDate(start)}`;
+  return `du ${formatDate(start)} au ${formatDate(end)}`;
+}
+
+/* ── ce que l'écran doit dire à voix haute ── */
+
+/**
+ * **La décision la plus importante du sprint pour la sécurité** (ADR 0020
+ * décision 2), redite dans l'UI : confondre fonction et rôle créerait un
+ * second système de permissions à côté du premier, et c'est ainsi qu'un jour
+ * quelqu'un lirait un dossier médical parce que sa fiche de poste dit
+ * « soignant ».
+ */
+export const HRM_JOB_TITLE_NO_RIGHTS =
+  'Un service et une fonction sont des libellés d’organisation : ils n’ouvrent aucun droit dans Chioni. Les accès restent gouvernés par les rôles, dans « Personnel ».';
+
+/** Version courte, posée au contact du sélecteur de fonction d'un dossier. */
+export const HRM_JOB_TITLE_NO_RIGHTS_SHORT =
+  'Libellé d’organisation — n’ouvre aucun droit.';
+
+/** Ce que la feuille de présence est, et ce qu'elle n'est pas. */
+export const HRM_ATTENDANCE_INTENT =
+  'C’est la feuille de présence de votre centre, telle que vous la teniez sur papier : une journée par personne, notée par vous.';
+
+/**
+ * Ce que le produit REFUSE de construire, dit à l'écran plutôt que subi :
+ * ni heure d'arrivée, ni heure de départ, ni position (ADR 0020 décision 3).
+ */
+export const HRM_ATTENDANCE_NO_CLOCK =
+  'Chioni ne note ni heure d’arrivée, ni heure de départ, ni position : la numérisation ne crée aucune surveillance qui n’existait pas sur le papier.';
+
+/** La feuille se corrige : re-choisir un statut remplace la note du jour. */
+export const HRM_ATTENDANCE_UPSERT_HINT =
+  'Une feuille se corrige : rechoisir un statut remplace simplement la note de cette journée.';
+
+/** Bornes du backend, annoncées avant le refus. */
+export const HRM_ATTENDANCE_FUTURE_HINT =
+  'Les journées à venir ne se notent pas : la feuille dit ce qui s’est passé.';
+
+/**
+ * Le geste de saisie rapide, décrit sans ambiguïté.
+ *
+ * **Revue UX care S7** : la phrase disait ce que le bouton NE touche pas
+ * (« uniquement les cases encore vides ») sans jamais dire ce qu'il ÉCRIT.
+ * Un responsable pouvait cliquer « Compléter » en croyant ouvrir la colonne à
+ * la saisie, et noter toute son équipe présente. Le libellé du bouton porte
+ * maintenant la valeur écrite, et la phrase la répète.
+ */
+export const HRM_ATTENDANCE_FILL_HINT =
+  'Note « Présent » sur les cases encore vides de cette journée. Ce qui est déjà noté n’est jamais touché.';
+
+/** Le libellé du bouton lui-même — il dit la valeur écrite, pas « Compléter ». */
+export const HRM_ATTENDANCE_FILL_ACTION = 'Tous présents';
+
+/** Une saisie groupée interrompue : ce qui est passé reste, on le dit. */
+export const HRM_ATTENDANCE_BULK_PARTIAL =
+  'Les journées déjà enregistrées avant ce refus sont conservées : reprenez à la première case restée vide.';
+
+/**
+ * L'invariant du planning collectif, dit AUX COLLÈGUES qui le lisent.
+ * Sans cette phrase, « Absent ce jour » se lit comme une information
+ * incomplète, et quelqu'un cherchera à la compléter ailleurs.
+ */
+export const HRM_SCHEDULE_NO_REGIME =
+  'Vous voyez qui est là et qui ne l’est pas — jamais pourquoi. Le motif d’une absence ne regarde que la personne et la direction.';
+
+export const HRM_SCHEDULE_UNSET_HINT =
+  '« Non renseigné » veut dire que la journée n’a pas encore été notée sur la feuille de présence — pas que la personne est absente.';
+
+/**
+ * La fenêtre de service (±31 jours, revue guardian S7), dite AVANT le refus.
+ *
+ * Le planning répond à « qui est là aujourd'hui ? » : ce n'est pas un
+ * historique, et le backend le borne pour qu'on ne puisse pas reconstituer le
+ * relevé d'absences nominatif de tout le service sur l'année. L'écran renvoie
+ * chacun vers SON dossier plutôt que de laisser buter sur un 400.
+ */
+export const HRM_SCHEDULE_WINDOW_HINT =
+  'Ce planning est un tableau de service : il couvre le mois autour d’aujourd’hui. Pour retrouver vos propres journées plus anciennes, ouvrez « Mon dossier dans ce centre ».';
+
+/**
+ * Le titre de la journée. **Aucun dénominateur** : « 0 présent sur 12 » sur une
+ * journée que personne n'a encore notée se lit comme une équipe absente, et
+ * « 5 sur 12 » comme un taux de présence — soit exactement le KPI que ce
+ * module refuse d'afficher à toute une équipe. On compte des présences
+ * constatées, dégenrées, et rien d'autre (revue UX care S7).
+ */
+export function schedulePresentLabel(present: number): string {
+  if (present === 0) return 'Aucune présence notée';
+  if (present === 1) return '1 personne présente';
+  return `${present} personnes présentes`;
+}
+
+/** Aucune journée notée du tout : ce n'est pas une absence générale. */
+export const HRM_SCHEDULE_ALL_UNSET = 'Journée pas encore renseignée';
+
+/**
+ * **Aucun motif libre, nulle part** (ADR 0020 décision 4) — dit au demandeur
+ * comme au décideur. Un motif de congé est de la donnée de santé ou de vie
+ * privée : le type suffit à décompter des droits, la phrase n'ajoute qu'un
+ * risque.
+ */
+export const HRM_LEAVE_NO_REASON =
+  'Choisissez un type dans la liste : Chioni n’enregistre aucun motif écrit. Si votre centre demande un justificatif, joignez-le en photo — il reste privé.';
+
+/** Le refus, expliqué au directeur AVANT qu'il ne cherche le champ absent. */
+export const HRM_LEAVE_REFUSE_WARNING =
+  'Refuser n’enregistre aucun motif : Chioni ne conserve aucun texte écrit sur le congé de quelqu’un. Expliquez votre décision de vive voix — la personne verra seulement que sa demande est refusée.';
+
+export const HRM_LEAVE_APPROVE_WARNING =
+  'La personne verra sa demande approuvée. Pensez à noter ses journées sur la feuille de présence le moment venu : c’est elle qui fait foi.';
+
+/** Les trois issues sont terminales — le dire avant le clic, pas après le 400. */
+export const HRM_LEAVE_DECISION_FINAL =
+  'Une décision est définitive : elle ne se reprend pas depuis Chioni.';
+
+/** Le chevauchement se tranche à l'approbation, jamais à la saisie. */
+export const HRM_LEAVE_OVERLAP_HINT =
+  'Deux demandes peuvent se chevaucher : c’est à l’approbation que cela se tranche.';
+
+/** Ce que l'annulation d'un congé approuvé N'EST PAS (consigné hors périmètre). */
+export const HRM_LEAVE_CANCEL_SCOPE =
+  'Une demande ne se retire que tant qu’elle est en attente. Une fois décidée, c’est la feuille de présence qui dit ce qui s’est réellement passé.';
+
+/** Le justificatif : une photo privée, jamais un texte. */
+export const HRM_LEAVE_DOCUMENT_HINT =
+  'Photo ou capture uniquement (JPEG, PNG ou WebP, 2 Mo maximum) — les PDF ne sont pas acceptés. La pièce n’est lisible que par vous et la direction de votre centre.';
+
+/**
+ * **Revue UX care S7** — trois défauts sur un geste DÉFINITIF :
+ *
+ * 1. le verbe « Archiver » se lit « ranger, mettre de côté » par quelqu'un qui
+ *    n'est pas du métier — soit l'inverse de ce qu'il fait ;
+ * 2. la phrase ne vivait que dans un attribut `title`, qui ne s'ouvre jamais
+ *    au doigt sur un Android (l'écran de la feuille de présence l'écrit
+ *    lui-même deux fichiers plus loin) ;
+ * 3. un seul clic suffisait, sans confirmation.
+ *
+ * Le geste s'appelle donc « Retirer », sa conséquence est écrite en clair au
+ * contact du bouton, et il demande une confirmation sur place.
+ */
+export const HRM_LEAVE_DOCUMENT_ARCHIVE_WARNING =
+  'Retirer une pièce est définitif : elle ne sera plus présentée avec votre demande et vous ne pourrez pas la remettre. Vous pouvez en revanche en joindre une autre.';
+
+export const HRM_LEAVE_DOCUMENT_ARCHIVE_CONFIRM = 'Confirmer le retrait';
+
+export const HRM_LEAVE_DOCUMENT_EMPTY = 'Aucun justificatif joint à cette demande.';
+
+export function leaveDocumentLabel(id: number): string {
+  return `Justificatif n° ${id}`;
+}
+
+/* ── états vides, bienveillants ── */
+
+export const HRM_NO_EMPLOYMENT_TITLE = 'Aucun dossier ouvert pour l’instant';
+export const HRM_NO_EMPLOYMENT_DIRECTOR =
+  'Ouvrez un dossier pour chaque personne qui travaille dans votre centre : c’est lui qui porte sa feuille de présence et ses congés.';
+export const HRM_NO_EMPLOYMENT_STAFF =
+  'La direction n’a pas encore ouvert de dossier pour l’équipe. Le planning apparaîtra ici dès que ce sera fait.';
+
+export const HRM_SCHEDULE_EMPTY_TITLE = 'Personne dans le planning';
+export const HRM_SCHEDULE_EMPTY_MESSAGE =
+  'Le planning se remplit à partir des dossiers du personnel. Dès qu’un dossier est ouvert, la personne y apparaît.';
+
+export const HRM_NO_LEAVE_TITLE = 'Aucune demande de congé';
+export const HRM_NO_LEAVE_DIRECTOR =
+  'Les demandes déposées par votre équipe arrivent ici. Rien à décider pour le moment.';
+export const HRM_NO_LEAVE_FILTER =
+  'Aucune demande ne correspond à ce filtre.';
+
+export const HRM_NO_DEPARTMENT_MESSAGE =
+  'Aucun service pour l’instant. Créez ceux de votre centre — « Maternité », « Laboratoire », « Accueil » — pour ranger les dossiers du personnel.';
+export const HRM_NO_JOB_TITLE_MESSAGE =
+  'Aucune fonction pour l’instant. Créez celles de votre centre — « Sage-femme », « Aide-soignant », « Caissier » — pour qualifier les dossiers.';
+export const HRM_NO_HOLIDAY_MESSAGE =
+  'Aucun jour férié enregistré. Ajoutez ceux que votre centre observe : ce calendrier vous appartient, une clinique peut très bien travailler un jour férié national.';
+
+export const HRM_HOLIDAY_DELETE_WARNING =
+  'Retirer ce jour férié ne touche pas la feuille de présence : ce qui a été noté ce jour-là reste noté.';
+
+/* ── « Mon dossier » — la personne, sur ses propres données ── */
+
+export const HRM_ME_TITLE = 'Mon dossier dans ce centre';
+
+/** **404 = état NORMAL**, jamais une erreur rouge (contrat §HRM). */
+export const HRM_ME_NONE_TITLE = 'Pas encore de dossier ici';
+export const HRM_ME_NONE_MESSAGE =
+  'La direction de votre centre n’a pas encore ouvert votre dossier du personnel. Ce n’est pas une erreur : rien de ce que vous faites dans Chioni n’en dépend.';
+
+export const HRM_ME_ATTENDANCE_TITLE = 'Mes journées';
+export const HRM_ME_ATTENDANCE_EMPTY = 'Aucune journée notée sur les 30 derniers jours.';
+
+/**
+ * Qui tient la feuille, et quoi faire en cas d'erreur.
+ *
+ * **Revue UX care S7** : la liste arrivait nue. Une personne qui lit « Absent »
+ * sur une journée où elle était au travail n'avait aucun recours indiqué — et
+ * comme `MyAttendanceSerializer` n'expose volontairement pas `noted_by`
+ * (arbitrage ADR 0020 n° 11 : ne pas transformer la feuille en objet de
+ * conflit entre collègues), elle n'avait même pas d'interlocuteur. On nomme
+ * l'interlocuteur sans nommer personne : la direction.
+ */
+export const HRM_ME_ATTENDANCE_HINT =
+  'Vos dernières journées notées, les plus récentes en premier. C’est la direction de votre centre qui tient la feuille, comme sur le registre papier : si une journée vous semble inexacte, dites-le-lui, elle peut la corriger.';
+
+export const HRM_ME_LEAVES_TITLE = 'Mes congés';
+export const HRM_ME_LEAVES_EMPTY = 'Vous n’avez déposé aucune demande de congé.';
+
+/**
+ * Un refus, dit avec tact et sans mensonge.
+ *
+ * Le backend ne porte **aucun** motif (ADR 0020 décision 4) : l'écran ne doit
+ * donc ni en inventer un, ni laisser croire qu'il en existe un caché quelque
+ * part. La phrase dit les deux choses en une : rien n'est enregistré, et la
+ * conversation se tient hors de l'application.
+ */
+export const HRM_ME_REFUSED_NO_REASON =
+  'Chioni n’enregistre aucun motif de refus, ni ici ni ailleurs. Votre direction peut vous l’expliquer directement.';
+
+/**
+ * La lecture de ses propres données reste ouverte **même quand le centre est
+ * gelé** (ADR 0020 décision 7, arbitrage PO n° 3) — et les gestes de la
+ * personne aussi. On ne prend jamais en otage les données de quelqu'un pour
+ * une facture que son employeur n'a pas réglée.
+ */
+export const HRM_ME_ALWAYS_OPEN =
+  'Votre dossier reste consultable quel que soit l’état de l’abonnement de votre centre, et vous pouvez toujours demander un congé.';
+
+export const HRM_ME_HIRED_LABEL = 'Dans l’équipe depuis le';
+export const HRM_ME_ENDED_LABEL = 'Fin de l’emploi';
+export const HRM_ME_REQUEST_LEAVE = 'Demander un congé';
+
+/* ── gel d'abonnement, décliné au registre du personnel ── */
+
+/**
+ * Patron obligatoire des bandeaux de gel : **ce qui continue AVANT ce qui est
+ * fermé**. Décliné ici parce que la phrase générale
+ * (`SUBSCRIPTION_FROZEN_CLOSED`) n'énumère que le personnel, les tarifs et
+ * les statistiques — un directeur ne doit pas deviner ce qu'il advient de sa
+ * feuille de présence.
+ */
+export const HRM_FROZEN_STILL_WORKS =
+  'La lecture du registre reste entière : le planning, la feuille de présence, les congés et les dossiers restent consultables. Chacun continue de demander ses congés, de les retirer et de déposer un justificatif — personne n’est puni pour une facture en attente.';
+
+export const HRM_FROZEN_CLOSED =
+  'Sont temporairement fermées : la saisie de la feuille de présence, les décisions sur les congés, l’ouverture et la modification des dossiers, ainsi que les services, les fonctions et les jours fériés.';
+
+/* ── en-têtes des deux écrans ── */
+
+export const HRM_REGISTER_TITLE = 'Registre du personnel';
+export const HRM_REGISTER_SUBTITLE =
+  'La feuille de présence, les congés, les dossiers et l’organisation de votre centre.';
+export const HRM_TEAM_DAY_TITLE = 'Équipe du jour';
+export const HRM_TEAM_DAY_SUBTITLE = 'Qui est là, jour par jour.';
+
+/* ── le graphique de la feuille : ce qu'il compte, et ce qu'il ne compte pas ── */
+
+export const HRM_STATS_TITLE = 'Ce que dit la feuille';
+
+/**
+ * Le cadrage du graphique, écrit plutôt que sous-entendu.
+ *
+ * L'endpoint renvoie aussi `by_employment` — un décompte PAR PERSONNE — et
+ * l'écran ne le dessine pas : un classement nominatif des journées d'absence
+ * serait l'instrument d'évaluation que ce module refuse d'inventer. Le dire à
+ * l'écran engage la direction qui le lit chaque matin, et pas seulement le
+ * code qui l'a écrit (revue UX care S7).
+ */
+export const HRM_STATS_SUBTITLE =
+  'Les journées notées sur les 30 derniers jours — de quoi repérer d’un coup d’œil les périodes qui restent à remplir.';
+
+export const HRM_STATS_NO_RANKING =
+  'Ce graphique compte des journées, jamais des personnes : Chioni ne calcule aucun taux de présence ni aucun classement individuel.';
+
+export const HRM_STATS_EMPTY =
+  'Aucune journée notée sur les 30 derniers jours. Le graphique apparaîtra dès les premières notes de la feuille.';
+
+/** L'administration RH suit la permission backend : directeur seul. */
+export const HRM_DIRECTOR_ONLY_TITLE = 'Écran réservé à la direction';
+export const HRM_DIRECTOR_ONLY_MESSAGE =
+  'La feuille de présence, les congés et les dossiers du personnel portent des données personnelles : ils sont réservés à la direction du centre. Vous pouvez consulter le planning de l’équipe et votre propre dossier.';

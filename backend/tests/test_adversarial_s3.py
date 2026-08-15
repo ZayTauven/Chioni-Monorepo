@@ -173,18 +173,62 @@ class TestGuardianLockS3:
 
     def test_no_guardian_route_exists_for_S3_resources(self):
         """Garde structurelle : aucune URL /guardian/ ne cible fiche,
-        signes vitaux, documents ou assurances (le câblage lecture clinique
-        tuteur est un chantier ultérieur, post-SV.1.1)."""
+        signes vitaux, documents, assurances — ni, depuis S6, séjour,
+        chambre ou lit (le câblage lecture clinique tuteur est un chantier
+        ultérieur, post-SV.1.1).
+
+        **Étendue par S6 (ADR 0019 §5)** : l'hospitalisation est la donnée
+        clinique la plus lourde du carnet (« a-t-il été hospitalisé, et
+        combien de jours ? »). Le tuteur n'en voit RIEN, et l'interdit doit
+        être explicite plutôt qu'accidentel — d'où les marqueurs de séjour
+        ajoutés ici ET le module ``inpatient`` ajouté aux urlconfs
+        parcourus.
+
+        **Étendue par S7 (ADR 0020 invariant 5)** : le RH n'est pas du
+        clinique, mais l'interdit y est de la même nature — un tuteur n'a
+        RIEN à voir avec le dossier RH, la feuille de présence ou les
+        congés du personnel d'un centre, et un type de congé (maladie,
+        maternité, deuil) est de la donnée de santé sur une personne. Les
+        marqueurs RH et le module ``hrm`` s'ajoutent donc ici.
+        """
+        from apps.hrm import urls as hrm_urls
+        from apps.inpatient import urls as inpatient_urls
         from apps.medical import urls as medical_urls
         from apps.patients import urls as patients_urls
 
-        all_routes = [
-            str(u.pattern) for u in patients_urls.urlpatterns
-        ] + [str(u.pattern) for u in medical_urls.urlpatterns]
-        s3_markers = ("medical-file", "vital-signs", "documents", "insurances")
+        all_routes = (
+            [str(u.pattern) for u in patients_urls.urlpatterns]
+            + [str(u.pattern) for u in medical_urls.urlpatterns]
+            + [str(u.pattern) for u in inpatient_urls.urlpatterns]
+            + [str(u.pattern) for u in hrm_urls.urlpatterns]
+        )
+        clinical_markers = (
+            "medical-file", "vital-signs", "documents", "insurances",
+            # S6 — hospitalisation
+            "inpatient", "stays", "beds", "rooms", "occupancy",
+            # S7 — RH
+            "hrm", "employments", "attendance", "leaves", "schedule",
+            "departments", "job-titles", "holidays",
+        )
         for route in all_routes:
             if route.startswith("guardian/"):
-                assert not any(m in route for m in s3_markers), route
+                assert not any(m in route for m in clinical_markers), route
+        # Et les deux modules de sprint n'exposent AUCUNE route tuteur, quel
+        # que soit son nom : l'absence est vérifiée de front, pas seulement
+        # par l'absence de marqueur.
+        for module in (inpatient_urls, hrm_urls):
+            assert not [
+                str(u.pattern)
+                for u in module.urlpatterns
+                if str(u.pattern).startswith("guardian/")
+            ]
+        # S7 : le RH ne vit ni dans l'espace patient, ni dans le
+        # back-office plateforme. Le dossier RH d'une personne existe DANS
+        # un centre, jamais au-dessus (ADR 0020, invariants 1 et 5).
+        for pattern in hrm_urls.urlpatterns:
+            route = str(pattern.pattern)
+            assert route.startswith("centers/"), route
+            assert not route.startswith(("patients/", "platform/")), route
 
 
 # ---------------------------------------------------------------------------

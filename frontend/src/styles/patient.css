@@ -128,6 +128,35 @@
   white-space: nowrap;
 }
 
+/* ── S6 — mes hospitalisations (carnet patient) ──────────────────────────────
+   Volontairement une COLONNE et non une ligne `pat-row` : l'état d'un séjour
+   est une phrase (« Vous êtes hospitalisé(e) »), et `.ax-badge` est
+   `white-space: nowrap`. Placée en fin de ligne flex, elle réservait ~180 px
+   et écrasait le nom du centre sur un écran de 320 px. Empilée, elle est
+   lisible d'un coup d'œil — ce que la personne cherche d'abord. */
+.pat-stays {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.pat-stay {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding-block: var(--ax-space-3);
+}
+
+.pat-stay + .pat-stay {
+  border-top: 1px solid var(--ax-border);
+}
+
+.pat-stay:first-child { padding-block-start: 0; }
+.pat-stay:last-child { padding-block-end: 0; }
+
 /* ── invoice-like line list (payment request detail, encounter acts) ── */
 .pat-lines {
   list-style: none;

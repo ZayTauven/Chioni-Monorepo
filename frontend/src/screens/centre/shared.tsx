@@ -28,13 +28,18 @@ import {
 } from '@/lib/labels';
 import type {
   AppointmentStatus,
+  AttendanceStatus,
   ClaimStatus,
   DisputeStatus,
   EncounterStatus,
   InvoiceStatus,
   KycStatus,
+  LeaveStatus,
   PaymentRequestStatus,
+  PublicAttendanceStatus,
   StaffRole,
+  StayPriority,
+  StayStatus,
   SubscriptionInvoiceStatus,
   SubscriptionStatus,
   SupportPriority,
@@ -66,6 +71,28 @@ export function hasRole(
 ): boolean {
   const held: readonly StaffRole[] = typeof roles === 'string' ? [roles] : roles;
   return held.some((r) => allowed.includes(r));
+}
+
+/**
+ * Une clé d'idempotence pour un geste d'argent (encaissement guichet,
+ * facturation des journées d'hospitalisation).
+ *
+ * `crypto.randomUUID()` n'existe QUE dans un contexte sécurisé : sur une
+ * installation servie en `http://` — un intranet de centre, une démo sur IP
+ * locale, un partage de connexion mal configuré — l'appel lève, et il levait
+ * dans un initialiseur de `useState`, c'est-à-dire au MONTAGE de la modale :
+ * le caissier n'avait plus de formulaire du tout, sans un mot d'explication.
+ * Le repli n'a pas besoin d'être cryptographique (la clé n'est qu'un jeton
+ * anti-doublon, unique par centre) mais il doit être unique en pratique.
+ */
+export function newIdempotencyKey(): string {
+  const c: Crypto | undefined = typeof crypto === 'undefined' ? undefined : crypto;
+  if (c && typeof c.randomUUID === 'function') return c.randomUUID();
+  if (c && typeof c.getRandomValues === 'function') {
+    const bytes = c.getRandomValues(new Uint8Array(16));
+    return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+  }
+  return `k-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
 }
 
 /* ── async data hook ── */
@@ -236,6 +263,28 @@ export const APPOINTMENT_TONES: Record<AppointmentStatus, BadgeTone> = {
 };
 
 /**
+ * S6 — le séjour. `sortie` est un `success` (le patient est rentré chez lui,
+ * c'est l'issue normale) et `annule` reste NEUTRE : une admission annulée est
+ * une correction de saisie, jamais un incident — le rouge apprendrait au
+ * service à redouter un geste qui répare.
+ */
+export const STAY_TONES: Record<StayStatus, BadgeTone> = {
+  en_cours: 'info',
+  sortie: 'success',
+  annule: 'neutral',
+};
+
+/**
+ * La priorité de triage. `normale` n'a PAS de couleur (sinon les trois se
+ * valent visuellement et le tableau ne dit plus rien d'un cas critique).
+ */
+export const STAY_PRIORITY_TONES: Record<StayPriority, BadgeTone> = {
+  normale: 'neutral',
+  urgente: 'warning',
+  critique: 'danger',
+};
+
+/**
  * S5 — l'abonnement. Le ton SUIT l'arbitrage produit, il ne le trahit pas :
  * `impaye` est un `warning` parce que ça appelle un geste, PAS un `danger`
  * (rien n'est fermé) ; `suspendu` et `resilie` sont des `danger` parce que
@@ -271,6 +320,50 @@ export const SUPPORT_PRIORITY_TONES: Record<SupportPriority, BadgeTone> = {
   normale: 'neutral',
   haute: 'warning',
   urgente: 'danger',
+};
+
+/**
+ * S7 — une journée de la feuille de présence.
+ *
+ * **Aucun statut n'est un `danger`, et c'est la décision de design du module.**
+ * Une absence n'est pas un incident : on ne sait pas pourquoi la personne
+ * n'est pas là (maladie, deuil, enfant malade) et la feuille n'a pas mandat
+ * de le juger. Peindre `absent` en rouge apprendrait à toute une équipe à lire
+ * la couleur comme un reproche, et transformerait un registre en instrument de
+ * contrôle — exactement ce que l'ADR 0020 refuse d'inventer.
+ *
+ * `conge` reste `info` et non `warning` : un congé pris est un droit exercé.
+ */
+export const ATTENDANCE_TONES: Record<AttendanceStatus, BadgeTone> = {
+  present: 'success',
+  absent: 'neutral',
+  conge: 'info',
+  repos: 'neutral',
+  ferie: 'accent',
+};
+
+/**
+ * Le planning collectif — même palette, amputée de `conge` qui n'existe pas
+ * dans ce payload (et n'y existera jamais : le backend le fond dans `absent`).
+ */
+export const PUBLIC_ATTENDANCE_TONES: Record<PublicAttendanceStatus, BadgeTone> = {
+  present: 'success',
+  absent: 'neutral',
+  repos: 'neutral',
+  ferie: 'accent',
+};
+
+/**
+ * Une demande de congé. `refuse` est un `neutral`, PAS un `danger` : le rouge
+ * dirait « quelque chose ne va pas », alors qu'un refus est une décision
+ * d'organisation ordinaire — et c'est la personne concernée qui lit ce badge
+ * sur son propre écran. `annule` = « Retiré », son propre geste : neutre aussi.
+ */
+export const LEAVE_TONES: Record<LeaveStatus, BadgeTone> = {
+  demande: 'warning',
+  approuve: 'success',
+  refuse: 'neutral',
+  annule: 'neutral',
 };
 
 /**
@@ -367,6 +460,18 @@ export const IconReceipt = icon(<path d="M5 21v-16a2 2 0 0 1 2 -2h10a2 2 0 0 1 2
 export const IconAlertTriangle = icon(<><path d="M12 9v4" /><path d="M10.363 3.591l-8.106 13.534a1.914 1.914 0 0 0 1.636 2.871h16.214a1.914 1.914 0 0 0 1.636 -2.871l-8.106 -13.534a1.914 1.914 0 0 0 -3.274 0z" /><path d="M12 16h.01" /></>);
 export const IconStethoscope = icon(<><path d="M6 4h-1a2 2 0 0 0 -2 2v3.5h0a5.5 5.5 0 0 0 11 0v-3.5a2 2 0 0 0 -2 -2h-1" /><path d="M8 15a6 6 0 1 0 12 0v-3" /><path d="M11 3v2" /><path d="M6 3v2" /><path d="M20 10m-2 0a2 2 0 1 0 4 0a2 2 0 1 0 -4 0" /></>);
 export const IconUserOff = icon(<><path d="M8.18 8.189a4.01 4.01 0 0 0 2.616 2.627m3.507 -.545a4 4 0 1 0 -5.59 -5.552" /><path d="M6 21v-2a4 4 0 0 1 4 -4h4c.412 0 .81 .062 1.183 .178m2.633 2.618c.12 .38 .184 .785 .184 1.204v2" /><path d="M3 3l18 18" /></>);
+/* S6 — le lit vient du KPI « Bed Occupancy » du dashboard healthcare de Vireo ;
+   l'échange de flèches est déjà dans le registre d'icônes du shell (nav). */
+export const IconBed = icon(<><path d="M5 9a2 2 0 1 0 4 0a2 2 0 1 0 -4 0" /><path d="M22 17v-3h-20" /><path d="M2 8v9" /><path d="M12 14h10v-2a3 3 0 0 0 -3 -3h-7v5" /></>);
+export const IconExchange = icon(<><path d="M7 10h14l-4 -4" /><path d="M17 14h-14l4 4" /></>);
+export const IconLogout = icon(<><path d="M14 8v-2a2 2 0 0 0 -2 -2h-7a2 2 0 0 0 -2 2v12a2 2 0 0 0 2 2h7a2 2 0 0 0 2 -2v-2" /><path d="M9 12h12l-3 -3" /><path d="M18 15l3 -3" /></>);
+/* S7 — le registre du personnel. Tabler outline, même contrat de trait que
+   les précédentes : `trash` (retirer un jour férié), `paperclip` (un
+   justificatif), `download` (le lire), `archive` (le ranger définitivement). */
+export const IconTrash = icon(<><path d="M4 7l16 0" /><path d="M10 11l0 6" /><path d="M14 11l0 6" /><path d="M5 7l1 12a2 2 0 0 0 2 2h8a2 2 0 0 0 2 -2l1 -12" /><path d="M9 7v-3a1 1 0 0 1 1 -1h4a1 1 0 0 1 1 1v3" /></>);
+export const IconPaperclip = icon(<path d="M15 7l-6.5 6.5a1.5 1.5 0 0 0 3 3l6.5 -6.5a3 3 0 0 0 -6 -6l-6.5 6.5a4.5 4.5 0 0 0 9 9l6.5 -6.5" />);
+export const IconDownload = icon(<><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2 -2v-2" /><path d="M7 11l5 5l5 -5" /><path d="M12 4l0 12" /></>);
+export const IconArchive = icon(<><path d="M3 4m0 2a2 2 0 0 1 2 -2h14a2 2 0 0 1 2 2v1a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2z" /><path d="M5 9v9a2 2 0 0 0 2 2h10a2 2 0 0 0 2 -2v-9" /><path d="M10 13h4" /></>);
 
 /* ── error rendering ── */
 

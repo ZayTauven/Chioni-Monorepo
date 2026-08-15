@@ -200,6 +200,32 @@ Choix arrêtés à l'implémentation, dans l'esprit des décisions ci-dessus
    acceptés par le POST de création au guichet (mêmes règles), pas
    seulement par le PATCH.
 
+## Addendum S6 — le dénouement de « l'hospitalisé est le module S6 » (2026-08-15)
+
+La docstring de `VitalSigns` annonçait : « le contexte hospitalisé à relevés répétés est le
+module S6, ce modèle ne le préfigure pas ». La réponse de S6 (ADR 0019, décision 1) est qu'il
+n'avait **pas besoin d'être préfiguré** : le séjour (`inpatient.Stay`) apporte le contexte
+d'hébergement et s'adosse à une **consultation pivot obligatoire**, ouverte du premier au
+dernier jour du séjour. Les relevés d'un hospitalisé sont donc des `VitalSigns` **ordinaires**
+sur cette consultation.
+
+Conséquence directe : **`VitalSigns` n'a subi aucune modification en S6** — FK `encounter`
+toujours obligatoire, pas de contrainte XOR, pas de migration, `VITAL_SIGNS_BOUNDS` toujours
+définition unique. Et surtout `ViaEncounterQuerySet.for_patient()` (`encounter__patient`) reste
+exact : le carnet transversal du patient contient la surveillance de son hospitalisation sans
+qu'une ligne de sa lecture ne bouge. C'était le point de rupture le plus dangereux identifié à
+la cartographie — l'oublier aurait rendu `/patients/me/vital-signs/` **silencieusement**
+incomplet.
+
+Ce que cela coûte, et qui reste assumé : `measured_at` demeure libre (vigilance SV.2 ouverte),
+donc rien n'empêche techniquement un relevé daté hors des bornes du séjour ; et la feuille de
+surveillance se lit par la consultation pivot, pas par une table dédiée.
+
+Le **verrou tuteur** de la décision cadre n° 1 est reconduit tel quel : aucune donnée
+d'hospitalisation n'atteint un tuteur, et la sonde structurelle
+`test_no_guardian_route_exists_for_S3_resources` a été **étendue** aux marqueurs du séjour
+(`inpatient`, `stays`, `beds`, `rooms`, `occupancy`) et à l'urlconf de la nouvelle app.
+
 ## Conséquences
 
 - Le carnet reste transversal et le tenant cloisonné : toute donnée nouvelle est `for_patient`

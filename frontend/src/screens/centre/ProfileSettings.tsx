@@ -23,6 +23,7 @@ import { ApiError } from '@/lib/api';
 import { deleteAvatar, updateMe, uploadAvatar } from '@/lib/endpoints/auth';
 import { UPLOAD_IMAGE_HINT, uploadThrottled } from '@/lib/labels';
 import { MyDataCard } from '@/screens/lite/MyDataCard';
+import { MyHrCard } from './MyHr';
 import { ErrorAlert, FieldError, IconArrowLeft, IconCheck, initialsOf, toApiError } from './shared';
 
 /** 429 du scope `uploads` (20/h) : remplacer le message anglais de DRF. */
@@ -295,6 +296,23 @@ export function ProfileSettings() {
             par-dessus toute carte placée après elle dans la même colonne. */}
         <div className="ax-col--4" style={{ alignSelf: 'start' }}>
           <MyDataCard audience="staff" />
+        </div>
+
+        {/* MON DOSSIER DANS CE CENTRE (S7, ADR 0020) — même esprit et même
+            endroit que « Mes données » : ce que le produit sait de MOI, lu par
+            moi. Deux raisons pour la pleine largeur, en fin de grille :
+
+            1. la colonne de gauche se termine par la barre d'enregistrement
+               collante, qui flotterait par-dessus toute carte placée après
+               elle dans la même colonne (même motif que la carte RGPD) ;
+            2. le contenu est une LISTE (congés, journées) avec des gestes en
+               bout de ligne — dans un rail de 4 colonnes, chaque ligne se
+               casserait en trois.
+
+            Cette carte n'est gardée par AUCUN rôle et n'est jamais gelée par
+            l'abonnement : le registre appartient à la personne. */}
+        <div className="ax-col--12">
+          <MyHrCard />
         </div>
       </div>
     </>

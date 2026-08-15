@@ -776,6 +776,10 @@ def merge_profiles(*, source, target, actor, center):
       over ONLY if the target has none (otherwise it stays on the
       tombstone — nothing medical is deleted, no automatic pick between
       two clinical contents); **vital signs** follow their encounters.
+    - **Stays (S6, ADR 0019)** → re-anchored on the target, right after the
+      encounters they pivot on (the order satisfies ``Stay.save()``'s
+      same-patient invariant); rooms, beds and bed assignments stay put —
+      they belong to the CENTER, and they hang off the stay.
     - **Appointments** → re-anchored on the target too (revue adversariale
       vague 1) : un RDV laissé sur le tombstone enverrait le rappel J-1 au
       téléphone déclaratif du doublon (potentiellement celui d'un tiers) et
@@ -877,6 +881,22 @@ def merge_profiles(*, source, target, actor, center):
         entry.save(update_fields=["patient", "updated_at"])
         entries_moved += 1
 
+    # 2 quater (S6, ADR 0019 invariant 5) — les SÉJOURS suivent la cible.
+    # L'ordre compte : les consultations viennent d'être ré-ancrées, donc
+    # l'invariant structurel de ``Stay.save()`` (« la consultation pivot
+    # concerne ce patient ») est déjà satisfait quand on arrive ici. Un
+    # séjour laissé sur le tombstone disparaîtrait du carnet du patient
+    # canonique — c'est-à-dire l'épisode le plus lourd de son histoire.
+    # Chambres, lits et occupations ne bougent pas : ce sont des ressources
+    # du CENTRE, rattachées au séjour, pas au patient.
+    from apps.inpatient.models import Stay
+
+    stays_moved = 0
+    for stay in Stay.objects.for_patient(source):
+        stay.patient = target
+        stay.save(update_fields=["patient", "updated_at"])
+        stays_moved += 1
+
     # 2 ter (S3, ADR 0016) — the enriched record reunites too. Local import
     # mirroring the scheduling one below: patients stays a leaf dependency
     # of medical's new tables.
@@ -960,7 +980,7 @@ def merge_profiles(*, source, target, actor, center):
         links_moved=moved_links, links_revoked=revoked_links,
         links_suspended=suspended_links,
         encounters_moved=encounters_moved, entries_moved=entries_moved,
-        appointments_moved=appointments_moved,
+        appointments_moved=appointments_moved, stays_moved=stays_moved,
         documents_moved=documents_moved, insurances_moved=insurances_moved,
         medical_file_moved=medical_file_moved,
         user_transferred=user_transferred,

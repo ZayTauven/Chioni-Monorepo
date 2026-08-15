@@ -740,6 +740,18 @@ def anonymize_user(*, actor, user):
         guardian.country_of_residence = ""
         guardian.save(update_fields=["country_of_residence", "updated_at"])
 
+    # 3 bis — the staff register (S7, ADR 0020 invariant 7) SURVIVES: the
+    # employment, the attendance sheet, the leaves and their closed types
+    # stay, « orphelins d'identité », because a center has retention
+    # obligations. The one thing that is NOT orphan of identity is the
+    # supporting FILE of a leave: a photographed medical certificate
+    # carries the person's name and her pathology in its pixels. Its bytes
+    # go, exactly like the avatar two steps below; the row stays, archived,
+    # so the register can still say a piece existed (revue adversariale S7).
+    from apps.hrm.services import purge_leave_documents_of
+
+    leave_documents_purged = purge_leave_documents_of(actor=actor, user=user)
+
     # 4 — the only table storing a phone in clear.
     otp_purged = 0
     if old_phone:
@@ -768,6 +780,7 @@ def anonymize_user(*, actor, user):
         memberships_deactivated=memberships_deactivated,
         insurances_anonymized=insurances_anonymized,
         otp_codes_purged=otp_purged,
+        leave_documents_purged=leave_documents_purged,
         replay=already_anonymized,
     )
     return user

@@ -14,6 +14,7 @@ import type {
   PatientInsurance,
   PatientMe,
   PatientMedicalFile,
+  PatientStay,
   PatientVitalSigns,
   PaymentRequestPatient,
   Prescription,
@@ -180,6 +181,18 @@ export function downloadMyDocument(id: number): Promise<void> {
 /** My insurance/mutual lines — read-only here (desk-entered, billing data). */
 export function listMyInsurances(page = 1): Promise<Paginated<PatientInsurance>> {
   return apiFetch(`/patients/me/insurances/?page=${page}`);
+}
+
+/* ── S6 — mes hospitalisations (ADR 0019 §5, lecture seule, tous centres) ── */
+
+/**
+ * Mes séjours, triés du plus récent au plus ancien. Payload court par
+ * conception : centre, dates, statut et l'id de la consultation PIVOT — **ni
+ * lit, ni priorité, ni motif d'annulation**. L'histoire clinique du séjour se
+ * lit sur cette consultation, déjà rendue en entier par `listEncounters`.
+ */
+export function listMyStays(page = 1): Promise<Paginated<PatientStay>> {
+  return apiFetch(`/patients/me/stays/?page=${page}`);
 }
 
 /* ── money (patient side) ── */

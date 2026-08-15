@@ -175,6 +175,63 @@ class AuditAction:
     PATIENT_DOCUMENT_CREATED = "patient_document.created"
     PATIENT_DOCUMENT_ARCHIVED = "patient_document.archived"
 
+    # Hospitalisation (S6, ADR 0019 invariant 4). Payload contract:
+    # references, status/priority CODES and counts ONLY. **Jamais le motif
+    # d'admission** (il vit sur ``Encounter.reason`` et relève de la même
+    # classe qu'un diagnostic), jamais le motif d'annulation d'un séjour,
+    # jamais un nom de chambre ou de lit.
+    #
+    # Journal du directeur : ``room.created`` et ``bed.created`` y entrent
+    # CONSCIEMMENT (configuration de l'établissement, même famille qu'un
+    # tarif). Les cinq autres disent quel patient occupe quel lit et
+    # combien de temps : c'est clinique, elles restent hors liste blanche
+    # (fail-closed par défaut) et sont nommées dans
+    # ``DIRECTOR_JOURNAL_EXCLUDED``.
+    ROOM_CREATED = "room.created"
+    BED_CREATED = "bed.created"
+    STAY_ADMITTED = "stay.admitted"
+    STAY_DISCHARGED = "stay.discharged"
+    STAY_CANCELLED = "stay.cancelled"
+    # Les journées d'hospitalisation posées sur la consultation pivot —
+    # c'est de l'ARGENT (des actes facturables), donc c'est tracé. Ajout
+    # explicite au-delà de l'énumération de l'ADR 0019 §4, assumé et
+    # documenté : la règle du projet (« AuditLog sur toute action sensible :
+    # argent ») prime. Payload : ids, nombre de journées, tarif — jamais un
+    # libellé.
+    STAY_DAYS_BILLED = "stay.days_billed"
+    BED_ASSIGNED = "bed.assigned"
+    BED_RELEASED = "bed.released"
+
+    # HRM (S7, ADR 0020 invariant 4). Payload contract, et c'est LA garde
+    # du sprint : **jamais le type d'un congé** (même classe qu'un
+    # diagnostic — maladie, maternité, deuil sont de la donnée de santé ou
+    # de vie privée), jamais un nom de service ni de fonction, jamais un
+    # nom de fichier. Des ids, des compteurs, des codes de STATUT et des
+    # booléens de présence (patron ``has_reason`` de ``center.kyc_changed``).
+    #
+    # Journal du directeur : la CONFIGURATION y entre consciemment
+    # (``hrm_department.*``, ``hrm_job_title.*``, ``holiday.*`` — même
+    # famille qu'un tarif) ainsi que ``leave.requested``/``leave.decided``
+    # (l'exploitation dont le directeur répond). Tout le reste en est
+    # exclu : ``attendance.*`` (volumétrie quotidienne ET surveillance
+    # individuelle), ``employment.*``, ``leave.cancelled`` et les deux
+    # actions de justificatif — un journal daté « qui a déposé quel
+    # certificat » serait un signal sur la santé d'une personne.
+    HRM_DEPARTMENT_CREATED = "hrm_department.created"
+    HRM_DEPARTMENT_UPDATED = "hrm_department.updated"
+    HRM_JOB_TITLE_CREATED = "hrm_job_title.created"
+    HRM_JOB_TITLE_UPDATED = "hrm_job_title.updated"
+    HOLIDAY_CREATED = "holiday.created"
+    HOLIDAY_DELETED = "holiday.deleted"
+    EMPLOYMENT_CREATED = "employment.created"
+    EMPLOYMENT_UPDATED = "employment.updated"
+    ATTENDANCE_RECORDED = "attendance.recorded"
+    LEAVE_REQUESTED = "leave.requested"
+    LEAVE_DECIDED = "leave.decided"
+    LEAVE_CANCELLED = "leave.cancelled"
+    LEAVE_DOCUMENT_UPLOADED = "leave_document.uploaded"
+    LEAVE_DOCUMENT_ARCHIVED = "leave_document.archived"
+
     # Trust Bridge — money (phase B). Payloads: references, amounts and
     # currencies ONLY — never an act label (ADR 0005/0007).
     INVOICE_CREATED = "invoice.created"

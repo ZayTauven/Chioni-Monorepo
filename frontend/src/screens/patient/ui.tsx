@@ -17,12 +17,14 @@ import {
   GUARDIAN_LINK_STATUS_LABELS,
   PR_STATUS_PATIENT,
   PRESCRIPTION_STATUS_LABELS,
+  STAY_STATUS_PATIENT,
 } from '@/lib/labels';
 import type {
   EncounterStatus,
   GuardianLinkStatus,
   PaymentRequestStatus,
   PrescriptionStatus,
+  StayStatus,
 } from '@/lib/types';
 
 /* ── error normalisation for display ── */
@@ -198,6 +200,23 @@ const PRESCRIPTION_TONES: Record<PrescriptionStatus, BadgeTone> = {
 
 export function PrescriptionStatusBadge({ status }: { status: PrescriptionStatus }) {
   return <Badge tone={PRESCRIPTION_TONES[status]} label={PRESCRIPTION_STATUS_LABELS[status]} />;
+}
+
+/**
+ * S6 — l'état d'une hospitalisation, dit à la personne.
+ *
+ * `annule` est NEUTRE et jamais `danger` : un séjour annulé est presque
+ * toujours une correction de saisie du centre, pas un échec du patient — même
+ * arbitrage que « Manqué » sur un rendez-vous, qui n'est pas rouge non plus.
+ */
+const STAY_TONES: Record<StayStatus, BadgeTone> = {
+  en_cours: 'info',
+  sortie: 'success',
+  annule: 'neutral',
+};
+
+export function StayStatusBadge({ status }: { status: StayStatus }) {
+  return <Badge tone={STAY_TONES[status]} label={STAY_STATUS_PATIENT[status]} />;
 }
 
 /* ── modal (portal + focus trap + Escape, per the Vireo contract) ── */

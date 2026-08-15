@@ -96,6 +96,38 @@ def _require_open_encounter(encounter, what):
         )
 
 
+def _require_no_live_stay(encounter):
+    """S6 (revue guardian) — le pivot d'un séjour EN COURS ne se ferme pas.
+
+    La décision 1 de l'ADR 0019 fait reposer TOUTE la production clinique
+    d'une hospitalisation sur une consultation « ouverte du premier au
+    dernier jour ». Rien n'empêchait un clinicien qui range sa liste de
+    consultations de fermer ce pivot pendant que le patient est couché : à
+    partir de là, :func:`_require_open_encounter` refusait DÉFINITIVEMENT
+    toute mesure de surveillance, toute ordonnance et toute entrée de
+    carnet pour cet hospitalisé — aucune route ne rouvre une consultation,
+    et la sortie « tolère un pivot déjà fermé », donc rien ne le signalait
+    jamais.
+
+    La sortie et l'annulation d'un séjour posent l'état terminal AVANT
+    d'appeler la clôture : elles passent ici sans encombre. La lecture est
+    faite EN BASE (jamais sur l'instance en mémoire, qui peut être périmée).
+    """
+    # Import local : ``medical`` doit rester importable sans le module
+    # d'hospitalisation (qui, lui, importe ce service — dépendance à sens
+    # unique, aucun cycle).
+    from apps.inpatient.models import Stay
+
+    live = Stay.objects.filter(
+        encounter_id=encounter.pk, status=Stay.Status.IN_PROGRESS
+    ).exists()
+    if live:
+        raise ValidationError(
+            "Ce patient est hospitalisé : cette consultation est le pivot de "
+            "son séjour et se clôture à sa sortie."
+        )
+
+
 @transaction.atomic
 def close_encounter(*, actor, encounter):
     """Clinical staff closes a consultation: en_cours → terminee (S1).
@@ -103,6 +135,9 @@ def close_encounter(*, actor, encounter):
     ``annulee`` is deliberately OUT of this sprint's scope: cancelling an
     encounter that carries billed acts raises the cascade question of its
     invoice — to be designed together, not implied here.
+
+    S6: an encounter that is the PIVOT of a live stay is refused here — see
+    :func:`_require_no_live_stay`.
     """
     if encounter.status == Encounter.Status.COMPLETED:
         raise ValidationError("Cette consultation est déjà terminée.")
@@ -110,6 +145,7 @@ def close_encounter(*, actor, encounter):
         raise ValidationError(
             "Cette consultation est annulée : elle ne peut pas être terminée."
         )
+    _require_no_live_stay(encounter)
     encounter.status = Encounter.Status.COMPLETED
     encounter.save(update_fields=["status", "updated_at"])
     audit(

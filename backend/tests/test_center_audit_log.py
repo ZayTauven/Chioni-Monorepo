@@ -210,6 +210,144 @@ class TestTheRealClinicalFlowNeverReachesTheDirector:
         body = response.content.decode()
         assert "Anfia" not in body and "Paludisme" not in body
 
+    def test_the_hr_register_of_a_person_never_reaches_the_journal(self):
+        """S7 (ADR 0020 invariant 4) — le miroir exact du scénario clinique
+        ci-dessus, sur le module dont l'objet EST un salarié.
+
+        Un scénario RH COMPLET (dossier ouvert, semaine de présence,
+        justificatif déposé puis archivé, demande retirée) produit un
+        journal **vide** : ``attendance.recorded`` est nommément exclue par
+        l'ADR (volumétrie quotidienne ET surveillance individuelle), et les
+        actions de dossier, de retrait et de justificatif le sont aussi —
+        un journal daté « qui a déposé quelle pièce » serait un signal sur
+        la santé d'une personne.
+        """
+        from datetime import timedelta
+        from io import BytesIO
+
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from django.utils import timezone
+        from PIL import Image
+
+        from apps.hrm import services as hrm_services
+
+        center, director = make_center_with_director()
+        nurse = make_staff_user(center, role=Role.NURSE)
+        employment = hrm_services.create_employment(
+            actor=director, center=center, user=nurse,
+            hired_at=timezone.localdate() - timedelta(days=90),
+        )
+        for offset in range(1, 4):
+            hrm_services.record_attendance(
+                actor=director, employment=employment,
+                date=timezone.localdate() - timedelta(days=offset),
+                status="present",
+            )
+        hrm_services.update_employment(
+            actor=director, employment=employment,
+            ended_at=timezone.localdate() + timedelta(days=30),
+        )
+        leave = hrm_services.request_leave(
+            actor=nurse, employment=employment, leave_type="maladie",
+            start_date=timezone.localdate() + timedelta(days=2),
+            end_date=timezone.localdate() + timedelta(days=4),
+        )
+        buffer = BytesIO()
+        Image.new("RGB", (60, 40), "white").save(buffer, format="JPEG")
+        document = hrm_services.upload_leave_document(
+            actor=nurse, leave=leave,
+            uploaded_file=SimpleUploadedFile(
+                "certificat.jpg", buffer.getvalue(), content_type="image/jpeg"
+            ),
+        )
+        hrm_services.archive_leave_document(actor=nurse, document=document)
+        hrm_services.cancel_leave(actor=nurse, leave=leave)
+
+        # Les lignes EXISTENT et portent leur centre (interrogeables pour la
+        # conformité)…
+        assert AuditLog.objects.filter(center=center).count() >= 8
+        # …et le directeur ne voit que la DEMANDE de congé — l'exploitation
+        # dont il répond. Ni la feuille, ni le dossier, ni le justificatif,
+        # ni le retrait.
+        seen = set(actions_in(client_for(director).get(url(center))))
+        assert seen == {AuditAction.LEAVE_REQUESTED}
+        for hidden in (
+            AuditAction.ATTENDANCE_RECORDED,
+            AuditAction.EMPLOYMENT_CREATED,
+            AuditAction.EMPLOYMENT_UPDATED,
+            AuditAction.LEAVE_CANCELLED,
+            AuditAction.LEAVE_DOCUMENT_UPLOADED,
+            AuditAction.LEAVE_DOCUMENT_ARCHIVED,
+        ):
+            assert hidden not in seen
+
+    def test_a_leave_decision_shows_up_but_never_its_type(self):
+        """La contrepartie : le directeur DÉCIDE, donc il voit la décision —
+        mais le journal ne dit jamais le régime (même classe qu'un
+        diagnostic), et pas davantage le nom du fichier déposé."""
+        from datetime import timedelta
+
+        from django.utils import timezone
+
+        from apps.hrm import services as hrm_services
+
+        center, director = make_center_with_director()
+        nurse = make_staff_user(center, role=Role.NURSE)
+        employment = hrm_services.create_employment(
+            actor=director, center=center, user=nurse,
+            hired_at=timezone.localdate() - timedelta(days=90),
+        )
+        leave = hrm_services.request_leave(
+            actor=nurse, employment=employment, leave_type="deuil",
+            start_date=timezone.localdate() + timedelta(days=2),
+            end_date=timezone.localdate() + timedelta(days=4),
+        )
+        hrm_services.decide_leave(actor=director, leave=leave, approve=True)
+
+        response = client_for(director).get(url(center))
+        assert set(actions_in(response)) == {
+            AuditAction.LEAVE_REQUESTED, AuditAction.LEAVE_DECIDED,
+        }
+        body = response.content.decode()
+        for regime in ("deuil", "maladie", "maternite", "sans_solde"):
+            assert regime not in body
+        row = next(
+            entry for entry in response.data["results"]
+            if entry["action"] == AuditAction.LEAVE_DECIDED
+        )
+        assert row["payload"]["status"] == "approuve"
+        assert "leave_type" not in row["payload"]
+
+    def test_the_hr_configuration_is_visible_like_a_tariff(self):
+        """S7 — l'ajout CONSCIENT à la liste blanche : déclarer un service,
+        une fonction ou un jour férié est de l'exploitation, au même titre
+        qu'un tarif. Les LIBELLÉS n'entrent jamais dans le payload."""
+        from apps.hrm import services as hrm_services
+
+        center, director = make_center_with_director()
+        hrm_services.create_department(
+            actor=director, center=center, name="Service VIH",
+        )
+        hrm_services.create_job_title(
+            actor=director, center=center, name="Psychiatre",
+        )
+        holiday = hrm_services.create_holiday(
+            actor=director, center=center, date="2026-07-06",
+            name="Fête de l'Indépendance",
+        )
+        hrm_services.delete_holiday(actor=director, holiday=holiday)
+
+        response = client_for(director).get(url(center))
+        assert set(actions_in(response)) == {
+            AuditAction.HRM_DEPARTMENT_CREATED,
+            AuditAction.HRM_JOB_TITLE_CREATED,
+            AuditAction.HOLIDAY_CREATED,
+            AuditAction.HOLIDAY_DELETED,
+        }
+        body = response.content.decode()
+        for label in ("VIH", "Psychiatre", "Indépendance"):
+            assert label not in body
+
     def test_a_desk_collected_consent_is_invisible_too(self):
         center, director = make_center_with_director()
         cashier = make_staff_user(center, role=Role.CASHIER)

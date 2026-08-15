@@ -59,6 +59,17 @@ from apps.centers.models import (
     TariffItem,
 )
 from apps.common.models import ActCategory, Currency
+from apps.hrm import services as hrm_services
+
+# ``Department``/``JobTitle`` sont VOLONTAIREMENT absents de cet import :
+# une sonde structurelle (``tests/test_hrm.py``) refuse que l'organigramme
+# soit importé hors de ``apps.hrm`` — « une fonction n'est pas un droit »
+# (ADR 0020, décision 2). Le seed passe par les lecteurs nommés du module
+# (``hrm_services.find_department`` / ``find_job_title``), qui sont sa
+# surface publique.
+from apps.hrm.models import AttendanceRecord, Employment, Holiday, LeaveRequest
+from apps.inpatient import services as inpatient_services
+from apps.inpatient.models import Bed, Room, Stay
 from apps.medical import services as medical_services
 from apps.medical.models import (
     Encounter,
@@ -142,9 +153,30 @@ class Command(BaseCommand):
                 "seed_demo est un outil de développement : interdit hors "
                 "DEBUG (les comptes de démo portent un mot de passe publié)."
             )
+        self._make_stdout_lenient()
         with transaction.atomic():
             state = self._seed()
         self._print_recap(state)
+
+    def _make_stdout_lenient(self):
+        """A console encoding must never turn a successful seed into a crash.
+
+        The recap is written in French, with arrows and typographic quotes.
+        A Windows console runs on cp1252, which cannot encode them: the data
+        was committed, then the command died on its LAST line with an
+        UnicodeEncodeError and read like a total failure. Degrade the few
+        unencodable glyphs rather than the whole run — the alternative
+        (stripping the recap down to ASCII) would make it less readable for
+        everyone to please one terminal.
+        """
+        reconfigure = getattr(getattr(self.stdout, "_out", None),
+                              "reconfigure", None)
+        if reconfigure is None:  # not a real text stream (tests capture it)
+            return
+        try:
+            reconfigure(errors="replace")
+        except (ValueError, OSError):  # stream already detached
+            pass
 
     # ------------------------------------------------------------------
     # Seeding — services first, validated save() otherwise
@@ -207,6 +239,10 @@ class Command(BaseCommand):
             center=center, patient=patient, patient_user=patient_user,
             doctor=doctor, cashier=cashier, encounter=first_encounter,
         )
+        stay = self._ensure_inpatient_stay(
+            center=center, director=director, doctor=doctor, patient=patient,
+        )
+        hrm = self._ensure_hrm(center=center, director=director, staff=staff)
         self._ensure_erasure_request(user=guardian2)
 
         return {
@@ -216,6 +252,8 @@ class Command(BaseCommand):
             "link2": link2,
             "subscription": subscription,
             "support_ticket": support_ticket,
+            "stay": stay,
+            "hrm": hrm,
         }
 
     def _ensure_superuser(self):
@@ -408,6 +446,253 @@ class Command(BaseCommand):
             f"(25 000 KMF, échéance {invoice.due_date}) — 10 000 KMF reçus "
             "par virement, solde 15 000 KMF."
         )
+
+    def _ensure_inpatient_stay(self, *, center, director, doctor, patient):
+        """S6 (ADR 0019) — deux chambres, quatre lits, une hospitalisation
+        EN COURS avec sa feuille de surveillance.
+
+        La patiente de démo est hospitalisée : c'est le cas le plus
+        démontrable — son espace patient affiche le séjour
+        (`GET /patients/me/stays/`, sans le lit ni la priorité), le tableau
+        d'occupation du centre montre qui occupe quoi, et la surveillance
+        est faite de relevés répétés sur la consultation PIVOT — la preuve
+        vivante que ``VitalSigns`` n'a pas eu à bouger.
+
+        Passe par les vrais services (audit, machine à états, contrainte
+        d'exclusivité du lit) — jamais un ``objects.create`` de complaisance.
+        """
+        rooms = {}
+        created_rooms = created_beds = 0
+        for room_name, bed_names in (
+            ("Chambre 1", ("Lit A", "Lit B")),
+            ("Chambre 2", ("Lit A", "Lit B")),
+        ):
+            room = Room.objects.for_center(center).filter(name=room_name).first()
+            if room is None:
+                room = inpatient_services.create_room(
+                    actor=director, center=center, name=room_name
+                )
+                created_rooms += 1
+            rooms[room_name] = room
+            for bed_name in bed_names:
+                if not Bed.objects.filter(room=room, name=bed_name).exists():
+                    inpatient_services.create_bed(
+                        actor=director, room=room, name=bed_name
+                    )
+                    created_beds += 1
+        self._note(
+            f"Hospitalisation : {created_rooms} chambre(s) et "
+            f"{created_beds} lit(s) créé(s) "
+            f"({Bed.objects.for_center(center).count()} lits au total)."
+        )
+
+        stay = Stay.objects.for_center(center).first()
+        if stay is not None:
+            self._note("Hospitalisation : séjour de démo déjà en place.")
+            return stay
+        practitioner = StaffMembership.objects.for_center(center).get(
+            user=doctor, role=StaffMembership.Role.DOCTOR
+        )
+        bed = Bed.objects.filter(room=rooms["Chambre 1"], name="Lit A").get()
+        stay = inpatient_services.admit_patient(
+            actor=doctor,
+            center=center,
+            practitioner=practitioner,
+            patient=patient,
+            reason="Poussée hypertensive — surveillance 48 h",
+            diagnosis="Hypertension artérielle sévère, sans signe de gravité.",
+            priority=Stay.Priority.URGENT,
+            bed=bed,
+            attending=[practitioner],
+            admitted_at=timezone.now() - timedelta(days=1),
+        )
+        # La feuille de surveillance : deux relevés sur la consultation
+        # PIVOT (ADR 0019 §1 — aucune table dédiée, aucun champ nouveau).
+        for hours_ago, measures in (
+            (20, {"systolic_bp": 178, "diastolic_bp": 102, "heart_rate": 94,
+                  "spo2": 96, "temperature_c": Decimal("37.4")}),
+            (4, {"systolic_bp": 156, "diastolic_bp": 92, "heart_rate": 81,
+                 "spo2": 98, "temperature_c": Decimal("36.9")}),
+        ):
+            medical_services.record_vital_signs(
+                actor=doctor, encounter=stay.encounter,
+                measured_by=practitioner,
+                measured_at=timezone.now() - timedelta(hours=hours_ago),
+                **measures,
+            )
+        self._note(
+            "Hospitalisation : Anfia Saïd admise en Chambre 1 / Lit A "
+            "(urgente) — 2 relevés de surveillance sur la consultation "
+            "pivot, journées non facturées (le staff déclenche)."
+        )
+        return stay
+
+    def _ensure_hrm(self, *, center, director, staff):
+        """S7 (ADR 0020) — deux services, trois fonctions, une semaine de
+        présence, un congé approuvé et une demande en attente.
+
+        Le scénario est choisi pour rendre les décisions démontrables à
+        l'écran :
+
+        - la **médecin** est en congé MALADIE approuvé : sur le planning
+          collectif, ses collègues la voient « absente » et **rien d'autre**
+          (invariant n° 3) ; elle seule, et le directeur, lisent le type ;
+        - la **secrétaire** a une demande EN ATTENTE qui chevauche le congé
+          de la médecin — deux demandes qui se chevauchent sont permises,
+          on tranche à l'approbation (décision 4) ;
+        - le **directeur** a son propre dossier RH : il porte deux
+          casquettes potentielles dans le centre et n'a qu'UNE feuille
+          (décision 1, le piège n° 1 du sprint).
+
+        Passe par les vrais services (audit, gel, machine à états) — jamais
+        un ``objects.create`` de complaisance.
+        """
+        departments = {}
+        created_departments = 0
+        for name in ("Médecine générale", "Maternité"):
+            department = hrm_services.find_department(center, name)
+            if department is None:
+                department = hrm_services.create_department(
+                    actor=director, center=center, name=name
+                )
+                created_departments += 1
+            departments[name] = department
+
+        job_titles = {}
+        created_job_titles = 0
+        for name in (
+            "Médecin généraliste", "Agent d'accueil", "Agent de caisse",
+        ):
+            job_title = hrm_services.find_job_title(center, name)
+            if job_title is None:
+                job_title = hrm_services.create_job_title(
+                    actor=director, center=center, name=name
+                )
+                created_job_titles += 1
+            job_titles[name] = job_title
+        self._note(
+            f"RH : {created_departments} service(s) et "
+            f"{created_job_titles} fonction(s) créés "
+            f"({hrm_services.departments_queryset(center).count()} services, "
+            f"{hrm_services.job_titles_queryset(center).count()} fonctions)."
+        )
+
+        today = timezone.localdate()
+        plan = (
+            (StaffMembership.Role.DIRECTOR, "Médecine générale",
+             "Médecin généraliste", 900),
+            (StaffMembership.Role.DOCTOR, "Médecine générale",
+             "Médecin généraliste", 640),
+            (StaffMembership.Role.SECRETARY, "Maternité",
+             "Agent d'accueil", 300),
+            (StaffMembership.Role.CASHIER, "Médecine générale",
+             "Agent de caisse", 180),
+        )
+        employments = {}
+        created_files = 0
+        for role, department_name, job_title_name, seniority in plan:
+            user = staff[role]
+            employment = (
+                Employment.objects.for_center(center).for_user(user).first()
+            )
+            if employment is None:
+                employment = hrm_services.create_employment(
+                    actor=director, center=center, user=user,
+                    hired_at=today - timedelta(days=seniority),
+                    department=departments[department_name],
+                    job_title=job_titles[job_title_name],
+                )
+                created_files += 1
+            employments[role] = employment
+        self._note(
+            f"RH : {created_files} dossier(s) RH ouvert(s) — un par "
+            "personne, jamais un par casquette (ADR 0020, décision 1)."
+        )
+
+        # Une semaine de feuille de présence, en heure locale des Comores.
+        # Le vendredi est un « repos » : la clinique de démo tourne au
+        # rythme comorien, et cela rend le planning collectif lisible.
+        recorded = 0
+        for offset in range(1, 8):
+            day = today - timedelta(days=offset)
+            for role, employment in employments.items():
+                if AttendanceRecord.objects.filter(
+                    employment=employment, date=day
+                ).exists():
+                    continue
+                if day.weekday() == 4:  # vendredi
+                    status = AttendanceRecord.Status.REST
+                elif (
+                    role == StaffMembership.Role.DOCTOR and day.weekday() == 2
+                ):
+                    status = AttendanceRecord.Status.LEAVE
+                else:
+                    status = AttendanceRecord.Status.PRESENT
+                hrm_services.record_attendance(
+                    actor=director, employment=employment, date=day,
+                    status=status,
+                )
+                recorded += 1
+        self._note(
+            f"RH : {recorded} journée(s) de présence notées sur la semaine "
+            "écoulée (repos le vendredi)."
+        )
+
+        if not Holiday.objects.for_center(center).exists():
+            hrm_services.create_holiday(
+                actor=director, center=center,
+                date=date(today.year, 7, 6),
+                name="Fête de l'Indépendance",
+            )
+            self._note(
+                "RH : 6 juillet déclaré férié POUR CE CENTRE (le calendrier "
+                "appartient au centre — ADR 0020, décision 5)."
+            )
+
+        doctor_file = employments[StaffMembership.Role.DOCTOR]
+        secretary_file = employments[StaffMembership.Role.SECRETARY]
+        approved = LeaveRequest.objects.filter(
+            employment=doctor_file, status=LeaveRequest.Status.APPROVED
+        ).first()
+        if approved is None:
+            approved = hrm_services.request_leave(
+                actor=staff[StaffMembership.Role.DOCTOR],
+                employment=doctor_file,
+                leave_type=LeaveRequest.Type.SICK,
+                start_date=today + timedelta(days=3),
+                end_date=today + timedelta(days=7),
+            )
+            hrm_services.decide_leave(
+                actor=director, leave=approved, approve=True
+            )
+            approved.refresh_from_db()
+            self._note(
+                "RH : congé MALADIE approuvé pour medecin.demo — sur le "
+                "planning collectif, ses collègues la verront « absente » "
+                "et rien d'autre."
+            )
+        pending = LeaveRequest.objects.filter(
+            employment=secretary_file, status=LeaveRequest.Status.REQUESTED
+        ).first()
+        if pending is None:
+            pending = hrm_services.request_leave(
+                actor=staff[StaffMembership.Role.SECRETARY],
+                employment=secretary_file,
+                leave_type=LeaveRequest.Type.ANNUAL,
+                start_date=today + timedelta(days=5),
+                end_date=today + timedelta(days=12),
+            )
+            self._note(
+                "RH : demande de congé annuel EN ATTENTE pour "
+                "secretaire.demo (chevauche celle de la médecin — deux "
+                "demandes peuvent se chevaucher, on tranche à "
+                "l'approbation)."
+            )
+        return {
+            "employments": employments,
+            "approved_leave": approved,
+            "pending_leave": pending,
+        }
 
     def _ensure_erasure_request(self, *, user):
         """S4 lot 3 (ADR 0017 §7) — one PENDING erasure request to demo.
@@ -903,6 +1188,30 @@ class Command(BaseCommand):
                 f"{support_ticket.messages.count()} message(s), ouvert par "
                 "secretaire.demo (pas le directeur)."
             )
+        stay = state.get("stay")
+        if stay is not None:
+            bed = stay.current_bed
+            write("")
+            write(
+                f"Hospitalisation : séjour #{stay.pk} — "
+                f"{stay.get_status_display().lower()}, "
+                f"priorité {stay.get_priority_display().lower()}, "
+                f"lit « {bed} » — "
+                f"{stay.encounter.vital_signs.count()} relevé(s) de "
+                f"surveillance sur la consultation pivot "
+                f"#{stay.encounter_id}."
+            )
+        hrm = state.get("hrm")
+        if hrm:
+            write("")
+            write(
+                f"RH : {len(hrm['employments'])} dossiers "
+                f"(un par personne, pas un par casquette) — "
+                f"congé maladie approuvé du "
+                f"{hrm['approved_leave'].start_date} au "
+                f"{hrm['approved_leave'].end_date} pour medecin.demo, "
+                f"demande annuelle en attente pour secretaire.demo."
+            )
         write("")
         write("État du Pont de Confiance :")
         if payment_request is not None:
@@ -971,6 +1280,28 @@ class Command(BaseCommand):
             "12. Support sur centre gelé : suspendre l'abonnement (étape 9) "
             "puis rouvrir un ticket depuis le centre — il passe. Le gel ne "
             "ferme JAMAIS le canal qui explique le gel.",
+            "13. Hospitalisation : GET "
+            "/api/v1/centers/{id}/inpatient/occupancy/ (tableau du jour — "
+            "le médecin y lit le motif, la secrétaire non) ; transférer la "
+            "patiente en Chambre 2 (POST .../stays/{id}/bed/) puis la faire "
+            "sortir (POST .../stays/{id}/discharge/ — le lit se libère et "
+            "la consultation pivot se clôture). Le caissier facture ensuite "
+            "les journées (POST .../stays/{id}/bill-days/ avec "
+            "{tariff, days, idempotency_key} — rejouer la MÊME clé ne "
+            "facture rien de plus, et le séjour ne s'est ouvert que "
+            "2 journées civiles) et émet la facture comme d'habitude.",
+            "14. Hospitalisation sur centre gelé : suspendre l'abonnement "
+            "puis admettre un patient — ça passe. Un lit est le prérequis "
+            "physique d'une admission : le gel ne l'atteint jamais.",
+            "15. RH : GET /api/v1/centers/{id}/hrm/schedule/ avec le compte "
+            "caissier.demo — la médecin y est « absente », JAMAIS « en "
+            "congé » (ADR 0020, invariant 3). Puis GET .../hrm/me/leaves/ "
+            "avec medecin.demo : elle, et le directeur seul, lisent le "
+            "type « maladie ».",
+            "16. RH et gel : suspendre l'abonnement puis (a) noter une "
+            "présence en tant que directeur → refusé, (b) demander un "
+            "congé en tant que secretaire.demo → ça passe. Le gel ferme "
+            "l'administration du centre, jamais les données d'une personne.",
         ):
             write(f"  {step}")
         write("")

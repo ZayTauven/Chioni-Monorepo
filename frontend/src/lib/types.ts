@@ -173,6 +173,14 @@ export type AuditAction =
   | 'kyc_document.archived'
   | 'tariff.created'
   | 'tariff.updated'
+  /* S6 (ADR 0019 décision 6) — SEULES ces deux actions d'hospitalisation
+     entrent dans le journal du directeur : déclarer une chambre ou un lit est
+     de la CONFIGURATION, au même titre qu'un tarif. `stay.admitted`,
+     `stay.discharged`, `stay.cancelled`, `stay.days_billed`, `bed.assigned` et
+     `bed.released` en sont exclues — elles diraient quel patient occupe quel
+     lit et combien de temps, c'est-à-dire du clinique. */
+  | 'room.created'
+  | 'bed.created'
   | 'invoice.created'
   | 'invoice.issued'
   | 'invoice.cancelled'
@@ -931,6 +939,126 @@ export interface AppointmentWithOverlaps extends Appointment {
   overlaps: number[];
 }
 
+/* ── hospitalisation (S6, ADR 0019 — le séjour héberge, la consultation soigne) ──
+   Deux sérialiseurs par audience côté staff (patron EncounterClinical/Admin) :
+   `reason`, `diagnosis` et `cancel_reason` sont ABSENTS du payload d'un rôle
+   administratif — d'où leur optionalité ici. `billed_days`, lui, est rendu aux
+   deux : c'est la base de facturation, et le caissier ne peut pas facturer ce
+   qu'il ne peut pas compter. Le tuteur ne voit RIEN de ce module. */
+
+export type StayStatus = 'en_cours' | 'sortie' | 'annule';
+
+export type StayPriority = 'normale' | 'urgente' | 'critique';
+
+/** Une chambre du parc — `bed_count` compte les lits déclarés (actifs ou non). */
+export interface Room {
+  id: number;
+  name: string;
+  is_active: boolean;
+  bed_count: number;
+  created_at: string;
+}
+
+export interface Bed {
+  id: number;
+  room: number;
+  room_name: string;
+  name: string;
+  is_active: boolean;
+  created_at: string;
+}
+
+/** Le lit COURANT d'un séjour (assignation ouverte) — `null` = sans lit. */
+export interface StayBedPosition {
+  id: number;
+  name: string;
+  room: number;
+  room_name: string;
+}
+
+/** Un médecin assigné : id de membership + nom déjà résolu par l'API. */
+export interface StayAttending {
+  id: number;
+  name: string;
+}
+
+export interface Stay {
+  id: number;
+  patient: number;
+  patient_name: string;
+  /** Consultation PIVOT : la production clinique et la facturation y pendent. */
+  encounter: number;
+  admitted_at: string;
+  discharged_at: string | null;
+  status: StayStatus;
+  priority: StayPriority;
+  bed: StayBedPosition | null;
+  attending: StayAttending[];
+  /** Dérivé côté backend : nombre d'actes « hospitalisation » du pivot. */
+  billed_days: number;
+  created_at: string;
+  /** Rôles cliniques SEULS (motif d'admission = clinique, sur le pivot). */
+  reason?: string;
+  /** Rôles cliniques SEULS. */
+  diagnosis?: string;
+  /** Rôles cliniques SEULS (précédent `Invoice.cancel_reason`). */
+  cancel_reason?: string;
+}
+
+/** L'historique des lits d'un séjour — append-only, rôles cliniques seuls. */
+export interface BedAssignment {
+  id: number;
+  bed: number;
+  bed_name: string;
+  room_name: string;
+  assigned_at: string;
+  released_at: string | null;
+  created_at: string;
+}
+
+/** L'occupant d'un lit au tableau — `reason` seulement pour les cliniques. */
+export interface OccupancyOccupant {
+  stay: number;
+  patient: number;
+  patient_name: string;
+  since: string;
+  priority: StayPriority;
+  reason?: string;
+}
+
+export interface OccupancyBed {
+  id: number;
+  name: string;
+  is_active: boolean;
+  occupant: OccupancyOccupant | null;
+}
+
+/** Photo INSTANTANÉE de l'occupation (jamais une série) — sert à admettre. */
+export interface OccupancyRoom {
+  id: number;
+  name: string;
+  is_active: boolean;
+  beds: OccupancyBed[];
+  /** Lits actifs sans occupant — déjà calculé par l'API. */
+  free_beds: number;
+}
+
+/**
+ * `GET /patients/me/stays/` — mes hospitalisations, tous centres confondus.
+ * Payload volontairement court : **ni lit, ni priorité, ni motif d'annulation**
+ * (ADR 0019 §5) — ce sont des données de gestion de service, écrites par le
+ * staff pour le staff. L'histoire clinique se lit sur la consultation pivot.
+ */
+export interface PatientStay {
+  id: number;
+  center: number;
+  center_name: string;
+  encounter: number;
+  admitted_at: string;
+  discharged_at: string | null;
+  status: StayStatus;
+}
+
 /* ── caisse (ADR 0015 — BILLING roles) ── */
 
 /** Counter receipt (« G- » series, pure KMF) embedded in a cash payment. */
@@ -1340,4 +1468,201 @@ export interface PlatformOperator {
   is_active: boolean;
   created_at: string;
   updated_at: string;
+}
+
+/* ── ressources humaines (S7, ADR 0020 — `centers/{c}/hrm/…`) ─────────────
+   Trois règles gouvernent ces types, et elles viennent du backend :
+   1. le pivot est `Employment` (un dossier par personne et par centre),
+      JAMAIS `StaffMembership` — un médecin qui est aussi directeur porte
+      deux casquettes et **un seul** dossier ;
+   2. le planning collectif ne dit jamais le régime d'une absence :
+      `PublicAttendanceStatus` n'a pas de valeur `conge`, et il n'en aura
+      jamais — le backend fond `absent` et `conge` avant d'écrire le payload ;
+   3. rien de tout cela ne porte de motif en texte libre ni de rémunération. */
+
+/** Le statut RÉEL d'une journée — feuille du directeur et données de la personne. */
+export type AttendanceStatus = 'present' | 'absent' | 'conge' | 'repos' | 'ferie';
+
+/**
+ * Le statut vu par les COLLÈGUES (`…/hrm/schedule/`). `conge` est absent de
+ * cette union **par construction** : le backend le fond dans `absent` (table
+ * de traduction `serializers.PUBLIC_ATTENDANCE`). Ne jamais l'y rajouter, et
+ * ne jamais recroiser deux appels pour « deviner » le régime — l'invariant
+ * serait contourné par l'écran.
+ */
+export type PublicAttendanceStatus = 'present' | 'absent' | 'repos' | 'ferie';
+
+/** Choix FERMÉS — il n'existe aucun champ « précisez » côté serveur. */
+export type LeaveType =
+  | 'annuel'
+  | 'maladie'
+  | 'maternite'
+  | 'paternite'
+  | 'deuil'
+  | 'sans_solde'
+  | 'autre';
+
+/** `approuve`, `refuse` et `annule` sont TERMINAUX (machine à états fermée). */
+export type LeaveStatus = 'demande' | 'approuve' | 'refuse' | 'annule';
+
+/** Un service du centre. Libellé d'organisation — **aucun droit** n'en découle. */
+export interface HrDepartment {
+  id: number;
+  name: string;
+  is_active: boolean;
+  created_at: string;
+}
+
+/** Une fonction (« Sage-femme cheffe »). **Aucun droit** n'en découle non plus. */
+export interface HrJobTitle {
+  id: number;
+  name: string;
+  is_active: boolean;
+  created_at: string;
+}
+
+/** Un jour férié DU CENTRE (une clinique privée peut travailler un 14 août). */
+export interface Holiday {
+  id: number;
+  date: string;
+  name: string;
+  created_at: string;
+}
+
+/**
+ * Une ligne du planning collectif. Le payload est **exactement** ces quatre
+ * champs : ni nom de service, ni type de congé, ni qui a noté la journée.
+ * `status: null` = rien n'a été noté → « non renseigné », **jamais** « présent ».
+ */
+export interface ScheduleEntry {
+  employment: number;
+  display_name: string;
+  job_title: string | null;
+  status: PublicAttendanceStatus | null;
+}
+
+/** Le dossier RH d'une personne DANS ce centre (directeur seul). */
+export interface Employment {
+  id: number;
+  /** Id de COMPTE (`row.user.id` de `GET /centers/{c}/staff/`), pas de membership. */
+  user: number;
+  user_display_name: string;
+  department: number | null;
+  department_name: string | null;
+  job_title: number | null;
+  job_title_name: string | null;
+  hired_at: string;
+  ended_at: string | null;
+  is_running: boolean;
+  created_at: string;
+}
+
+/**
+ * Une journée de la feuille de présence. **Ni heure d'arrivée, ni heure de
+ * départ, ni position** : le modèle n'a pas ces champs et n'en aura pas sans
+ * arbitrage explicite (ADR 0020 décision 3). Ne pas construire de pointeuse.
+ */
+export interface AttendanceRecord {
+  id: number;
+  employment: number;
+  employment_display_name: string;
+  date: string;
+  status: AttendanceStatus;
+  noted_by: number | null;
+  created_at: string;
+}
+
+/** Une demande de congé, côté directeur. `days` est un AFFICHAGE, pas un solde. */
+export interface LeaveRequest {
+  id: number;
+  employment: number;
+  employment_display_name: string;
+  leave_type: LeaveType;
+  start_date: string;
+  end_date: string;
+  days: number;
+  status: LeaveStatus;
+  decided_by: number | null;
+  decided_at: string | null;
+  has_document: boolean;
+  created_at: string;
+}
+
+/**
+ * Un justificatif — **ni titre, ni type de pièce** : le congé porte déjà son
+ * type fermé, et un intitulé libre (« certificat-oncologie ») rouvrirait par
+ * la fenêtre le motif que l'ADR ferme par la porte. Aucune URL dans le
+ * payload : le téléchargement passe par `apiDownload`.
+ */
+export interface LeaveDocument {
+  id: number;
+  leave: number;
+  archived_at: string | null;
+  created_at: string;
+}
+
+/**
+ * Le dossier de LA PERSONNE (`…/hrm/me/`). Un **404** est un état NORMAL :
+ * personne n'a de dossier avant que le directeur ne l'ouvre.
+ */
+export interface MyEmployment {
+  id: number;
+  center: number;
+  center_name: string;
+  department_name: string | null;
+  job_title_name: string | null;
+  hired_at: string;
+  ended_at: string | null;
+  is_running: boolean;
+}
+
+/** Ses journées à elle — statut RÉEL (`conge` compris), sans `noted_by`. */
+export interface MyAttendanceRecord {
+  id: number;
+  date: string;
+  status: AttendanceStatus;
+}
+
+/** Ses congés à elle — sans `decided_by` (le décideur n'est pas nommé). */
+export interface MyLeaveRequest {
+  id: number;
+  leave_type: LeaveType;
+  start_date: string;
+  end_date: string;
+  days: number;
+  status: LeaveStatus;
+  decided_at: string | null;
+  has_document: boolean;
+  created_at: string;
+}
+
+/** Le décompte d'une journée (ou d'une personne) — série zéro-remplie. */
+export interface AttendanceTally {
+  present: number;
+  absent: number;
+  conge: number;
+  repos: number;
+  ferie: number;
+  total: number;
+}
+
+export interface AttendanceStatsDay extends AttendanceTally {
+  date: string;
+}
+
+export interface AttendanceStatsEmployment extends AttendanceTally {
+  employment: number;
+  display_name: string;
+}
+
+/**
+ * Endpoint DÉDIÉ (`…/hrm/stats/attendance/`) — il n'y a **aucune** donnée RH
+ * dans `stats/activity` ni `stats/finances`, ne pas y chercher.
+ */
+export interface AttendanceStats {
+  from: string;
+  to: string;
+  days: AttendanceStatsDay[];
+  totals: AttendanceTally;
+  by_employment: AttendanceStatsEmployment[];
 }

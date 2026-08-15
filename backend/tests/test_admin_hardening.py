@@ -63,6 +63,42 @@ SENSITIVE_MODELS = {
     "medical.PatientMedicalFile",
     "medical.VitalSigns",
     "medical.PatientDocument",
+    # Hospitalisation (S6, ADR 0019) — un séjour porte une machine à états
+    # dont les états terminaux sont définitifs, une consultation pivot
+    # qu'une sortie clôture, un motif d'annulation obligatoire et une
+    # garde « aucune journée facturée ». Une occupation de lit porte LA
+    # contrainte d'exclusivité du module : un formulaire qui rouvrirait un
+    # ``released_at`` réécrirait l'histoire d'un lit. Chambres et lits
+    # naissent audités (`room.created` / `bed.created`, lus par le
+    # directeur) — un lit fait à la main existerait sans trace.
+    "inpatient.Room",
+    "inpatient.Bed",
+    "inpatient.Stay",
+    "inpatient.BedAssignment",
+    # …et le lot de facturation des journées (correctif PO du 15/08/2026) :
+    # il porte LA clé d'idempotence de la facturation d'un séjour et le
+    # lien vers les actes qu'elle a posés. Un formulaire d'admin serait la
+    # seule porte capable de rejouer une clé déjà servie, de délier un lot
+    # de ses actes ou de contourner le plafond de journées — c'est-à-dire
+    # d'annuler à lui seul le correctif.
+    "inpatient.StayDayBilling",
+    # RH (S7, ADR 0020) — le premier module dont l'objet EST un salarié.
+    # Un formulaire d'admin y contournerait la machine à états des congés
+    # (les trois issues sont terminales), la garde de chevauchement qui se
+    # joue sous le verrou de l'emploi, l'unicité (user, center) du dossier,
+    # l'archivage définitif d'un justificatif et surtout le pipeline
+    # d'upload durci (ADR 0014) — un fichier posé à la main échapperait à
+    # la vérification de format, au strip EXIF/GPS et au nom uuid.
+    # Services et fonctions y sont aussi : ils naissent audités
+    # (`hrm_department.created` / `hrm_job_title.created`, lus par le
+    # directeur), et un libellé fait à la main existerait sans trace.
+    "hrm.Department",
+    "hrm.JobTitle",
+    "hrm.Employment",
+    "hrm.Holiday",
+    "hrm.AttendanceRecord",
+    "hrm.LeaveRequest",
+    "hrm.LeaveDocument",
     # Patient identity and guardianship (ADR 0008 R-API-2, OTP-1)
     "patients.PatientProfile",
     "patients.GuardianProfile",
@@ -270,6 +306,11 @@ class TestTheRealAdminRefusesASuperuser:
             "/admin/centers/staffmembership/add/",
             "/admin/support/supportticket/add/",
             "/admin/support/supportmessage/add/",
+            # S7 — la donnée la plus sensible du module RH : le type d'un
+            # congé (maladie, maternité, deuil) est de la donnée de santé.
+            "/admin/hrm/leaverequest/add/",
+            "/admin/hrm/attendancerecord/add/",
+            "/admin/hrm/leavedocument/add/",
         ],
     )
     def test_add_views_are_403(self, admin_client, path):

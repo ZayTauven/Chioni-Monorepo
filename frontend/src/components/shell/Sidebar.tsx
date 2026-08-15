@@ -52,6 +52,19 @@ const NAV_ROLE_GATES: Record<string, StaffRole[]> = {
   // « Support » n'est volontairement PAS gaté : l'ouverture d'un ticket est
   // ouverte à tout staff actif — c'est la secrétaire qui rencontre le bug.
   'centre.abonnement': DIRECTOR_ONLY,
+  // S7 (ADR 0020 décision 6) — la feuille de présence, les congés, les
+  // dossiers et les statistiques RH sont DIRECTEUR SEUL : il n'y a pas de
+  // délégué RH en S7, et les six autres rôles reçoivent 403. L'entrée n'a
+  // donc aucune raison de leur apparaître.
+  //
+  // « Équipe du jour » (`centre.equipe`) n'est volontairement PAS gaté, et
+  // c'est une entrée SÉPARÉE plutôt qu'un onglet du registre : le planning
+  // collectif est lisible de tout membre actif — savoir qui est de garde est
+  // un besoin de service. En faire un onglet d'un nœud DIRECTOR_ONLY l'aurait
+  // fait disparaître de la sidebar d'une infirmière ; l'inverse (un nœud
+  // ouvert dont trois onglets sur quatre répondent 403) aurait été pire
+  // encore. Deux portes, deux audiences, deux entrées.
+  'centre.registre': DIRECTOR_ONLY,
 };
 
 /** Shared with the command palette — one source of truth for nav visibility.

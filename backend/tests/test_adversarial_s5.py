@@ -414,11 +414,42 @@ class TestTheFreezeIsStructurallyBoundedToAdministration:
     """
 
     #: Les seuls modules autorisés à importer la garde (ADR 0018 décision 2).
-    ALLOWED_IMPORTERS = {"centers/services.py", "centers/stats_views.py"}
+    #:
+    #: **Première extension de cette liste depuis sa création (S7, ADR 0020
+    #: décision 7), et elle est CONSCIENTE.** ``hrm/services.py`` la
+    #: rejoint parce que **le RH est de la GESTION, pas du SOIN** : écrire
+    #: un service, une fonction, un jour férié, une feuille de présence ou
+    #: une DÉCISION de congé est de l'administratif, exactement au même
+    #: titre que le personnel et les tarifs, qui sont gelés depuis S5.
+    #:
+    #: Ce que l'extension ne dit PAS, et que ``test_hrm.py`` verrouille de
+    #: son côté : la lecture reste ouverte (y compris celle de ses propres
+    #: données — arbitrage PO n° 3), et demander ou retirer un congé n'est
+    #: pas gelé (c'est l'acte de la personne sur son propre dossier, même
+    #: lecture que ``deactivate_staff_member``).
+    #:
+    #: La sonde garde toute sa valeur : un futur module clinique qui
+    #: tenterait la même chose devra à nouveau se justifier ici, dans un
+    #: diff qu'un humain relit.
+    ALLOWED_IMPORTERS = {
+        "centers/services.py", "centers/stats_views.py", "hrm/services.py",
+    }
     #: Les seules fonctions de ``centers.services`` qui l'appellent.
     ALLOWED_CALLERS = {
         "add_staff_member", "update_staff_member", "reactivate_staff_member",
         "create_tariff", "update_tariff",
+    }
+    #: …et les seules de ``hrm.services`` (S7). La liste vit AUSSI dans le
+    #: module lui-même (``hrm.services.FROZEN_WRITES``) : les deux doivent
+    #: coïncider, et ``test_hrm.py`` le vérifie — une garde posée sur une
+    #: écriture nouvelle sans décision écrite échoue des deux côtés.
+    ALLOWED_HRM_CALLERS = {
+        "create_department", "update_department",
+        "create_job_title", "update_job_title",
+        "create_holiday", "delete_holiday",
+        "create_employment", "update_employment",
+        "record_attendance",
+        "decide_leave",
     }
 
     @staticmethod
@@ -471,6 +502,43 @@ class TestTheFreezeIsStructurallyBoundedToAdministration:
         assert "deactivate_staff_member" not in callers
         assert "add_center_director" not in callers
         assert "_create_staff_membership" not in callers
+
+    def test_the_callers_inside_hrm_services_are_a_closed_list(self):
+        """Le miroir S7 de la sonde ci-dessus, sur le module qui vient
+        d'entrer dans ``ALLOWED_IMPORTERS``.
+
+        Sans elle, l'extension consciente de la liste des importeurs
+        deviendrait un chèque en blanc : n'importe quelle écriture RH
+        future hériterait du gel sans que personne ne l'ait décidé — et
+        c'est ainsi qu'un jour la demande de congé d'un salarié serait
+        refusée parce que son employeur n'a pas payé sa facture Chioni.
+        """
+        import ast
+
+        source = (self._apps_root() / "hrm" / "services.py").read_text(
+            encoding="utf-8"
+        )
+        callers = {
+            node.name
+            for node in ast.walk(ast.parse(source))
+            if isinstance(node, ast.FunctionDef)
+            and any(
+                isinstance(inner, ast.Call)
+                and isinstance(inner.func, ast.Name)
+                and inner.func.id == "require_center_can_administer"
+                for inner in ast.walk(node)
+            )
+        }
+        assert callers == self.ALLOWED_HRM_CALLERS
+        # Les portes explicitement HORS gel (ADR 0020 décision 7) : les
+        # actes de LA PERSONNE sur son propre dossier.
+        assert "request_leave" not in callers
+        assert "cancel_leave" not in callers
+        assert "upload_leave_document" not in callers
+        assert "archive_leave_document" not in callers
+        # …et aucune lecture agrégée.
+        assert "schedule_rows" not in callers
+        assert "attendance_summary" not in callers
 
 
 # ---------------------------------------------------------------------------

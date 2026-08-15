@@ -14,7 +14,8 @@ Three rules govern this module, and each is tested:
    remembers to add it; the invariant must fail closed.
 2. **Nothing clinical, no consent.** ``encounter.*``, ``prescription.*``,
    ``health_record_entry.*``, ``vital_signs.*``, ``patient_document.*``,
-   ``patient_medical_file.*`` and ``consent.*`` are excluded ON PURPOSE
+   ``patient_medical_file.*``, ``consent.*`` — and, since S6, ``stay.*``
+   plus ``bed.assigned``/``bed.released`` — are excluded ON PURPOSE
    (they DO carry a center since S4 — the whitelist is what protects
    them). A non-caring director has no business knowing which patient
    received which care, not even through metadata: the S3 clinical
@@ -64,6 +65,36 @@ DIRECTOR_JOURNAL_ACTIONS = frozenset(
         # The price grid — money-adjacent configuration.
         AuditAction.TARIFF_CREATED,
         AuditAction.TARIFF_UPDATED,
+        # …et la structure physique d'hébergement (S6, ADR 0019 décision 6).
+        # Ajout CONSCIENT et strictement limité à la CONFIGURATION : déclarer
+        # une chambre ou un lit est de l'exploitation, au même titre qu'un
+        # tarif — le directeur répond du parc de son établissement. Les
+        # actions de SÉJOUR et d'occupation (``stay.*``, ``bed.assigned``,
+        # ``bed.released``) disent quel patient occupe quel lit et combien de
+        # temps : c'est clinique, elles restent hors liste (voir
+        # ``DIRECTOR_JOURNAL_EXCLUDED``).
+        AuditAction.ROOM_CREATED,
+        AuditAction.BED_CREATED,
+        # …et l'ORGANISATION du travail (S7, ADR 0020 invariant 4). Même
+        # ajout conscient, strictement limité à la CONFIGURATION : déclarer
+        # un service, une fonction ou un jour férié est de l'exploitation,
+        # au même titre qu'un tarif. Les LIBELLÉS n'y sont jamais (les
+        # payloads ne portent que des ids) et tout ce qui décrit une
+        # PERSONNE — dossier RH, feuille de présence, justificatifs —
+        # reste hors liste (voir ``DIRECTOR_JOURNAL_EXCLUDED``).
+        AuditAction.HRM_DEPARTMENT_CREATED,
+        AuditAction.HRM_DEPARTMENT_UPDATED,
+        AuditAction.HRM_JOB_TITLE_CREATED,
+        AuditAction.HRM_JOB_TITLE_UPDATED,
+        AuditAction.HOLIDAY_CREATED,
+        AuditAction.HOLIDAY_DELETED,
+        # Les congés : demande et décision. C'est l'exploitation dont le
+        # directeur répond (il décide), et le payload ne porte **jamais le
+        # type** — seulement des ids, un nombre de journées et un code de
+        # statut (ADR 0020 invariant 4 : un motif de congé est de la même
+        # classe qu'un diagnostic).
+        AuditAction.LEAVE_REQUESTED,
+        AuditAction.LEAVE_DECIDED,
         # The SaaS subscription of THIS center (S5, ADR 0018 invariant 6).
         # A conscious addition: opening a contract, changing an offer or
         # freezing the administration are exploitation events of his own
@@ -140,6 +171,49 @@ DIRECTOR_JOURNAL_EXCLUDED = frozenset(
         AuditAction.PATIENT_DOCUMENT_CREATED,
         AuditAction.PATIENT_DOCUMENT_ARCHIVED,
         AuditAction.PATIENT_MEDICAL_FILE_UPDATED,
+        # Hospitalisation (S6, ADR 0019 décision 6) — l'inverse exact de
+        # ``room.created``/``bed.created``, qui sont dans la liste blanche :
+        # une admission, une sortie, une annulation, une assignation de lit
+        # et des journées facturées disent QUEL PATIENT occupe QUEL LIT et
+        # COMBIEN DE TEMPS. C'est la donnée la plus lourde du carnet (« a-t-il
+        # été hospitalisé, et combien de jours ? ») : un directeur non
+        # soignant n'a pas à la lire, fût-ce en métadonnée.
+        AuditAction.STAY_ADMITTED,
+        AuditAction.STAY_DISCHARGED,
+        AuditAction.STAY_CANCELLED,
+        AuditAction.STAY_DAYS_BILLED,
+        AuditAction.BED_ASSIGNED,
+        AuditAction.BED_RELEASED,
+        # RH (S7, ADR 0020 invariant 4) — le miroir exact de
+        # ``hrm_department.*`` / ``holiday.*``, qui sont dans la liste
+        # blanche : ces cinq-là décrivent une PERSONNE, pas une
+        # organisation.
+        #
+        # ``attendance.recorded`` est nommément exclue par l'ADR : la
+        # volumétrie est quotidienne, et un journal daté « qui était absent
+        # quel jour » serait un instrument de surveillance individuelle —
+        # exactement ce que l'arbitrage PO n° 2 refuse d'inventer. Le
+        # directeur lit la feuille elle-même (`hrm/attendance/`), qui est
+        # son outil ; il n'a pas besoin d'un second registre horodaté des
+        # corrections.
+        #
+        # ``employment.*`` et ``leave.cancelled`` ne sont pas dans
+        # l'énumération de l'ADR, et la liste blanche est fail-closed : ils
+        # restent dehors. Précédent ``patient_profile.created`` — le
+        # registre lui-même est lisible par sa propre route, une trace
+        # datée « qui a ouvert le dossier de qui » est un objet différent
+        # et plus intrusif. Réouvrable sur demande.
+        #
+        # Les deux actions de justificatif sont les plus sensibles du
+        # module : un journal disant « telle personne a déposé une pièce ce
+        # jour-là » est un signal sur sa santé, alors même que le type du
+        # congé n'y figure pas.
+        AuditAction.ATTENDANCE_RECORDED,
+        AuditAction.EMPLOYMENT_CREATED,
+        AuditAction.EMPLOYMENT_UPDATED,
+        AuditAction.LEAVE_CANCELLED,
+        AuditAction.LEAVE_DOCUMENT_UPLOADED,
+        AuditAction.LEAVE_DOCUMENT_ARCHIVED,
         # Consents — who opened what to whom is between the patient and
         # their guardian; the desk records them, the director does not
         # supervise them.

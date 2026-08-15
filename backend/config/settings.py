@@ -50,6 +50,18 @@ INSTALLED_APPS = [
     "apps.patients",
     "apps.medical",
     "apps.scheduling",
+    # S6 (ADR 0019) — hospitalisation : chambres, lits, séjours. App à part
+    # de `medical` : le séjour porte l'HÉBERGEMENT (dates, lit, priorité,
+    # intervenants multiples) là où l'Encounter porte le SOIN — et le gel
+    # commercial ne l'atteint jamais (décision 6).
+    "apps.inpatient",
+    # S7 (ADR 0020) — RH : services, fonctions, présence, congés. App à part
+    # de `centers` : `StaffMembership` est une CASQUETTE (unique par user ×
+    # centre × rôle), le dossier RH est LA PERSONNE au travail (unique par
+    # user × centre) — s'ancrer sur la première compterait deux fois un
+    # médecin qui est aussi directeur. Et une fonction n'est JAMAIS un droit
+    # (décision 2) : aucun module hors de cette app n'importe ses libellés.
+    "apps.hrm",
     "apps.trustbridge",
     # S5 (ADR 0018) — abonnement SaaS Chioni → centre. REGISTRE SÉPARÉ :
     # cette app n'écrit jamais dans le ledger des soins (ADR 0003).

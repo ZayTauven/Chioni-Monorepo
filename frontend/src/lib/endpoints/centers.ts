@@ -12,6 +12,8 @@ import type {
   AppointmentWithOverlaps,
   AuditAction,
   AuditLogPage,
+  Bed,
+  BedAssignment,
   CashJournal,
   CashMethod,
   CashPayment,
@@ -31,6 +33,7 @@ import type {
   KycDocType,
   KycDocument,
   MobileMoneyOperator,
+  OccupancyRoom,
   Paginated,
   Patient,
   PatientDocumentStaff,
@@ -44,9 +47,13 @@ import type {
   RecordEntry,
   RecordEntryType,
   Relationship,
+  Room,
   Sex,
   StaffMember,
   StaffRole,
+  Stay,
+  StayPriority,
+  StayStatus,
   SubscriptionInvoiceStatus,
   SupportAttachment,
   SupportCategory,
@@ -705,6 +712,190 @@ export function noShowAppointment(centerId: number, id: number): Promise<Appoint
 /** → `honore` (requires `arrive`). */
 export function honorAppointment(centerId: number, id: number): Promise<Appointment> {
   return appointmentAction(centerId, id, 'honor');
+}
+
+/* ── hospitalisation (S6, ADR 0019) ─────────────────────────────────────────
+   Le séjour héberge, la consultation soigne : chaque séjour porte un
+   `encounter` PIVOT ouvert du premier au dernier jour — les signes vitaux, les
+   ordonnances et le carnet passent par les routes `encounters/` existantes, il
+   n'y a PAS de route de surveillance dédiée (et c'est voulu).
+
+   Permissions (ADR 0019 addendum §11) : lecture = tout staff actif avec un
+   payload segmenté par rôle ; admission / sortie / annulation / lit / médecins
+   assignés = rôles cliniques ; facturation des journées = rôles BILLING ;
+   déclaration des chambres et des lits = directeur seul. Le gel commercial ne
+   s'applique JAMAIS ici : un lit est le prérequis physique d'une admission. */
+
+/** Les chambres du centre — tableau NU (non paginé). */
+export function listRooms(centerId: number): Promise<Room[]> {
+  return apiFetch(`/centers/${centerId}/inpatient/rooms/`);
+}
+
+/** Directeur seul — la structure physique de l'établissement. */
+export function createRoom(centerId: number, name: string): Promise<Room> {
+  return apiFetch(`/centers/${centerId}/inpatient/rooms/`, {
+    method: 'POST',
+    body: { name },
+  });
+}
+
+/** Les lits d'UNE chambre. Chambre d'un autre centre → 404 (jamais un 400). */
+export function listRoomBeds(centerId: number, roomId: number): Promise<Bed[]> {
+  return apiFetch(`/centers/${centerId}/inpatient/rooms/${roomId}/beds/`);
+}
+
+/** Directeur seul. */
+export function createBed(centerId: number, roomId: number, name: string): Promise<Bed> {
+  return apiFetch(`/centers/${centerId}/inpatient/rooms/${roomId}/beds/`, {
+    method: 'POST',
+    body: { name },
+  });
+}
+
+/**
+ * La liste plate des lits. `free: true` ne garde que les lits assignables
+ * MAINTENANT (lit actif, chambre active, aucune assignation ouverte) : c'est
+ * le sélecteur du formulaire d'admission et de la modale de transfert.
+ */
+export function listBeds(centerId: number, { free }: { free?: boolean } = {}): Promise<Bed[]> {
+  const query = free === undefined ? '' : `?free=${free ? 'true' : 'false'}`;
+  return apiFetch(`/centers/${centerId}/inpatient/beds/${query}`);
+}
+
+/** Photo INSTANTANÉE de l'occupation — tout staff. Jamais dans `stats/`. */
+export function getOccupancy(centerId: number): Promise<OccupancyRoom[]> {
+  return apiFetch(`/centers/${centerId}/inpatient/occupancy/`);
+}
+
+export interface StayFilters {
+  page?: number;
+  status?: StayStatus;
+  /** Sans `status` ni `all`, l'API rend les séjours EN COURS seuls. */
+  all?: boolean;
+  patient?: number;
+}
+
+export function listStays(
+  centerId: number,
+  { page = 1, status, all, patient }: StayFilters = {},
+): Promise<Paginated<Stay>> {
+  const query = new URLSearchParams({ page: String(page) });
+  if (status) query.set('status', status);
+  else if (all) query.set('all', 'true');
+  if (patient !== undefined) query.set('patient', String(patient));
+  return apiFetch(`/centers/${centerId}/inpatient/stays/?${query.toString()}`);
+}
+
+export function getStay(centerId: number, stayId: number): Promise<Stay> {
+  return apiFetch(`/centers/${centerId}/inpatient/stays/${stayId}/`);
+}
+
+export interface AdmissionPayload {
+  patient: number;
+  /** Motif d'admission — CLINIQUE : il atterrit sur la consultation pivot. */
+  reason: string;
+  diagnosis?: string;
+  priority?: StayPriority;
+  /** FACULTATIF : un patient peut être admis sans lit (attente, couloir). */
+  bed?: number | null;
+  /** Ids de memberships cliniques actifs de CE centre. */
+  attending?: number[];
+  admitted_at?: string;
+}
+
+/** Rôles cliniques : l'admission ouvre la consultation pivot, en une transaction. */
+export function admitPatient(centerId: number, payload: AdmissionPayload): Promise<Stay> {
+  return apiFetch(`/centers/${centerId}/inpatient/stays/`, {
+    method: 'POST',
+    body: payload,
+  });
+}
+
+/** Assigner OU transférer : l'assignation courante est libérée, la nouvelle
+ *  empilée. Un lit déjà occupé est refusé par la BASE (contrainte partielle). */
+export function assignStayBed(centerId: number, stayId: number, bed: number): Promise<Stay> {
+  return apiFetch(`/centers/${centerId}/inpatient/stays/${stayId}/bed/`, {
+    method: 'POST',
+    body: { bed },
+  });
+}
+
+/** Libérer le lit SANS en donner un autre — « le patient attend dans le couloir »
+ *  est un état que le produit doit savoir dire. */
+export function releaseStayBed(centerId: number, stayId: number): Promise<Stay> {
+  return apiFetch(`/centers/${centerId}/inpatient/stays/${stayId}/bed/`, {
+    method: 'DELETE',
+  });
+}
+
+/** L'historique des lits — rôles CLINIQUES seuls, tableau nu. */
+export function listStayBedAssignments(
+  centerId: number,
+  stayId: number,
+): Promise<BedAssignment[]> {
+  return apiFetch(`/centers/${centerId}/inpatient/stays/${stayId}/bed-assignments/`);
+}
+
+/** PUT : l'ensemble COMPLET des médecins assignés (une liste se remplace). */
+export function setStayAttending(
+  centerId: number,
+  stayId: number,
+  attending: number[],
+): Promise<Stay> {
+  return apiFetch(`/centers/${centerId}/inpatient/stays/${stayId}/attending/`, {
+    method: 'PUT',
+    body: { attending },
+  });
+}
+
+/** Sortie : libère le lit ET clôture la consultation pivot, en une transaction. */
+export function dischargeStay(
+  centerId: number,
+  stayId: number,
+  dischargedAt?: string,
+): Promise<Stay> {
+  return apiFetch(`/centers/${centerId}/inpatient/stays/${stayId}/discharge/`, {
+    method: 'POST',
+    body: dischargedAt ? { discharged_at: dischargedAt } : {},
+  });
+}
+
+/** Admission saisie PAR ERREUR — motif obligatoire, refusée dès qu'un acte
+ *  pend au pivot (« aucune journée facturée »). Ce n'est pas une sortie. */
+export function cancelStay(centerId: number, stayId: number, reason: string): Promise<Stay> {
+  return apiFetch(`/centers/${centerId}/inpatient/stays/${stayId}/cancel/`, {
+    method: 'POST',
+    body: { reason },
+  });
+}
+
+/**
+ * Rôles BILLING — pose UN acte par journée sur la consultation pivot.
+ *
+ * **`idempotency_key` est OBLIGATOIRE** (correctif PO du 15/08/2026, revue
+ * guardian S6) : poser des journées produit des actes qu'une facture réclamera
+ * à un vrai patient, donc une réponse perdue doit être REJOUABLE plutôt que
+ * doublante. Contrat client, identique à celui de la caisse (ADR 0015) :
+ * générer la clé à l'ouverture du formulaire, la CONSERVER tant que la requête
+ * a échoué (timeout, réseau coupé, 5xx) pour rejouer le MÊME corps, et n'en
+ * régénérer une qu'après un succès. Jamais dérivée du contenu du formulaire.
+ *
+ * Rejeu à l'identique → 200 avec le même état. Même clé, autres paramètres →
+ * 400 explicite (bug client : régénérer, ne pas boucler).
+ *
+ * Le backend borne aussi le CUMUL : jamais plus de journées que le séjour n'en
+ * a duré (journées civiles entamées, heure des Comores). Le 400 énonce le
+ * plafond, les dates et le déjà-facturé — l'afficher tel quel.
+ */
+export function billStayDays(
+  centerId: number,
+  stayId: number,
+  payload: { tariff: number; days: number; idempotency_key: string },
+): Promise<Stay> {
+  return apiFetch(`/centers/${centerId}/inpatient/stays/${stayId}/bill-days/`, {
+    method: 'POST',
+    body: payload,
+  });
 }
 
 /* ── invoices ── */

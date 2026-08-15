@@ -61,6 +61,7 @@ import {
   StatusBadge,
   TableSkeleton,
   hasRole,
+  newIdempotencyKey,
   toApiError,
   useAsync,
 } from './shared';
@@ -264,7 +265,7 @@ function CashInForm({
    * en cas d'échec (rejouer la même tentative après un timeout renvoie le
    * MÊME reçu, jamais une seconde tranche), régénérée après chaque succès.
    */
-  const [idempotencyKey, setIdempotencyKey] = useState(() => crypto.randomUUID());
+  const [idempotencyKey, setIdempotencyKey] = useState(() => newIdempotencyKey());
 
   // Une tranche vient d'être encaissée ailleurs → recaler le montant proposé.
   useEffect(() => {
@@ -284,7 +285,7 @@ function CashInForm({
         ...(reference.trim() ? { reference: reference.trim() } : {}),
       });
       setReference('');
-      setIdempotencyKey(crypto.randomUUID());
+      setIdempotencyKey(newIdempotencyKey());
       onCollected(fresh);
     } catch (err) {
       setError(toApiError(err));

@@ -62,6 +62,12 @@
   font-weight: 600;
 }
 
+/* Un numéro de jour NON cliquable (le jour porte déjà un férié) garde sa
+   typographie, mais perd les signes de l'interaction — sans quoi il promet un
+   geste qui n'existe pas. Revue UX care S7. */
+span.ax-cal-cell__n { cursor: default; }
+span.ax-cal-cell__n:not(.ax-cal-cell__n--today):hover { background: transparent; }
+
 /* Quick-add: revealed on hover / keyboard focus ; always visible on touch. */
 .ax-cal-cell__add { opacity: 0; }
 .ax-cal-cell:hover .ax-cal-cell__add,
@@ -115,3 +121,190 @@
 }
 
 @media (max-width: 768px) { .ax-cal-cell { min-height: 74px; } }
+
+/* ── Hospitalisation : plan des lits (S6, ADR 0019) ──────────────────────────
+   Une grille `auto-fit` de cartes de lit, pas un board déplaçable : l'écran
+   est LU par tout le staff alors que l'attribution d'un lit est un geste
+   CLINIQUE — offrir une surface de glisser-déposer à quatre rôles sur sept qui
+   ne peuvent pas écrire enseignerait un mauvais réflexe. Le refus « lit déjà
+   occupé » vient en plus de la base : un drop qui échoue passerait pour un bug
+   là où c'est une règle. Le geste est donc un bouton → modale, natif au
+   clavier comme au lecteur d'écran, et utilisable au pouce sur un Android
+   d'entrée de gamme (le glisser-déposer sur une liste qui défile ne l'est pas).
+   `--ax-ribbon` du template couvrirait le coin ; la priorité est ici une
+   pastille lisible, qui reste dans le flux du texte. */
+.ax-beds {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(216px, 1fr));
+  gap: var(--ax-space-3);
+}
+
+.ax-bed {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 108px;
+  padding: var(--ax-space-3);
+  border: 1px solid var(--ax-border);
+  border-radius: var(--ax-radius-md);
+  background: var(--ax-surface-subtle);
+}
+
+/* Libre : la couleur dit « disponible », le texte le dit aussi.
+   Le lit libre est ce que l'œil CHERCHE sur cet écran — c'est la place où
+   installer le patient qui est devant le comptoir. En pointillé transparent il
+   était le moins visible de la grille : on lisait d'abord les occupés, c'est-à-
+   dire l'inverse de la question posée. Il porte donc maintenant un fond et une
+   bordure de « disponible », sans jamais rendre les lits occupés alarmants (un
+   service plein n'est pas une faute) et sans compter sur la couleur seule : le
+   mot « Libre » reste écrit. */
+.ax-bed--free {
+  border-color: color-mix(in oklab, var(--ax-success-500) 45%, var(--ax-border));
+  background: color-mix(in oklab, var(--ax-success-50) 60%, transparent);
+}
+
+.ax-bed--free .ax-bed__free-label {
+  color: var(--ax-success-700);
+  font-weight: var(--ax-weight-semibold);
+}
+
+.ax-bed--occupied { border-color: color-mix(in oklab, var(--ax-accent) 40%, var(--ax-border)); }
+.ax-bed--urgent { border-color: color-mix(in oklab, var(--ax-warning-500) 55%, var(--ax-border)); }
+.ax-bed--critical { border-color: color-mix(in oklab, var(--ax-danger-500) 55%, var(--ax-border)); }
+
+/* Hors service : ni libre ni occupé — l'ambiguïté serait une erreur d'admission. */
+.ax-bed--inactive {
+  border-style: dotted;
+  background: transparent;
+  opacity: .72;
+}
+
+.ax-bed__name {
+  font-family: var(--ax-font-mono);
+  font-size: var(--ax-text-xs);
+  font-weight: var(--ax-weight-semibold);
+  color: var(--ax-text-muted);
+  letter-spacing: .04em;
+}
+
+/* Le nom de l'occupant est un LIEN : il lui faut une surface au pouce, pas
+   seulement la hauteur de ses lettres (le plan des lits se consulte aussi sur
+   le téléphone d'une infirmière, la nuit). */
+.ax-bed__patient {
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  font-weight: var(--ax-weight-medium);
+  color: var(--ax-text-strong);
+  font-size: var(--ax-text-sm);
+  line-height: 1.35;
+}
+
+.ax-bed__meta {
+  font-size: var(--ax-text-xs);
+  color: var(--ax-text-muted);
+}
+
+.ax-bed__free-label {
+  font-size: var(--ax-text-sm);
+  color: var(--ax-text-muted);
+  margin-block: auto;
+}
+
+/* Récapitulatif de la facturation des journées : libellé à gauche, nombre à
+   droite, alignés. On réclame de l'argent à un patient — le caissier doit
+   pouvoir lire « ce séjour ouvre 5, 2 sont posées, il en reste 3 » sans
+   décoder une phrase à points médians. */
+.ax-billdays-recap {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 2px var(--ax-space-3);
+  margin: 0;
+  padding-block-start: var(--ax-space-2);
+  border-top: 1px solid var(--ax-border);
+  font-size: var(--ax-text-xs);
+  color: var(--ax-text-muted);
+}
+
+.ax-billdays-recap dt { margin: 0; }
+
+.ax-billdays-recap dd {
+  margin: 0;
+  text-align: end;
+  color: var(--ax-text);
+  font-weight: var(--ax-weight-medium);
+}
+
+.ax-billdays-recap__strong {
+  color: var(--ax-text-strong);
+  font-weight: var(--ax-weight-semibold);
+}
+
+@media (max-width: 576px) {
+  .ax-beds { grid-template-columns: 1fr; }
+}
+
+/* ── Registre du personnel : la feuille de présence (S7, ADR 0020) ───────────
+   Une grille personnes × jours. Le tableau dense vient de
+   `vireo template/src/screens/tables/DataTables.tsx` ; ce qu'on ajoute est la
+   COLONNE GELÉE du nom : sept colonnes de jours débordent d'un écran de
+   centre, et un défilement horizontal qui emporte le nom de la personne
+   transforme la saisie en jeu de mémoire — on note alors la journée de
+   quelqu'un d'autre. Le fond est opaque (`--ax-surface-solid`) parce qu'une
+   colonne collante translucide laisse voir les cellules qui passent dessous.
+
+   Aucun style d'« alerte » n'existe ici : ni cellule rouge, ni ligne
+   surlignée. Une absence n'est pas un incident (voir ATTENDANCE_TONES). */
+
+.ax-sheet__name {
+  position: sticky;
+  inset-inline-start: 0;
+  z-index: 2;
+  min-width: 200px;
+  max-width: 260px;
+  background: var(--ax-surface-solid);
+  border-inline-end: 1px solid var(--ax-border);
+}
+
+/* L'en-tête gelé cumule les deux axes : il reste en tête ET à gauche. */
+.ax-table__head .ax-sheet__name {
+  z-index: 3;
+  background: var(--ax-surface-subtle);
+}
+
+/* La ligne survolée repeint sa cellule collante avec elle, sinon le nom
+   « décroche » visuellement de sa propre ligne. */
+.ax-table--hover .ax-table__row:hover .ax-sheet__name {
+  background: var(--ax-fill-hover);
+}
+
+/* Le sélecteur d'une journée : assez large pour lire « Jour férié », assez
+   haut pour le pouce (cible ≥ 40 px, cohérent avec le chrome lite). */
+.ax-sheet .ax-select--sm {
+  width: 100%;
+  min-width: 104px;
+  min-height: 38px;
+}
+
+/* Au doigt, la cible passe à 44 px comme partout ailleurs (bloc `pointer:
+   coarse` de components.css) : la feuille est la saisie la plus répétitive du
+   produit, et 38 px sur un Android d'entrée de gamme font manquer une case sur
+   dix. À la souris la densité du poste de travail ne bouge pas. */
+@media (pointer: coarse) {
+  .ax-sheet .ax-select--sm { min-height: 44px; }
+}
+
+@media (max-width: 768px) {
+  .ax-sheet__name { min-width: 148px; }
+}
+
+/* Le segment du registre porte QUATRE onglets aux libellés longs (« Feuille
+   de présence »), là où le shell n'en avait jamais eu que deux ou trois :
+   `.ax-segment` est un `inline-flex` sans retour à la ligne, et sur un
+   téléphone les deux derniers onglets sortaient de l'écran sans rien pour
+   dire qu'ils existaient. On autorise le retour à la ligne pour ce cas
+   précis, sans toucher au composant partagé. */
+.ax-segment--wrap {
+  flex-wrap: wrap;
+  max-width: 100%;
+}

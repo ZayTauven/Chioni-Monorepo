@@ -38,6 +38,15 @@ from apps.centers.models import (
     TariffItem,
 )
 from apps.common.models import ActCategory
+from apps.hrm.models import (
+    AttendanceRecord,
+    Department,
+    Employment,
+    Holiday,
+    JobTitle,
+    LeaveRequest,
+)
+from apps.inpatient.models import Bed, BedAssignment, Room, Stay
 from apps.medical.models import (
     Consent,
     Encounter,
@@ -160,7 +169,9 @@ class TestSeedDemoScenario:
 
         draft = Invoice.objects.get(center=center, status=Invoice.Status.DRAFT)
         assert draft.total_kmf == Decimal("20000.00")  # écho + médicaments
-        assert Encounter.objects.for_center(center).count() == 2
+        # Deux consultations d'ambulatoire + la consultation PIVOT du séjour
+        # d'hospitalisation semé par S6 (ADR 0019 §1).
+        assert Encounter.objects.for_center(center).count() == 3
 
     @override_settings(DEBUG=True)
     def test_health_record_and_prescription_are_seeded(self):
@@ -189,7 +200,13 @@ class TestSeedDemoScenario:
         medical_file = PatientMedicalFile.objects.get(patient=profile)
         assert medical_file.blood_group == PatientMedicalFile.BloodGroup.O_POS
 
-        vitals = VitalSigns.objects.for_patient(profile).get()
+        # Le relevé S3 vit sur la consultation d'ambulatoire « Contrôle
+        # hypertension » ; la feuille de surveillance du séjour S6 est faite
+        # de relevés SUPPLÉMENTAIRES sur la consultation pivot (ADR 0019 §1
+        # — c'est précisément la preuve que ``VitalSigns`` n'a pas bougé).
+        vitals = VitalSigns.objects.for_patient(profile).get(
+            encounter__reason="Contrôle hypertension"
+        )
         assert vitals.systolic_bp == 152
 
         document = PatientDocument.objects.for_patient(profile).get()
@@ -318,6 +335,78 @@ class TestSeedDemoScenario:
         assert PlatformStaff.objects.count() == 2
 
     @override_settings(DEBUG=True)
+    def test_inpatient_ward_is_seeded(self):
+        """S6 (ADR 0019 invariant 7) — deux chambres, quatre lits, une
+        hospitalisation EN COURS avec sa feuille de surveillance."""
+        run_command()
+
+        center = HealthCenter.objects.get(name="Clinique Ylang")
+        assert set(
+            Room.objects.for_center(center).values_list("name", flat=True)
+        ) == {"Chambre 1", "Chambre 2"}
+        assert Bed.objects.for_center(center).count() == 4
+
+        stay = Stay.objects.for_center(center).get()
+        assert stay.status == Stay.Status.IN_PROGRESS
+        assert stay.priority == Stay.Priority.URGENT
+        assert stay.patient.user.username == "patient.demo"
+        assert str(stay.current_bed) == "Chambre 1 / Lit A"
+        # Un lit sur quatre est pris : le tableau d'occupation a de quoi
+        # montrer les deux états.
+        assert Bed.objects.for_center(center).available().count() == 3
+
+        # La surveillance vit sur la consultation PIVOT — aucune table
+        # dédiée, aucun champ nouveau (décision 1).
+        assert stay.encounter.status == Encounter.Status.IN_PROGRESS
+        assert VitalSigns.objects.filter(encounter=stay.encounter).count() == 2
+        # …et rien n'est facturé : le staff déclenche (décision 4).
+        assert not stay.encounter.acts.exists()
+
+    @override_settings(DEBUG=True)
+    def test_hr_register_is_seeded(self):
+        """S7 (ADR 0020 invariant 9) — deux services, trois fonctions, une
+        semaine de présence, un congé approuvé et une demande en attente."""
+        from apps.hrm.models import (
+            AttendanceRecord,
+            Department,
+            Employment,
+            Holiday,
+            JobTitle,
+            LeaveRequest,
+        )
+
+        run_command()
+        center = HealthCenter.objects.get(name="Clinique Ylang")
+
+        assert set(
+            Department.objects.for_center(center).values_list("name", flat=True)
+        ) == {"Médecine générale", "Maternité"}
+        assert JobTitle.objects.for_center(center).count() == 3
+        assert Holiday.objects.for_center(center).count() == 1
+
+        # UN dossier par PERSONNE, jamais un par casquette (décision 1).
+        employments = Employment.objects.for_center(center)
+        assert employments.count() == 4
+        assert employments.values("user").distinct().count() == 4
+
+        # Une semaine de feuille, pour les quatre.
+        assert AttendanceRecord.objects.for_center(center).count() == 7 * 4
+        assert AttendanceRecord.objects.for_center(center).filter(
+            status=AttendanceRecord.Status.LEAVE
+        ).exists()
+
+        leaves = LeaveRequest.objects.for_center(center)
+        approved = leaves.get(status=LeaveRequest.Status.APPROVED)
+        assert approved.leave_type == LeaveRequest.Type.SICK
+        assert approved.employment.user.username == "medecin.demo"
+        pending = leaves.get(status=LeaveRequest.Status.REQUESTED)
+        assert pending.employment.user.username == "secretaire.demo"
+        # Les deux se CHEVAUCHENT : deux demandes qui se recouvrent sont
+        # permises, on tranche à l'approbation (décision 4).
+        assert pending.start_date <= approved.end_date
+        assert pending.end_date >= approved.start_date
+
+    @override_settings(DEBUG=True)
     def test_recap_output_names_the_accounts_and_the_demo_flow(self):
         output = run_command()
 
@@ -379,6 +468,18 @@ class TestSeedDemoIdempotence:
             # S5 lot 3 (ADR 0018 décision 5) — le canal de support.
             "support_tickets": SupportTicket.objects.count(),
             "support_messages": SupportMessage.objects.count(),
+            # S6 (ADR 0019) — hospitalisation : chambres, lits, séjours.
+            "rooms": Room.objects.count(),
+            "beds": Bed.objects.count(),
+            "stays": Stay.objects.count(),
+            "bed_assignments": BedAssignment.objects.count(),
+            # S7 (ADR 0020) — le registre du personnel.
+            "departments": Department.objects.count(),
+            "job_titles": JobTitle.objects.count(),
+            "employments": Employment.objects.count(),
+            "holidays": Holiday.objects.count(),
+            "attendance": AttendanceRecord.objects.count(),
+            "leaves": LeaveRequest.objects.count(),
         }
 
 
