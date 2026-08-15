@@ -24,6 +24,7 @@ import {
   getActivityStats,
   getCenter,
   getFinanceStats,
+  getSubscription,
   listAppointments,
   listDisputes,
   listPaymentRequests,
@@ -37,13 +38,23 @@ import {
   KYC_CLOSED_RAIL,
   KYC_STILL_WORKS,
   PAYMENT_REQUEST_STATUS_LABELS,
+  SUBSCRIPTION_BANNER_LEAD,
+  SUBSCRIPTION_BANNER_TITLE,
+  SUBSCRIPTION_FROZEN_CLOSED,
+  SUBSCRIPTION_STATS_FROZEN_HINT,
+  SUBSCRIPTION_STATS_FROZEN_SHORT,
+  SUBSCRIPTION_STATS_FROZEN_TITLE,
+  SUBSCRIPTION_STILL_WORKS,
+  SUBSCRIPTION_TERMINATED_DATA,
+  SUBSCRIPTION_UNPAID_NOTHING_CLOSED,
   formatDate,
   formatKmf,
   formatPct,
   formatShortDate,
   formatTime,
 } from '@/lib/labels';
-import type { ActivityStats } from '@/lib/types';
+import type { ActivityStats, SubscriptionStatus } from '@/lib/types';
+import type { ApiError } from '@/lib/api';
 import {
   APPOINTMENT_TONES,
   AvatarChip,
@@ -59,6 +70,59 @@ import {
   hasRole,
   useAsync,
 } from './shared';
+
+/**
+ * Un centre GELÉ perd ses graphiques : les deux `stats/*` répondent 400 avec
+ * le message complet du backend (vigilance ADR 0018 lot 1). Le rendre en
+ * alerte ROUGE laisserait croire à une panne, alors que la file du jour, les
+ * dossiers et la caisse fonctionnent. On met donc une explication calme à la
+ * place des cartes.
+ *
+ * Pourquoi le 400 suffit à conclure : le dashboard appelle ces deux endpoints
+ * SANS paramètre — leurs autres 400 (fenêtre invalide) sont hors d'atteinte
+ * ici. Et le texte affiché reste celui du backend, jamais une supposition :
+ * si un autre 400 apparaissait un jour, c'est SA phrase qui s'afficherait.
+ */
+function StatsUnavailable({
+  error,
+  onRetry,
+  compact = false,
+}: {
+  error: ApiError;
+  onRetry: () => void;
+  /**
+   * Bloc SECONDAIRE (compteurs à côté d'un graphique déjà expliqué).
+   *
+   * Revue UX care S5 : un centre gelé recevait quatre fois le même paragraphe
+   * de trois phrases — deux graphiques et deux compteurs. Répétée quatre fois,
+   * une mauvaise nouvelle devient un mur, et le lecteur cesse de la lire.
+   * L'explication complète reste sur le graphique de chaque bloc ; les
+   * compteurs se contentent d'une ligne calme.
+   */
+  compact?: boolean;
+}) {
+  if (error.status !== 400) return <ErrorAlert error={error} onRetry={onRetry} />;
+  if (compact) {
+    return (
+      <p style={{ margin: 0, fontSize: 'var(--ax-text-sm)', color: 'var(--ax-text-muted)', lineHeight: 1.7 }}>
+        {SUBSCRIPTION_STATS_FROZEN_SHORT}
+      </p>
+    );
+  }
+  return (
+    <div className="ax-alert ax-alert--info" role="status">
+      <div className="ax-alert__content">
+        <p className="ax-alert__title">{SUBSCRIPTION_STATS_FROZEN_TITLE}</p>
+        {error.messages.map((m) => (
+          <p key={m} className="ax-alert__message">
+            {m}
+          </p>
+        ))}
+        <p className="ax-alert__message">{SUBSCRIPTION_STATS_FROZEN_HINT}</p>
+      </div>
+    </div>
+  );
+}
 
 /* ── KPI icons (Tabler outline, même contrat que le template) ── */
 
@@ -168,7 +232,14 @@ function ActivityBlock() {
             {stats.loading ? (
               <span className="ax-skeleton ax-skeleton--line ax-skeleton--shimmer" style={{ height: 28, width: 64, display: 'inline-block' }} aria-hidden="true" />
             ) : stats.error ? (
-              <div className="ax-kpi__caption" style={{ color: 'var(--ax-danger-700)' }}>Indisponible</div>
+              // Un gel d'abonnement n'est pas une panne : le chiffre manque,
+              // il ne s'alarme pas en rouge sur les quatre cartes à la fois.
+              <div
+                className="ax-kpi__caption"
+                style={{ color: stats.error.status === 400 ? 'var(--ax-text-muted)' : 'var(--ax-danger-700)' }}
+              >
+                Indisponible
+              </div>
             ) : (
               <div className="ax-kpi__meta" style={{ justifyContent: 'space-between', width: '100%' }}>
                 <div className="ax-kpi__value ax-num">{k.value ?? '—'}</div>
@@ -255,7 +326,7 @@ function ActivityBlock() {
           {stats.loading ? (
             <CardSkeleton lines={6} />
           ) : stats.error ? (
-            <ErrorAlert error={stats.error} onRetry={stats.reload} />
+            <StatsUnavailable error={stats.error} onRetry={stats.reload} />
           ) : (
             <ApexChart
               type="area"
@@ -314,7 +385,7 @@ function FinanceBlock() {
           {stats.loading ? (
             <CardSkeleton lines={6} />
           ) : stats.error ? (
-            <ErrorAlert error={stats.error} onRetry={stats.reload} />
+            <StatsUnavailable error={stats.error} onRetry={stats.reload} />
           ) : (
             <ApexChart
               type="bar"
@@ -349,7 +420,7 @@ function FinanceBlock() {
             {stats.loading ? (
               <CardSkeleton lines={4} />
             ) : stats.error ? (
-              <ErrorAlert error={stats.error} onRetry={stats.reload} />
+              <StatsUnavailable error={stats.error} onRetry={stats.reload} compact />
             ) : stats.data && t ? (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--ax-space-3)' }}>
                 <div className="ax-cluster" style={{ justifyContent: 'space-between' }}>
@@ -406,7 +477,7 @@ function FinanceBlock() {
             {stats.loading ? (
               <CardSkeleton lines={2} />
             ) : stats.error ? (
-              <ErrorAlert error={stats.error} onRetry={stats.reload} />
+              <StatsUnavailable error={stats.error} onRetry={stats.reload} compact />
             ) : stats.data ? (
               <div className="ax-cluster" style={{ justifyContent: 'space-between', alignItems: 'baseline' }}>
                 <span className="ax-kpi__value ax-num">{stats.data.unpaid.count}</span>
@@ -486,9 +557,62 @@ function DisputesCard() {
 
 /* ── screen ── */
 
+/* ── bandeau d'abonnement (directeur seul — l'API l'est aussi) ─────────────
+   Deux axes, deux bandeaux : le KYC gouverne le rail diaspora (ADR 0017),
+   l'abonnement gouverne l'administratif (ADR 0018). Les fondre laisserait
+   croire qu'une suspension commerciale ferme le Pont de Confiance — c'est
+   exactement l'inverse de la décision produit. ────────────────────────────── */
+
+/** Le ton suit l'effet RÉEL : `impaye` informe, le gel avertit. */
+const SUBSCRIPTION_BANNER_TONE: Record<SubscriptionStatus, 'info' | 'warning'> = {
+  essai: 'info',
+  actif: 'info',
+  impaye: 'info',
+  suspendu: 'warning',
+  resilie: 'warning',
+};
+
+function SubscriptionBanner({ centerId }: { centerId: number }) {
+  // 404 = pas de contrat : état normal, aucun bandeau. Toute autre erreur est
+  // silencieuse ici — le tableau de bord d'un centre n'est pas l'endroit où
+  // apprendre qu'une lecture d'abonnement a échoué.
+  const subscription = useAsync(() => getSubscription(centerId), [centerId]);
+  const data = subscription.data;
+  if (!data || data.status === 'essai' || data.status === 'actif') return null;
+
+  return (
+    <div
+      className={`ax-alert ax-alert--${SUBSCRIPTION_BANNER_TONE[data.status]}`}
+      role="status"
+      style={{ marginBottom: 'var(--ax-space-5)' }}
+    >
+      <div className="ax-alert__content">
+        <p className="ax-alert__title">{SUBSCRIPTION_BANNER_TITLE[data.status]}</p>
+        <p className="ax-alert__message">{SUBSCRIPTION_BANNER_LEAD[data.status]}</p>
+        {/* CE QUI CONTINUE en premier, toujours : un directeur qui lit
+            « suspendu » doit savoir dans la même seconde qu'il peut encore
+            soigner, inscrire, facturer et encaisser. */}
+        <p className="ax-alert__message">{SUBSCRIPTION_STILL_WORKS}</p>
+        <p className="ax-alert__message">
+          {data.is_frozen ? SUBSCRIPTION_FROZEN_CLOSED : SUBSCRIPTION_UNPAID_NOTHING_CLOSED}
+        </p>
+        {data.status === 'resilie' && (
+          <p className="ax-alert__message">{SUBSCRIPTION_TERMINATED_DATA}</p>
+        )}
+        <p className="ax-alert__message">
+          <Link href="/centre/abonnement" className="ax-link">
+            Voir mon abonnement et mes factures
+          </Link>
+        </p>
+      </div>
+    </div>
+  );
+}
+
 export function Dashboard() {
   const { centerId, center, roles } = useCenter();
   const billing = hasRole(roles, BILLING_ROLES);
+  const isDirector = hasRole(roles, ['directeur']);
 
   const centerDetail = useAsync(() => getCenter(centerId), [centerId]);
   const requests = useAsync(() => listPaymentRequests(centerId, 1), [centerId]);
@@ -507,6 +631,11 @@ export function Dashboard() {
           vient d'ouvrir — un bandeau d'avertissement jaune permanent lui
           apprendrait à ignorer les bandeaux. Le jaune est réservé à la
           suspension, qui appelle une action. */}
+      {/* S5 — l'abonnement : bandeau DIRECTEUR SEUL, comme l'API. Le composant
+          n'est pas monté pour les autres rôles (fetch compris), symétrie du
+          403 backend et du bloc finances. */}
+      {isDirector && <SubscriptionBanner centerId={centerId} />}
+
       {centerDetail.data && centerDetail.data.kyc_status !== 'actif' && (
         <div
           className={`ax-alert ax-alert--${centerDetail.data.kyc_status === 'suspendu' ? 'warning' : 'info'}`}

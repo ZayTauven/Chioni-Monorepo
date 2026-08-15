@@ -32,6 +32,7 @@ from django.utils.crypto import constant_time_compare, salted_hmac
 from apps.accounts.models import ErasureRequest, OtpCode, PlatformStaff
 from apps.accounts.tasks import send_sms
 from apps.audit.services import AuditAction, audit
+from apps.centers.models import StaffMembership
 from apps.centers.services import (
     centers_locked_by_last_director,
     deactivate_staff_member,
@@ -43,7 +44,7 @@ from apps.patients.models import (
     PatientInsurance,
     PatientProfile,
 )
-from apps.patients.services import claim_profile
+from apps.patients.services import claim_profile, get_or_create_shadow_user
 
 OTP_LENGTH = 6
 OTP_TTL = timedelta(minutes=10)
@@ -770,3 +771,180 @@ def anonymize_user(*, actor, user):
         replay=already_anonymized,
     )
     return user
+
+
+# ---------------------------------------------------------------------------
+# L'équipe Chioni elle-même (S5 lot 3 — ADR 0018 décision 6)
+# ---------------------------------------------------------------------------
+#
+# L'ADR 0017 laissait `PlatformStaffAdmin` en écriture « à dessein » : le
+# tout premier exploitant ne pouvait naître nulle part ailleurs. Le prix
+# était consigné en vigilance de la revue guardian S4 — « un superuser
+# Django est toujours à un formulaire de la 4ᵉ casquette ». Ces deux
+# services referment la porte : la 4ᵉ casquette se crée et se modifie par
+# API auditée (`admin` seul), et l'amorçage hors ligne passe par la
+# commande `create_platform_staff` (aucune garde DEBUG : elle doit tourner
+# en production le jour de l'installation).
+
+#: French refusal of the separation-of-duties guard below — mirror of
+#: ``centers.services.OPERATOR_AS_DIRECTOR_MESSAGE``, in the other
+#: direction.
+DIRECTOR_AS_OPERATOR_MESSAGE = (
+    "Ce numéro est celui d'un membre du personnel d'un centre : une "
+    "casquette d'exploitant Chioni ne s'ajoute pas à une casquette de "
+    "tenant. Utilisez un compte distinct pour l'équipe Chioni."
+)
+
+LAST_PLATFORM_ADMIN_MESSAGE = (
+    "Refusé : ce compte est le dernier administrateur actif de la "
+    "plateforme Chioni. Nommez un autre administrateur avant de le "
+    "rétrograder ou de le désactiver — sinon Chioni se retrouve enfermée "
+    "hors de son propre back-office."
+)
+
+
+def _refuse_center_staff_as_operator(user):
+    """Separation of duties, the MIRROR of the S4 guard (revue guardian).
+
+    ``centers.services._refuse_platform_operator_as_director`` closes the
+    escalation « exploitant → directeur ». Without this one, the exact same
+    state (one human wearing both the tenant hat and the back-office hat)
+    was reachable from the other side: make somebody a director first, then
+    hand them the operator row. A guard that only holds in one direction is
+    not a guard.
+
+    Honesty of the correction, same as its mirror: it removes the
+    self-service path, it does not make the combination impossible — a
+    Chioni employee who is also a nurse somewhere can hold both hats
+    through a SECOND account, which is precisely what separation of duties
+    buys. RÉVERSIBLE: if the terrain shows the constraint is absurd (a very
+    small team wearing every hat), drop the call, not the discipline.
+
+    **The ``User`` row is LOCKED first** (revue guardian S5). The two
+    mirrored guards each read the OTHER table, and both did so without a
+    lock: two concurrent transactions — « donne-lui la 4ᵉ casquette » and
+    « amorce-le directeur » on the same number — each saw a world where the
+    other write did not exist yet, and BOTH passed, reaching precisely the
+    state the pair exists to forbid (probed with real threads in
+    ``tests/test_adversarial_s5.py``). The ``User`` row is the natural
+    serialisation point: it is the pivot both doors resolve the person by,
+    and it is already the OUTERMOST level of the product's lock hierarchy
+    (utilisateur → intent → demande → facture → centre, correctif S4).
+    """
+    get_user_model().objects.select_for_update().get(pk=user.pk)
+    if StaffMembership.objects.filter(user=user, is_active=True).exists():
+        raise ValidationError(DIRECTOR_AS_OPERATOR_MESSAGE)
+
+
+@transaction.atomic
+def create_platform_staff(*, actor, phone, role, first_name="", last_name=""):
+    """Create a Chioni operator — the FOURTH hat (ADR 0017 décision 1).
+
+    Referenced by PHONE, like every other human of the platform (ADR 0001):
+    the account is created as a SHADOW when the number is unknown
+    (unusable password) and its holder takes possession of it by OTP. **No
+    password is ever transmitted out of band**, not even for Chioni's own
+    team.
+
+    Refusals, all in French: an unknown/invalid number (normalisation
+    E.164), an account that already holds an operator row (change its role
+    instead — :func:`update_platform_staff`), and an account holding an
+    ACTIVE staff membership in a center (separation of duties).
+    """
+    if role not in PlatformStaff.Role.values:
+        raise ValidationError("Rôle d'exploitant inconnu.")
+    user, created = get_or_create_shadow_user(phone)
+    if created and (first_name or last_name):
+        user.first_name = first_name
+        user.last_name = last_name
+        user.save(update_fields=["first_name", "last_name"])
+    if PlatformStaff.objects.filter(user=user).exists():
+        raise ValidationError(
+            "Ce compte fait déjà partie de l'équipe Chioni : changez son "
+            "rôle ou réactivez-le plutôt que d'en créer un second."
+        )
+    _refuse_center_staff_as_operator(user)
+    operator = PlatformStaff.objects.create(
+        user=user, role=role, is_active=True
+    )
+    audit(
+        actor=actor, action=AuditAction.PLATFORM_STAFF_CREATED, target=operator,
+        # References only — never the phone, never the name (ADR 0007).
+        platform_staff_id=operator.pk, user_id=user.pk, role=operator.role,
+        account_created=created,
+    )
+    return operator
+
+
+@transaction.atomic
+def update_platform_staff(*, actor, operator, role=None, is_active=None):
+    """Change an operator's role and/or activation — ``admin`` only.
+
+    The ONE guard, and it is the same one the RGPD erasure already runs
+    (:func:`_is_last_platform_admin`, whose ordered ``FOR UPDATE`` closed
+    the « two concurrent last admins » race of the S4 review): the last
+    ACTIVE ``admin`` can neither be demoted to ``support`` nor deactivated.
+    Losing every administrator would lock Chioni out of its own back-office
+    with only the Django admin — now read-only — to rebuild one.
+
+    The reading is DELIBERATELY not duplicated here: the day the guard
+    changes, both callers must change together, and that only happens if
+    there is one function.
+
+    **Second guard, added by the revue guardian S5: REACTIVATING a revoked
+    operator row replays the creation guard.** Without it the separation of
+    duties had a three-call bypass, self-service, from the back-office
+    alone and WITHOUT the second number the ADR names as the honest
+    residual: deactivate the operator → seed him director through
+    ``POST /platform/centers/{pk}/directors/`` (the S4 guard only looks at
+    ACTIVE operator rows, so it no longer sees one) → reactivate. The end
+    state is the exact escalation S4 spent a review closing — one human
+    holding the fourth hat AND a tenant hat, minted entirely by the
+    platform. Reactivating a revoked row IS creating one; it carries the
+    same guard.
+
+    What this does NOT close, on purpose (ADR 0018 lot 3 §19): the
+    TENANT's own door. A director remains free to hire somebody who works
+    at Chioni — that is HIS decision, and it stays traced. A role change on
+    such an account is untouched too; only the platform re-minting a
+    revoked fourth hat is refused.
+    """
+    if role is not None and role not in PlatformStaff.Role.values:
+        raise ValidationError("Rôle d'exploitant inconnu.")
+    get_user_model().objects.select_for_update().get(pk=operator.user_id)
+    # LOCK ORDER — utilisateur → ensemble ordonné des sièges ``admin`` → la
+    # ligne visée. Le siège se prend AVANT la ligne, et c'est le point
+    # (revue guardian S5) : verrouiller d'abord la ligne visée puis un
+    # ensemble qui la CONTIENT fait prendre les mêmes verrous dans deux
+    # ordres dès que deux exploitants sont rétrogradés en même temps —
+    # PostgreSQL tranche par un deadlock, donc un 500 sur une route de
+    # gouvernance au lieu du refus français prévu. L'ensemble contient
+    # déjà la ligne visée quand elle compte, si bien que la relecture
+    # ci-dessous n'ajoute aucun verrou.
+    is_last_admin = _is_last_platform_admin(operator.user, lock=True)
+    operator = PlatformStaff.objects.select_for_update().get(pk=operator.pk)
+    if is_active is True and not operator.is_active:
+        _refuse_center_staff_as_operator(operator.user)
+    changed = []
+    loses_admin = operator.is_active and operator.role == PlatformStaff.Role.ADMIN and (
+        (role is not None and role != PlatformStaff.Role.ADMIN)
+        or is_active is False
+    )
+    if loses_admin and is_last_admin:
+        raise ValidationError(LAST_PLATFORM_ADMIN_MESSAGE)
+    if role is not None and role != operator.role:
+        operator.role = role
+        changed.append("role")
+    if is_active is not None and is_active != operator.is_active:
+        operator.is_active = is_active
+        changed.append("is_active")
+    if not changed:
+        raise ValidationError("Aucun changement demandé.")
+    operator.save(update_fields=changed + ["updated_at"])
+    audit(
+        actor=actor, action=AuditAction.PLATFORM_STAFF_UPDATED, target=operator,
+        platform_staff_id=operator.pk, user_id=operator.user_id,
+        role=operator.role, is_active=operator.is_active,
+        fields=",".join(sorted(changed)),
+    )
+    return operator

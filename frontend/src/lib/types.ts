@@ -192,7 +192,27 @@ export type AuditAction =
   | 'cash_payment.reversed'
   | 'dispute.opened'
   | 'dispute.resolved'
-  | 'patient_profile.merged';
+  | 'patient_profile.merged'
+  /* S5 (ADR 0018) — l'abonnement du centre est une action d'EXPLOITATION de
+     son propre tenant : les sept entrent dans la liste blanche du journal.
+     Le motif d'un gel, d'une annulation ou d'une contre-passation n'y figure
+     jamais (`has_reason` seulement) — il se lit sur les écrans dédiés. */
+  | 'subscription.created'
+  | 'subscription.plan_changed'
+  | 'subscription.status_changed'
+  | 'subscription_invoice.issued'
+  | 'subscription_invoice.cancelled'
+  | 'subscription_payment.recorded'
+  | 'subscription_payment.reversed'
+  /* S5 lot 3 — le canal de support de SON centre entre aussi dans la liste
+     blanche du journal (ADR 0018 lot 3 §12) : savoir que sa secrétaire a
+     signalé une anomalie et où en est le dossier est de l'exploitation. Les
+     payloads ne portent que des ids, la catégorie et des codes de statut —
+     jamais l'objet, jamais le corps, jamais un nom de fichier. */
+  | 'support_ticket.opened'
+  | 'support_ticket.status_changed'
+  | 'support_ticket.message_posted'
+  | 'support_ticket.attachment_uploaded';
 
 /* ── /auth/me/ — router of the 3 spaces ── */
 
@@ -1051,4 +1071,273 @@ export interface FinanceStats {
   collected_kmf: string;
   /** Snapshot at query time (window-independent): issued invoices, balance > 0. */
   unpaid: { count: number; total_kmf: string };
+}
+
+/* ══ S5 (ADR 0018) — abonnement SaaS et module Support ═══════════════════ */
+
+/**
+ * L'état commercial du tenant — **axe TOTALEMENT indépendant de `kyc_status`**
+ * (décision 2 de l'ADR 0018). Un centre peut être vérifié et impayé, ou
+ * suspendu au KYC et à jour de son abonnement : ne jamais fondre les deux
+ * badges, ni les deux bandeaux.
+ */
+export type SubscriptionStatus =
+  | 'essai'
+  | 'actif'
+  | 'impaye'
+  | 'suspendu'
+  | 'resilie';
+
+export type BillingPeriod = 'mensuel' | 'annuel';
+
+/** Facture SaaS Chioni → centre (série « A- » globale). */
+export type SubscriptionInvoiceStatus = 'emise' | 'payee' | 'annulee';
+
+/** Un règlement est reçu HORS LIGNE et saisi par l'exploitant Chioni. */
+export type SubscriptionPaymentMethod =
+  | 'virement'
+  | 'especes'
+  | 'mobile_money'
+  | 'autre';
+
+/** L'offre commerciale — même payload des deux côtés (tenant et plateforme). */
+export interface SubscriptionPlan {
+  id: number;
+  code: string;
+  name: string;
+  /** Chaîne décimale KMF — francs ENTIERS (le backend refuse les décimales). */
+  price_kmf: string;
+  billing_period: BillingPeriod;
+  /** `null` = illimité, jamais « zéro ». */
+  included_practitioners: number | null;
+  included_staff: number | null;
+  is_active: boolean;
+}
+
+/**
+ * Sièges consommés vs quotas de l'offre. **INDICATIF** (décision 3) : c'est un
+ * signal commercial, jamais un levier de blocage — aucun formulaire ne se
+ * désactive à cause d'un dépassement. Un siège = une PERSONNE, même avec deux
+ * casquettes dans le centre.
+ */
+export interface SubscriptionUsage {
+  staff: number;
+  practitioners: number;
+  included_staff: number | null;
+  included_practitioners: number | null;
+  /** Sous-ensemble de `["practitioners", "staff"]`. */
+  exceeded: Array<'practitioners' | 'staff'>;
+  over_quota: boolean;
+}
+
+/**
+ * `GET /centers/{c}/subscription/` — **DIRECTEUR SEUL** (arbitrage réversible,
+ * symétrique du dossier KYC et du journal d'audit). **404 = état NORMAL** :
+ * tous les centres nés avant S5 n'ont pas de contrat, et « il n'y en a pas »
+ * n'est pas une erreur.
+ */
+export interface CenterSubscription {
+  id: number;
+  status: SubscriptionStatus;
+  /** Motif de la DERNIÈRE décision, écrit par Chioni POUR le directeur. */
+  status_reason: string;
+  started_at: string;
+  current_period_end: string | null;
+  status_updated_at: string | null;
+  /** `true` pour `suspendu` et `resilie` SEULEMENT — `impaye` ne gèle RIEN. */
+  is_frozen: boolean;
+  plan: SubscriptionPlan;
+  usage: SubscriptionUsage;
+}
+
+/**
+ * Un règlement reçu par Chioni, tel que le CENTRE le lit. L'identité de
+ * l'exploitant qui a saisi ou contre-passé ne traverse pas : le directeur
+ * lirait une personne qu'il n'a aucun autre moyen de voir.
+ */
+export interface SubscriptionInvoicePayment {
+  id: number;
+  amount_kmf: string;
+  method: SubscriptionPaymentMethod;
+  reference: string;
+  received_at: string;
+  created_at: string;
+  /** Règlement annulé par Chioni — vocabulaire écran : « annulé ». */
+  reversed: boolean;
+  /** Le pourquoi de l'annulation — le fait sans le motif serait pire qu'inutile. */
+  reversal_reason: string | null;
+}
+
+/**
+ * `GET /centers/{c}/subscription/invoices/` — **DIRECTEUR SEUL**, lecture
+ * seule de bout en bout (c'est Chioni qui émet, encaisse et corrige : aucun
+ * bouton d'action sur cet écran). Liste vide = 200, à la différence du contrat
+ * lui-même dont l'absence est un 404.
+ */
+export interface CenterSubscriptionInvoice {
+  id: number;
+  /** Série « A- » GLOBALE Chioni — jamais un reçu « G- », jamais un id. */
+  number: string;
+  status: SubscriptionInvoiceStatus;
+  period_start: string;
+  period_end: string;
+  amount_kmf: string;
+  paid_kmf: string;
+  /** DÉRIVÉ côté serveur : l'afficher, ne jamais le recalculer. */
+  balance_kmf: string;
+  due_date: string;
+  plan_code: string;
+  plan_label: string;
+  created_at: string;
+  cancelled_at: string | null;
+  /** Écrit par CHIONI pour le directeur — contrairement à `Invoice.cancel_reason`. */
+  cancel_reason: string;
+  payments: SubscriptionInvoicePayment[];
+}
+
+/* ── support du centre (tout staff actif) ── */
+
+export type SupportCategory = 'bug' | 'question' | 'facturation' | 'autre';
+
+export type SupportTicketStatus = 'ouvert' | 'en_cours' | 'resolu' | 'ferme';
+
+/** Déclarée à l'ouverture, et plus jamais modifiable (arbitrage lot 3). */
+export type SupportPriority = 'basse' | 'normale' | 'haute' | 'urgente';
+
+/** Posé par le SERVICE d'après la porte empruntée — jamais par le client. */
+export type SupportSide = 'centre' | 'chioni';
+
+export interface SupportMessage {
+  id: number;
+  author: number;
+  author_side: SupportSide;
+  /** `null` côté `chioni` : l'interlocuteur du centre est « Chioni », pas quelqu'un. */
+  author_display: string | null;
+  body: string;
+  created_at: string;
+}
+
+/** Métadonnées seules — **jamais d'URL** (stockage privé, ADR 0016 §5). */
+export interface SupportAttachment {
+  id: number;
+  uploaded_by: number;
+  created_at: string;
+}
+
+export interface SupportTicket {
+  id: number;
+  subject: string;
+  category: SupportCategory;
+  status: SupportTicketStatus;
+  priority: SupportPriority;
+  opened_by: number;
+  opened_by_display: string | null;
+  message_count: number;
+  attachment_count: number;
+  last_message_at: string | null;
+  closed_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Le détail embarque le fil complet : un écran de ticket coûte UNE requête. */
+export interface SupportTicketDetail extends SupportTicket {
+  messages: SupportMessage[];
+  attachments: SupportAttachment[];
+}
+
+/* ── back-office : abonnements, factures SaaS, offres, tickets, exploitants ── */
+
+export interface PlatformSubscription {
+  id: number;
+  center: number;
+  center_name: string;
+  status: SubscriptionStatus;
+  status_reason: string;
+  started_at: string;
+  current_period_end: string | null;
+  status_updated_at: string | null;
+  is_frozen: boolean;
+  plan: SubscriptionPlan;
+  usage: SubscriptionUsage;
+  created_at: string;
+}
+
+/** Le règlement côté back-office : deux champs de plus, tous deux des ids. */
+export interface PlatformSubscriptionPayment extends SubscriptionInvoicePayment {
+  invoice: number;
+  recorded_by: number | null;
+  reversed_by: number | null;
+}
+
+export interface PlatformSubscriptionInvoice {
+  id: number;
+  number: string;
+  center: number;
+  center_name: string;
+  subscription: number;
+  status: SubscriptionInvoiceStatus;
+  period_start: string;
+  period_end: string;
+  amount_kmf: string;
+  paid_kmf: string;
+  balance_kmf: string;
+  due_date: string;
+  plan_code: string;
+  plan_label: string;
+  /** `null` = émission AUTOMATIQUE par la tâche planifiée, jamais un oubli. */
+  issued_by: number | null;
+  cancelled_at: string | null;
+  cancelled_by: number | null;
+  cancel_reason: string;
+  reminders_sent: number;
+  last_reminder_at: string | null;
+  created_at: string;
+  payments: PlatformSubscriptionPayment[];
+}
+
+/** Côté back-office, aucun humain n'est nommé — `author` est un id de compte. */
+export interface PlatformSupportMessage {
+  id: number;
+  author: number;
+  author_side: SupportSide;
+  body: string;
+  created_at: string;
+}
+
+export interface PlatformSupportTicket {
+  id: number;
+  center: number;
+  center_name: string;
+  subject: string;
+  category: SupportCategory;
+  status: SupportTicketStatus;
+  priority: SupportPriority;
+  opened_by: number;
+  message_count: number;
+  attachment_count: number;
+  last_message_at: string | null;
+  closed_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PlatformSupportTicketDetail extends PlatformSupportTicket {
+  messages: PlatformSupportMessage[];
+  attachments: SupportAttachment[];
+}
+
+/**
+ * Un exploitant Chioni — **des IDS, rien d'autre** (contrat verrouillé) : un
+ * compte ombre porte son numéro dans son username, et rendre ce username
+ * publierait discrètement un téléphone. L'écran affiche « Exploitant n° … » ;
+ * c'est austère et assumé.
+ */
+export interface PlatformOperator {
+  id: number;
+  user: number;
+  role: PlatformRole;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
 }

@@ -18,7 +18,7 @@ the authenticated person from their own space.
 
 from django.shortcuts import get_object_or_404
 from drf_spectacular.utils import extend_schema
-from rest_framework import generics
+from rest_framework import generics, status
 from rest_framework.exceptions import ValidationError as DrfValidationError
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -27,8 +27,15 @@ from apps.accounts.models import ErasureRequest, PlatformStaff
 from apps.accounts.platform_serializers import (
     PlatformErasureDecisionSerializer,
     PlatformErasureRequestSerializer,
+    PlatformStaffCreateSerializer,
+    PlatformStaffSerializer,
+    PlatformStaffUpdateSerializer,
 )
-from apps.accounts.services import process_erasure_request
+from apps.accounts.services import (
+    create_platform_staff,
+    process_erasure_request,
+    update_platform_staff,
+)
 from apps.common.permissions import IsPlatformStaff
 
 PLATFORM_ADMIN = PlatformStaff.Role.ADMIN
@@ -101,3 +108,98 @@ class PlatformErasureRequestProcessView(APIView):
             refusal_reason=serializer.validated_data.get("refusal_reason", ""),
         )
         return Response(PlatformErasureRequestSerializer(erasure_request).data)
+
+
+# ---------------------------------------------------------------------------
+# L'équipe Chioni elle-même (S5 lot 3 — ADR 0018 décision 6)
+# ---------------------------------------------------------------------------
+#
+# La dette explicitement renvoyée par l'ADR 0017 : `PlatformStaffAdmin`
+# restait écrivable faute de porte produit. Ces deux vues sont cette porte
+# — **`admin` seul, en lecture comme en écriture**. La liste des personnes
+# qui détiennent la 4ᵉ casquette est de la gouvernance, pas de la matière
+# de support : un `support` n'a pas à savoir qui peut le désactiver.
+#
+# L'amorçage du TOUT PREMIER exploitant reste hors ligne
+# (`python manage.py create_platform_staff`) : à l'installation, il n'y a
+# personne pour appeler cette route.
+
+
+class PlatformOperatorListCreateView(generics.ListCreateAPIView):
+    """GET/POST /platform/operators/ — **admin only**, both verbs.
+
+    GET: the Chioni team, ``?role=`` and ``?is_active=`` filtered (unknown
+    value → 400 per field, S1 norm). POST: create an operator from a
+    PHONE — shadow account, OTP claim, no password ever transmitted.
+    """
+
+    permission_classes = [IsPlatformStaff(PLATFORM_ADMIN)]
+    serializer_class = PlatformStaffSerializer
+
+    def get_queryset(self):
+        qs = PlatformStaff.objects.all().order_by("id")
+        params = self.request.query_params
+        role = (params.get("role") or "").strip()
+        if role:
+            if role not in PlatformStaff.Role.values:
+                raise DrfValidationError({"role": ["Rôle d'exploitant inconnu."]})
+            qs = qs.filter(role=role)
+        is_active = (params.get("is_active") or "").strip().lower()
+        if is_active:
+            if is_active not in {"true", "false"}:
+                raise DrfValidationError(
+                    {"is_active": ["Valeur attendue : true ou false."]}
+                )
+            qs = qs.filter(is_active=is_active == "true")
+        return qs
+
+    @extend_schema(
+        request=PlatformStaffCreateSerializer,
+        responses={201: PlatformStaffSerializer},
+    )
+    def create(self, request, *args, **kwargs):
+        serializer = PlatformStaffCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        operator = create_platform_staff(
+            actor=request.user, **serializer.validated_data
+        )
+        return Response(
+            PlatformStaffSerializer(operator).data,
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class PlatformOperatorDetailView(generics.RetrieveUpdateAPIView):
+    """GET/PATCH /platform/operators/{pk}/ — **admin only**.
+
+    PATCH is the ONLY write: change a role, activate or deactivate. There
+    is no DELETE — an operator row is history (it is what makes an old
+    audit entry readable), and revoking an access is ``is_active: false``.
+    The « last active admin » guard refuses the move that would leave
+    Chioni without a single administrator.
+    """
+
+    permission_classes = [IsPlatformStaff(PLATFORM_ADMIN)]
+    serializer_class = PlatformStaffSerializer
+    http_method_names = ["get", "patch", "head", "options"]
+    queryset = PlatformStaff.objects.all()
+
+    @extend_schema(
+        request=PlatformStaffUpdateSerializer,
+        responses={200: PlatformStaffSerializer},
+    )
+    def patch(self, request, *args, **kwargs):
+        operator = self.get_object()
+        # ``partial=True`` is load-bearing, not decoration: DRF's
+        # ``BooleanField`` reads a MISSING key of an HTML/multipart body as
+        # ``False`` (unchecked checkboxes are simply not submitted) unless
+        # the serializer is partial. Without it, a client patching only
+        # ``role`` would silently DEACTIVATE the operator.
+        serializer = PlatformStaffUpdateSerializer(
+            data=request.data, partial=True
+        )
+        serializer.is_valid(raise_exception=True)
+        operator = update_platform_staff(
+            actor=request.user, operator=operator, **serializer.validated_data
+        )
+        return Response(PlatformStaffSerializer(operator).data)

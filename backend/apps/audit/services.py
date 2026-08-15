@@ -100,6 +100,60 @@ class AuditAction:
     KYC_DOCUMENT_UPLOADED = "kyc_document.uploaded"
     KYC_DOCUMENT_ARCHIVED = "kyc_document.archived"
 
+    # Abonnement SaaS Chioni → centre (S5, ADR 0018 décisions 2 & 3).
+    # Payload contract: references, status codes and the plan's price ONLY.
+    # The MOTIVE of a suspension/termination is free operator text: it
+    # lives on the ``CenterSubscription`` row (read by the platform and by
+    # the director of the center concerned) and NEVER in this payload —
+    # same rule as ``kyc_reason`` and ``Invoice.cancel_reason``.
+    #
+    # The three ``subscription.*`` actions carry their ``center`` and ARE
+    # whitelisted in the director's journal (ADR 0018 invariant 6): a
+    # change of plan or a suspension is an exploitation event of his own
+    # center, and he answers for it. The two ``subscription_plan.*`` ones
+    # are platform-wide (``center=None``) — they concern the offer
+    # catalogue, not a tenant, so no journal ever shows them.
+    SUBSCRIPTION_PLAN_CREATED = "subscription_plan.created"
+    SUBSCRIPTION_PLAN_UPDATED = "subscription_plan.updated"
+    SUBSCRIPTION_CREATED = "subscription.created"
+    SUBSCRIPTION_PLAN_CHANGED = "subscription.plan_changed"
+    SUBSCRIPTION_STATUS_CHANGED = "subscription.status_changed"
+
+    # Facturation SaaS Chioni → centre (S5 lot 2, ADR 0018 décision 4).
+    # Registre SÉPARÉ du ledger des soins : ces quatre actions ne décrivent
+    # JAMAIS l'argent d'un patient. Payload: references, amounts, currency,
+    # status codes — **jamais** le motif d'une annulation ni celui d'une
+    # contre-passation (ils vivent sur la ligne, lus par Chioni et par le
+    # directeur du centre concerné). Les quatre portent leur ``center`` et
+    # sont dans la liste blanche du journal du directeur : c'est l'argent de
+    # SON centre, il doit le voir.
+    SUBSCRIPTION_INVOICE_ISSUED = "subscription_invoice.issued"
+    SUBSCRIPTION_INVOICE_CANCELLED = "subscription_invoice.cancelled"
+    SUBSCRIPTION_PAYMENT_RECORDED = "subscription_payment.recorded"
+    SUBSCRIPTION_PAYMENT_REVERSED = "subscription_payment.reversed"
+
+    # Module Support centre → Chioni (S5 lot 3, ADR 0018 décision 5).
+    # Payload contract, and it is THE parade (b) of the décision: **jamais
+    # le contenu**. Ni l'objet du ticket, ni le corps d'un message, ni un
+    # nom de fichier — seulement des ids, le code de catégorie, les codes
+    # de statut et le côté (« centre » / « chioni »). Un ticket est du
+    # texte libre écrit par un humain pressé : s'il y glisse une donnée
+    # patient, elle ne doit surtout pas être recopiée dans le journal
+    # immuable que le directeur du centre lit.
+    # Les quatre portent leur ``center`` et sont dans la liste blanche du
+    # journal du directeur : ce sont les demandes de SON centre.
+    SUPPORT_TICKET_OPENED = "support_ticket.opened"
+    SUPPORT_TICKET_STATUS_CHANGED = "support_ticket.status_changed"
+    SUPPORT_MESSAGE_POSTED = "support_ticket.message_posted"
+    SUPPORT_ATTACHMENT_UPLOADED = "support_ticket.attachment_uploaded"
+
+    # Équipe Chioni elle-même (S5 lot 3, ADR 0018 décision 6) — la 4ᵉ
+    # casquette se gère désormais par API auditée, l'admin Django est
+    # refermé. Actions TRANSVERSES (``center=None``) : elles ne concernent
+    # aucun tenant, donc aucun journal de directeur ne les montre.
+    PLATFORM_STAFF_CREATED = "platform_staff.created"
+    PLATFORM_STAFF_UPDATED = "platform_staff.updated"
+
     # Patient administrative-financial data (S3, ADR 0016) — payloads:
     # ids and comma-joined FIELD NAMES only, never an insurer name or a
     # member number.

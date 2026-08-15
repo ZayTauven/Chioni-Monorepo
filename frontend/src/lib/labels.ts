@@ -9,6 +9,7 @@
 import type {
   AppointmentStatus,
   AuditAction,
+  BillingPeriod,
   BloodGroup,
   CashMethod,
   CenterType,
@@ -38,6 +39,12 @@ import type {
   Relationship,
   Sex,
   StaffRole,
+  SubscriptionInvoiceStatus,
+  SubscriptionPaymentMethod,
+  SubscriptionStatus,
+  SupportCategory,
+  SupportPriority,
+  SupportTicketStatus,
   UnpaidOrdering,
   VitalSignsMeasures,
 } from './types';
@@ -532,6 +539,23 @@ export const AUDIT_ACTION_LABELS: Record<AuditAction, string> = {
   'dispute.opened': 'Litige ouvert',
   'dispute.resolved': 'Litige résolu',
   'patient_profile.merged': 'Dossiers patients fusionnés',
+  /* S5 (ADR 0018) — l'abonnement du centre. « Modifié » plutôt que « gelé » :
+     le libellé d'une ligne de journal ne préjuge pas du sens de la décision
+     (une réactivation passe par la même action que la suspension). */
+  'subscription.created': 'Abonnement ouvert',
+  'subscription.plan_changed': 'Offre d’abonnement changée',
+  'subscription.status_changed': 'État de l’abonnement modifié',
+  'subscription_invoice.issued': 'Facture d’abonnement émise',
+  'subscription_invoice.cancelled': 'Facture d’abonnement annulée',
+  'subscription_payment.recorded': 'Règlement d’abonnement enregistré',
+  'subscription_payment.reversed': 'Règlement d’abonnement annulé',
+  /* S5 lot 3 — le support de SON centre. Le libellé dit l'ÉVÉNEMENT, jamais
+     de quoi il parle : l'objet et le corps d'un ticket ne sont pas dans le
+     journal, et le directeur les lit dans le fil, à sa place. */
+  'support_ticket.opened': 'Demande d’aide ouverte',
+  'support_ticket.status_changed': 'État d’une demande d’aide modifié',
+  'support_ticket.message_posted': 'Message sur une demande d’aide',
+  'support_ticket.attachment_uploaded': 'Pièce jointe déposée sur une demande d’aide',
 };
 
 /** Familles du sélecteur — l'ordre et le regroupement de la liste blanche. */
@@ -580,7 +604,35 @@ export const AUDIT_ACTION_GROUPS: Array<{ label: string; actions: AuditAction[] 
   { label: 'Caisse', actions: ['cash_payment.recorded', 'cash_payment.reversed'] },
   { label: 'Litiges', actions: ['dispute.opened', 'dispute.resolved'] },
   { label: 'Dossiers patients', actions: ['patient_profile.merged'] },
+  {
+    label: 'Abonnement Chioni',
+    actions: [
+      'subscription.created',
+      'subscription.plan_changed',
+      'subscription.status_changed',
+      'subscription_invoice.issued',
+      'subscription_invoice.cancelled',
+      'subscription_payment.recorded',
+      'subscription_payment.reversed',
+    ],
+  },
+  {
+    label: 'Support',
+    actions: [
+      'support_ticket.opened',
+      'support_ticket.status_changed',
+      'support_ticket.message_posted',
+      'support_ticket.attachment_uploaded',
+    ],
+  },
 ];
+
+/**
+ * Une transition `actif ⇄ impaye` posée par la tâche quotidienne : `actor`
+ * vaut `null` et le payload porte `automatic: true`. Le journal le DIT plutôt
+ * que d'afficher un tiret qui laisserait chercher une main.
+ */
+export const AUDIT_ACTOR_AUTOMATIC = 'Constaté automatiquement';
 
 /**
  * Pourquoi le clinique n'est pas dans ce journal — dit au directeur SANS
@@ -618,7 +670,11 @@ export const AUDIT_JOURNAL_EMPTY =
  *
  * Couverture vérifiée clé par clé contre les `audit()` des actions de la
  * liste blanche (personnel, centre, KYC, tarifs, factures, demandes, caisse,
- * rail diaspora, litiges, fusion).
+ * rail diaspora, litiges, fusion, abonnement SaaS et support). Revue guardian
+ * S5 : les clés du lot 3 (support) manquaient — le fail-closed a tenu (rien
+ * n'a fuité), mais une ligne de journal réduite à « 3 références techniques
+ * non affichées » n'est plus un journal. Toute action neuve du backend
+ * s'accompagne désormais de ses clés ici, sinon elle s'affiche muette.
  */
 export const AUDIT_PAYLOAD_LABELS: Record<string, string> = {
   /* personnel */
@@ -701,6 +757,31 @@ export const AUDIT_PAYLOAD_LABELS: Record<string, string> = {
   insurances_moved: 'Assurances déplacées',
   medical_file_moved: 'Fiche médicale reprise',
   user_transferred: 'Compte transféré',
+  /* abonnement SaaS (S5) — des références, des codes, des montants, jamais un
+     motif : `has_reason` dit qu'il en existe un, l'écran d'abonnement le rend. */
+  subscription_id: 'Abonnement',
+  plan_id: 'Offre',
+  plan_code: 'Code de l’offre',
+  old_plan_id: 'Ancienne offre',
+  automatic: 'Constaté automatiquement',
+  subscription_invoice_id: 'Facture d’abonnement',
+  subscription_payment_id: 'Règlement d’abonnement',
+  subscription_status_after: 'État de l’abonnement après',
+  number: 'N° de facture',
+  period_start: 'Début de période',
+  period_end: 'Fin de période',
+  due_date: 'Échéance',
+  /* support (S5 lot 3) — des ids et des CODES fermés (catégorie, urgence,
+     côté, statut). L'objet du ticket, le corps d'un message et le nom d'un
+     fichier ne sont posés dans AUCUN payload par le backend, et n'ont donc
+     aucune clé ici : rien à masquer, rien à rendre. */
+  ticket_id: 'Demande d’aide',
+  category: 'Sujet de la demande',
+  priority: 'Urgence déclarée',
+  ticket_status: 'État de la demande',
+  message_id: 'Message',
+  author_side: 'Écrit par',
+  attachment_id: 'Pièce jointe',
 };
 
 /**
@@ -959,9 +1040,17 @@ export const UPLOAD_IMAGE_HINT = 'JPEG, PNG ou WebP · 2 Mo maximum';
 export const UPLOAD_FORMAT_REFUSED =
   'Formats acceptés : photo JPEG, PNG ou WebP. Le PDF n’est pas encore pris en charge — photographiez le document.';
 
-/** Taille lisible d'un fichier (Ko/Mo), en français. */
+/**
+ * Taille lisible d'un fichier (Ko/Mo), en français.
+ *
+ * `toFixed(1)` rendait « 1.5 Mo » — un point décimal anglais dans une phrase
+ * lue par une secrétaire à qui l'on refuse sa capture d'écran. Tout le reste
+ * du fichier passe par `Intl` ; celui-ci aussi (correctif revue S5).
+ */
+const MB_FORMAT = new Intl.NumberFormat('fr-FR', { maximumFractionDigits: 1 });
+
 export function formatBytes(bytes: number): string {
-  if (bytes >= 1048576) return `${(bytes / 1048576).toFixed(1)} Mo`;
+  if (bytes >= 1048576) return `${MB_FORMAT.format(bytes / 1048576)} Mo`;
   return `${Math.max(1, Math.round(bytes / 1024))} Ko`;
 }
 
@@ -1240,3 +1329,471 @@ export function countryName(code: string): string {
     return code;
   }
 }
+
+/* ══ S5 (ADR 0018) — abonnement SaaS et module Support ═══════════════════
+   Les phrases produit du sprint vivent ici, comme celles du KYC en S4 : elles
+   sont dites À L'IDENTIQUE des deux côtés (le bandeau du directeur et la
+   modale de l'exploitant qui décide le gel). Un texte recopié dérive ; un
+   texte partagé se corrige une fois. ══════════════════════════════════════ */
+
+/* ── l'abonnement du centre ── */
+
+export const SUBSCRIPTION_STATUS_LABELS: Record<SubscriptionStatus, string> = {
+  essai: 'Période d’essai',
+  actif: 'Actif',
+  impaye: 'Facture en retard',
+  suspendu: 'Gestion suspendue',
+  resilie: 'Contrat terminé',
+};
+
+/** Ce que l'état signifie, en une phrase, sous le badge. */
+export const SUBSCRIPTION_STATUS_HELP: Record<SubscriptionStatus, string> = {
+  essai: 'Votre centre découvre Chioni : rien n’est facturé pendant l’essai.',
+  actif: 'Votre abonnement est à jour. Rien n’est fermé.',
+  impaye: 'Une facture a dépassé son échéance. Rien n’est fermé pour autant.',
+  suspendu:
+    'La gestion administrative de votre centre est gelée le temps de régulariser.',
+  resilie:
+    'Le contrat est terminé. Vos données restent lisibles et exportables.',
+};
+
+export const BILLING_PERIOD_LABELS: Record<BillingPeriod, string> = {
+  mensuel: 'par mois',
+  annuel: 'par an',
+};
+
+/** Périodicité en tête de phrase (sélecteur back-office). */
+export const BILLING_PERIOD_NOUNS: Record<BillingPeriod, string> = {
+  mensuel: 'Mensuel',
+  annuel: 'Annuel',
+};
+
+/**
+ * Ce qui continue de fonctionner, quel que soit l'état de l'abonnement.
+ * C'est l'arbitrage produit n° 2 du sprint : **suspendre ne doit jamais
+ * empêcher de soigner ni renvoyer un centre au papier.** Phrase du backend
+ * (`SUBSCRIPTION_SUSPENDED_MESSAGE`), tenue à l'identique côté écran.
+ */
+export const SUBSCRIPTION_STILL_WORKS =
+  'Les soins, le carnet de santé, les rendez-vous, l’inscription des patients, la facturation et la caisse continuent normalement — ainsi que la lecture et l’export de vos données.';
+
+/** Ce que le gel administratif ferme — et rien d'autre. */
+export const SUBSCRIPTION_FROZEN_CLOSED =
+  'Sont temporairement fermés : l’ajout, la modification et la réactivation d’un membre du personnel, la création et la modification des tarifs, ainsi que les statistiques du tableau de bord.';
+
+/** Un impayé ne ferme rien : le dire est le cœur du bandeau. */
+export const SUBSCRIPTION_UNPAID_NOTHING_CLOSED =
+  'Aucune fonction n’est fermée : votre centre travaille exactement comme avant.';
+
+/** Titre du bandeau, par état — jamais « erreur », jamais « panne ». */
+export const SUBSCRIPTION_BANNER_TITLE: Record<SubscriptionStatus, string> = {
+  essai: 'Période d’essai en cours',
+  actif: 'Abonnement à jour',
+  impaye: 'Une facture d’abonnement est en retard',
+  suspendu: 'Gestion administrative suspendue',
+  resilie: 'Contrat Chioni terminé',
+};
+
+/** Phrase d'ouverture du bandeau, par état. */
+export const SUBSCRIPTION_BANNER_LEAD: Record<SubscriptionStatus, string> = {
+  essai: 'Votre centre est en période d’essai.',
+  actif: 'Votre abonnement Chioni est à jour.',
+  impaye:
+    'Une facture d’abonnement a dépassé son échéance. Réglez-la quand vous le pouvez, puis prévenez l’équipe Chioni.',
+  suspendu:
+    'L’équipe Chioni a suspendu la gestion administrative de votre centre.',
+  resilie:
+    'Le contrat de votre centre avec Chioni est terminé. Vos données restent à vous.',
+};
+
+/** Un contrat terminé n'est jamais une prise d'otage des données. */
+export const SUBSCRIPTION_TERMINATED_DATA =
+  'Rien n’est effacé : les dossiers de vos patients, vos factures et vos reçus restent lisibles, et vous pouvez continuer à les exporter.';
+
+/** Titre du bloc portant le motif de la dernière décision (directeur seul). */
+export const SUBSCRIPTION_REASON_TITLE: Record<SubscriptionStatus, string> = {
+  essai: 'Message de l’équipe Chioni',
+  actif: 'Message de l’équipe Chioni',
+  impaye: 'Message de l’équipe Chioni',
+  suspendu: 'Ce qu’il faut régulariser',
+  resilie: 'Motif de la fin du contrat',
+};
+
+/** Rappel de confidentialité du motif — il n'est lu que par le directeur. */
+export const SUBSCRIPTION_REASON_PRIVACY =
+  'Ce message vous est adressé à vous seul : ni votre équipe, ni vos patients, ni leurs proches ne le voient.';
+
+/**
+ * Les deux `stats/*` répondent 400 sur un centre gelé (vigilance ADR 0018) :
+ * l'écran met une explication à la place des graphiques, jamais une page
+ * d'erreur — et surtout jamais l'idée que le produit est en panne.
+ */
+export const SUBSCRIPTION_STATS_FROZEN_TITLE = 'Chiffres momentanément indisponibles';
+export const SUBSCRIPTION_STATS_FROZEN_HINT =
+  'Vos graphiques reviendront dès que l’abonnement sera régularisé. Le reste du centre fonctionne : la file du jour, les dossiers et la caisse sont à leur place.';
+
+/**
+ * Version courte, pour les blocs SECONDAIRES du tableau de bord.
+ *
+ * Revue UX care S5 : un centre gelé recevait quatre fois le même paragraphe de
+ * trois phrases (les deux graphiques + les deux compteurs financiers). Répéter
+ * une mauvaise nouvelle quatre fois la transforme en mur ; l'explication
+ * complète reste sur le graphique principal de chaque bloc, les compteurs se
+ * contentent d'une ligne.
+ */
+export const SUBSCRIPTION_STATS_FROZEN_SHORT =
+  'Chiffre indisponible le temps de régulariser l’abonnement.';
+
+/* ── quotas : une information, jamais un blocage ── */
+
+export const QUOTA_LABELS = {
+  staff: 'Membres du personnel',
+  practitioners: 'Praticiens',
+} as const;
+
+/** « 18 praticiens sur 15 inclus » / « 8 praticiens (illimité) ». */
+export function quotaSummary(
+  used: number,
+  included: number | null,
+  what: 'staff' | 'practitioners',
+): string {
+  const noun = what === 'staff' ? 'membre' : 'praticien';
+  const plural = used > 1 ? 's' : '';
+  if (included === null) return `${used} ${noun}${plural} · sans limite`;
+  return `${used} ${noun}${plural} sur ${included} inclus`;
+}
+
+/** Le dépassement est une information COMMERCIALE — jamais un verrou. */
+export const QUOTA_OVER_NOTICE =
+  'Vous dépassez ce que votre offre inclut. Rien n’est bloqué pour autant : continuez à travailler, l’équipe Chioni vous proposera l’offre adaptée.';
+
+export const QUOTA_WITHIN_NOTICE =
+  'Votre usage tient dans votre offre.';
+
+/* ── les factures d'abonnement (Chioni → centre) ── */
+
+export const SUBSCRIPTION_INVOICE_STATUS_LABELS: Record<
+  SubscriptionInvoiceStatus,
+  string
+> = {
+  emise: 'À régler',
+  payee: 'Réglée',
+  annulee: 'Annulée',
+};
+
+/** Vocabulaire du solde : « déjà reçu » / « reste à régler », jamais « impayé ». */
+export const SUBSCRIPTION_INVOICE_PAID_LABEL = 'Déjà reçu par Chioni';
+export const SUBSCRIPTION_INVOICE_BALANCE_LABEL = 'Reste à régler';
+
+/**
+ * Le solde à zéro, DIT — et pas seulement peint en vert.
+ *
+ * Revue a11y S5 : « il ne reste rien à payer » n'était porté que par la
+ * couleur du grand nombre (`--ax-success-700` + fond teinté). Une information
+ * de cette portée ne repose jamais sur la couleur seule.
+ */
+export const SUBSCRIPTION_INVOICE_SETTLED_LABEL = 'Facture soldée — rien à régler.';
+
+/** Un règlement partiel est normal, pas un défaut. */
+export const SUBSCRIPTION_PARTIAL_NOTICE =
+  'Un règlement partiel est enregistré : le reste à régler ci-dessous est le montant qui manque encore.';
+
+export const SUBSCRIPTION_PAYMENT_METHOD_LABELS: Record<
+  SubscriptionPaymentMethod,
+  string
+> = {
+  virement: 'Virement',
+  especes: 'Espèces',
+  mobile_money: 'Mobile money',
+  autre: 'Autre moyen',
+};
+
+/** Un règlement contre-passé, dit au directeur : « annulé », jamais le jargon. */
+export const SUBSCRIPTION_PAYMENT_REVERSED_LABEL = 'Annulé par Chioni';
+
+/** Le règlement se fait hors ligne — l'écran ne promet aucun bouton « payer ». */
+export const SUBSCRIPTION_OFFLINE_PAYMENT_NOTICE =
+  'Le règlement se fait hors de l’application (virement, espèces ou mobile money) : dès que l’équipe Chioni l’a reçu, elle l’enregistre et cet écran se met à jour.';
+
+/** Aucune facture encore émise — ce n'est pas « aucun contrat ». */
+export const SUBSCRIPTION_NO_INVOICE_YET =
+  'Aucune facture pour l’instant : la première sera émise à la fin de la période en cours.';
+
+/** Aucun contrat en base : l'état NORMAL d'un centre né avant S5 (404). */
+export const SUBSCRIPTION_NONE_TITLE = 'Aucun abonnement enregistré';
+export const SUBSCRIPTION_NONE_MESSAGE =
+  'Votre centre n’a pas encore de contrat d’abonnement dans Chioni. Ce n’est pas une erreur : rien n’est fermé, et l’équipe Chioni ouvrira le contrat le moment venu.';
+
+/** Écran réservé au directeur — la garde frontend suit la permission backend. */
+export const SUBSCRIPTION_DIRECTOR_ONLY_TITLE = 'Écran réservé au directeur';
+export const SUBSCRIPTION_DIRECTOR_ONLY_MESSAGE =
+  'Le contrat d’abonnement porte un prix, une échéance et les messages de l’équipe Chioni : il est réservé à la direction du centre.';
+
+/* ── le module Support ── */
+
+export const SUPPORT_CATEGORY_LABELS: Record<SupportCategory, string> = {
+  bug: 'Quelque chose ne marche pas',
+  question: 'Une question',
+  facturation: 'Facturation et abonnement',
+  autre: 'Autre sujet',
+};
+
+export const SUPPORT_STATUS_LABELS: Record<SupportTicketStatus, string> = {
+  ouvert: 'Ouvert',
+  en_cours: 'En cours de traitement',
+  resolu: 'Résolu',
+  ferme: 'Fermé',
+};
+
+export const SUPPORT_PRIORITY_LABELS: Record<SupportPriority, string> = {
+  basse: 'Pas urgent',
+  normale: 'Normal',
+  haute: 'Important',
+  urgente: 'Urgent — le centre est bloqué',
+};
+
+/** Ordre d'affichage du sélecteur, du plus calme au plus urgent. */
+export const SUPPORT_PRIORITIES: SupportPriority[] = [
+  'basse',
+  'normale',
+  'haute',
+  'urgente',
+];
+
+export const SUPPORT_CATEGORIES: SupportCategory[] = [
+  'bug',
+  'question',
+  'facturation',
+  'autre',
+];
+
+export const SUPPORT_STATUSES: SupportTicketStatus[] = [
+  'ouvert',
+  'en_cours',
+  'resolu',
+  'ferme',
+];
+
+/**
+ * **L'AVERTISSEMENT OBLIGATOIRE, au moment d'écrire.** Phrase exposée par le
+ * backend (`SUPPORT_PRIVACY_NOTICE` dans `apps/support/models.py`) et reprise
+ * ici À LA LETTRE pour que l'écran et l'API ne dérivent pas. Elle se place à
+ * côté du champ de saisie — jamais dans une aide repliée : c'est la seule
+ * parade informationnelle d'un risque assumé (un ticket est du texte libre
+ * qu'un exploitant Chioni lira).
+ */
+export const SUPPORT_PRIVACY_NOTICE =
+  'Ne mettez ni nom de patient ni information médicale dans un ticket : donnez le numéro de dossier ou l’identifiant affiché à l’écran. L’équipe Chioni lit ces messages.';
+
+/**
+ * Le titre du bloc — il dit AIDE, pas interdiction.
+ *
+ * Revue UX care S5 : l'avertissement était monté en `ax-alert--warning`, avec
+ * exactement le poids visuel de « Gestion suspendue ». Sur l'écran où l'on
+ * demande de l'aide, un panneau jaune en tête de formulaire se lit comme un
+ * reproche AVANT d'avoir écrit un mot — et le premier réflexe d'une secrétaire
+ * pressée est de refermer. Le contenu ne bouge pas (parité backend), le
+ * CADRAGE change : un titre d'aide, un ton `info`, et la marche à suivre juste
+ * en dessous.
+ */
+export const SUPPORT_PRIVACY_TITLE = 'Comment décrire votre problème';
+
+/**
+ * Ce qu'il faut écrire À LA PLACE, aussi concrètement que ce qui est interdit.
+ *
+ * Revue UX care S5 : `SUPPORT_PRIVACY_NOTICE` renvoie au « numéro de dossier »,
+ * or AUCUN écran du centre n'affiche de « numéro de dossier » patient — la
+ * consigne pointe vers quelque chose d'introuvable. Ce qui EST affiché et
+ * recopiable : « Facture n° 42 », un numéro de reçu (« G-000001 »), une date,
+ * le nom de l'écran. On le dit, avec un exemple, parce qu'un exemple vaut mieux
+ * qu'une règle.
+ */
+export const SUPPORT_PRIVACY_HOWTO =
+  'Décrivez ce que vous avez fait et ce qui s’est passé, en désignant les choses par ce qui est écrit à l’écran : un numéro de facture, un numéro de reçu, une date, le nom de la page.';
+
+/** L'exemple, à côté de la règle — c'est lui qui débloque la rédaction. */
+export const SUPPORT_PRIVACY_EXAMPLE =
+  'Par exemple : « Impossible d’enregistrer un paiement sur la facture n° 42, hier vers 10 h — le bouton reste gris. »';
+
+/**
+ * **Aucune notification n'existe** (vigilance actée ADR 0018 lot 3) : ni SMS
+ * ni e-mail quand Chioni répond. Le taire ferait attendre une secrétaire
+ * devant son téléphone. On le dit — et on dit le geste utile à la place.
+ */
+export const SUPPORT_NO_NOTIFICATION_NOTICE =
+  'Vous ne recevrez ni SMS ni e-mail : revenez sur cette page pour lire la réponse de l’équipe Chioni.';
+
+/** Qui voit quoi — dit à l'ouverture, pour qu'on écrive en connaissance. */
+export const SUPPORT_VISIBILITY_NOTICE =
+  'Ce ticket sera lu par l’équipe Chioni et par la direction de votre centre.';
+
+/** Le support reste ouvert quoi qu'il arrive — y compris sur un centre gelé. */
+export const SUPPORT_ALWAYS_OPEN_NOTICE =
+  'Le support reste ouvert quel que soit l’état de votre abonnement : si votre gestion est suspendue, c’est précisément ici qu’il faut demander pourquoi.';
+
+/** Un ticket fermé n'accepte plus rien — l'écran le dit avant le refus. */
+export const SUPPORT_CLOSED_NOTICE =
+  'Ce ticket est fermé : il ne reçoit plus de message ni de pièce jointe. Pour un autre sujet, ouvrez un nouveau ticket.';
+
+/** Un ticket résolu accepte encore un message, et ne se rouvre pas tout seul. */
+export const SUPPORT_RESOLVED_NOTICE =
+  'Ce ticket est marqué résolu. Si le problème persiste, écrivez-le ici : l’équipe Chioni le reprendra.';
+
+/** Le centre ne trie pas : le statut est le geste de Chioni. */
+export const SUPPORT_STATUS_READONLY_NOTICE =
+  'L’état du ticket est mis à jour par l’équipe Chioni.';
+
+/** La sortie d'un ticket fermé, en geste plutôt qu'en lien de retour. */
+export const SUPPORT_NEW_TICKET_ACTION = 'Ouvrir un nouveau ticket';
+
+/* ── back-office : ce que le tri d'un ticket déclenche ── */
+
+/**
+ * `ferme` est DÉFINITIF (machine à états backend). Le poids du geste est porté
+ * par l'UI avant le clic — et il est porté ici, partagé, parce que la même
+ * nouvelle est annoncée au centre par `SUPPORT_CLOSED_NOTICE`.
+ */
+export const SUPPORT_CLOSE_WARNING =
+  'Fermer un ticket est définitif : il n’acceptera plus aucun message ni aucune pièce, et il ne se rouvrira pas. Pour un autre sujet, le centre en ouvrira un nouveau.';
+
+/** Les autres transitions : le centre les voit, mais rien ne le prévient. */
+export const SUPPORT_STATUS_CHANGE_NOTICE =
+  'Le centre verra ce changement d’état sur son écran. Aucune notification ne lui est envoyée.';
+
+/** Les deux côtés du fil, nommés. */
+export const SUPPORT_SIDE_LABELS = {
+  centre: 'Votre centre',
+  chioni: 'Chioni',
+} as const;
+
+/** L'interlocuteur est « Chioni », jamais une personne (author_display null). */
+export const SUPPORT_CHIONI_AUTHOR = 'Équipe Chioni';
+
+export const SUPPORT_EMPTY_TITLE = 'Aucun ticket pour l’instant';
+export const SUPPORT_EMPTY_MESSAGE =
+  'Quand quelque chose ne fonctionne pas, ou qu’une question reste sans réponse, ouvrez un ticket : l’équipe Chioni vous répond ici même.';
+
+/** Pièces jointes : une capture d'écran est un PNG, le PDF est refusé. */
+export const SUPPORT_ATTACHMENT_HINT =
+  'Une capture d’écran aide beaucoup. Photo ou capture uniquement — les PDF ne sont pas acceptés.';
+
+export function supportAttachmentLabel(id: number): string {
+  return `Pièce jointe n° ${id}`;
+}
+
+/* ── le papier (facture / reçu), partagé par les émetteurs ───────────────
+   Base Vireo `ecommerce/InvoiceDetails`. Ces libellés sont ceux du DOCUMENT
+   lui-même, pas d'un écran : ils seront lus tels quels sur une impression, et
+   ils serviront aux factures patient et aux reçus « R- » / « G- » quand ces
+   écrans se brancheront sur le même composant. */
+
+export const DOC_KIND_INVOICE = 'Facture';
+export const DOC_KIND_RECEIPT = 'Reçu';
+export const DOC_ISSUER_LABEL = 'Émis par';
+export const DOC_RECIPIENT_LABEL = 'Émis à';
+export const DOC_LINES_HEADER = 'Désignation';
+export const DOC_AMOUNT_HEADER = 'Montant';
+export const DOC_NOTES_LABEL = 'Notes';
+export const DOC_PAYMENT_LABEL = 'Règlement';
+export const DOC_PRINT_LABEL = 'Imprimer';
+/** Un document annulé ne doit JAMAIS s'imprimer comme un document valide. */
+export const DOC_VOIDED_LABEL = 'Facture annulée — sans valeur';
+
+/** L'émetteur « Chioni » d'une facture d'abonnement. */
+export const CHIONI_ISSUER = {
+  name: 'Chioni',
+  qualifier: 'Éditeur du logiciel de gestion',
+  lines: ['Abonnement au logiciel de gestion Chioni', 'Union des Comores'],
+} as const;
+
+/** La qualité du destinataire d'une facture d'abonnement. */
+export const CENTER_RECIPIENT_QUALIFIER = 'Centre de santé abonné';
+
+/** Une facture d'abonnement porte UNE ligne : la période servie. */
+export function subscriptionPeriodLine(start: string, end: string): string {
+  return `Période du ${start} au ${end}`;
+}
+
+/* ── back-office : ce qu'une décision d'abonnement déclenche ── */
+
+/**
+ * Le poids de la décision, porté par l'UI avant le clic — patron
+ * `KYC_SUSPEND_WARNING`. Ce que gèle une suspension d'abonnement est BORNÉ, et
+ * ce qui continue est dit EN PREMIER.
+ */
+export const SUBSCRIPTION_SUSPEND_WARNING =
+  'Suspendre gèle la gestion administrative du centre : personnel, tarifs et statistiques. Le centre continue de soigner, de prendre des rendez-vous, d’inscrire des patients au guichet, de facturer et d’encaisser — et les paiements de la diaspora continuent d’arriver.';
+
+export const SUBSCRIPTION_TERMINATE_WARNING =
+  'Résilier ferme la gestion administrative comme une suspension, et met fin au contrat. Le centre continue de soigner et d’encaisser, et garde la lecture ET l’export de ses données : on ne prend jamais les dossiers d’un centre en otage.';
+
+export const SUBSCRIPTION_UNFREEZE_NOTICE =
+  'Le centre retrouve la gestion de son personnel, de ses tarifs et de ses statistiques.';
+
+export const SUBSCRIPTION_UNPAID_FLAG_NOTICE =
+  'Signaler un impayé ne ferme rien : le centre voit un bandeau et reçoit des relances. Le gel, lui, se décide séparément.';
+
+/** Le motif est LU PAR LE DIRECTEUR — une consigne, pas une note interne. */
+export const SUBSCRIPTION_REASON_HELP =
+  'Ce motif est lu par le directeur du centre, et par lui seul. Écrivez une consigne actionnable (« régularisez la facture A-000012 »), pas une note interne.';
+
+/** Aucune tâche ne suspend ni ne résilie : le dire au back-office. */
+export const SUBSCRIPTION_NO_AUTO_CUT =
+  'Le cycle tourne seul (émission, drapeau d’impayé, relances) mais aucune tâche ne suspend ni ne résilie : le gel reste une décision d’exploitant, motivée et tracée.';
+
+/** L'émission manuelle est à corps vide : le prix vient de l'offre. */
+export const SUBSCRIPTION_ISSUE_NOTICE =
+  'L’émission reprend exactement ce que ferait la tâche planifiée pour ce contrat : la période due, au montant figé de l’offre, avec son échéance. Le prix d’une offre se change sur l’offre.';
+
+/** Le franc comorien ne porte pas de décimales — dit DANS le champ. */
+export const KMF_INTEGRAL_HINT =
+  'En francs comoriens entiers — le franc ne porte pas de décimales.';
+
+/* ── back-office : l'équipe Chioni ── */
+
+/** Un exploitant n'a ni nom ni téléphone dans ce payload : des ids. */
+export function operatorLabel(id: number): string {
+  return `Exploitant n° ${id}`;
+}
+
+export function operatorAccountLabel(userId: number): string {
+  return `Compte n° ${userId}`;
+}
+
+/** Un exploitant naît en compte ombre — ne jamais promettre d'identifiants. */
+export const OPERATOR_SHADOW_NOTICE =
+  'Le compte est créé sans mot de passe : la personne en prend possession en recevant un code par SMS à sa première connexion. Aucun identifiant n’est à transmettre.';
+
+/** Séparation des pouvoirs, expliquée AVANT le refus. */
+export const OPERATOR_SEPARATION_NOTICE =
+  'Un compte qui travaille déjà dans un centre de santé ne peut pas recevoir cette casquette : quelqu’un de l’équipe Chioni qui exerce aussi dans un centre utilise deux comptes.';
+
+/** La garde « dernier admin » est EXPLIQUÉE, pas subie. */
+export const OPERATOR_LAST_ADMIN_NOTICE =
+  'Vous êtes le dernier administrateur actif : ni la rétrogradation ni la désactivation ne sont possibles tant que personne d’autre ne porte ce rôle. Nommez d’abord un autre administrateur.';
+
+/**
+ * La même garde, sur la LIGNE concernée — une explication à trois cartouches
+ * de distance du bouton absent se subit quand même.
+ */
+export const OPERATOR_LAST_ADMIN_ROW =
+  'Dernier administrateur actif — nommez-en un autre pour pouvoir modifier ce compte.';
+
+/**
+ * Réactiver vaut créer (correctif guardian S5) : la séparation des pouvoirs
+ * s'applique aussi au retour. Le dire avant le clic évite un refus opaque.
+ */
+export const OPERATOR_REACTIVATE_NOTICE =
+  'Rendre l’accès revient à recréer la casquette : si ce compte travaille désormais dans un centre de santé, le retour sera refusé.';
+
+/** On révoque, on ne supprime pas : la ligne est de l'histoire. */
+export const OPERATOR_NO_DELETE_NOTICE =
+  'Un exploitant ne se supprime pas : on lui retire l’accès. La ligne reste, c’est elle qui rend lisibles les anciennes entrées du journal.';
+
+export const OPERATOR_LIST_AUSTERE_NOTICE =
+  'Cette liste ne montre que des identifiants de compte : ni nom, ni téléphone. C’est voulu — un compte créé par SMS porte son numéro dans son identifiant.';
+
+/** Écran réservé à l'`admin`, en lecture COMME en écriture. */
+export const OPERATOR_ADMIN_ONLY_TITLE = 'Réservé aux administrateurs';
+export const OPERATOR_ADMIN_ONLY_MESSAGE =
+  'Savoir qui détient la casquette d’exploitant relève de la gouvernance de Chioni : seuls les administrateurs de la plateforme accèdent à cet écran.';

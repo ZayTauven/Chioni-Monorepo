@@ -16,6 +16,12 @@ CONTENT CONTRACT (revue guardian — non négociable) :
   dans le foyer). Le SMS « paiement reçu » ne porte pas non plus le nom du
   centre : le téléphone d'un profil non revendiqué est déclaratif et un
   centre spécialisé est une information quasi médicale.
+- **Une seule exception, actée en S5 (ADR 0018 décision 4)** : les relances
+  de la facture d'ABONNEMENT SaaS portent un montant vers un membre du
+  personnel. Périmètre strict : **le directeur seul** (jamais le reste du
+  personnel), le montant que SON centre doit à Chioni, aucune donnée
+  patient, aucune donnée médicale, aucun détail de ligne — et pas davantage
+  le nom du centre.
 - **Le montant ne part que vers un lien de tutelle encore ACTIF** au moment
   de l'envoi — un partage peut survivre à la révocation ou à la suspension
   du lien, le SMS ne doit pas les survivre.
@@ -109,6 +115,32 @@ SMS_APPOINTMENT_REMINDER = (
     "Chioni : rappel — vous avez un rendez-vous demain à {time}."
 )
 
+#: Événements 8 et 9 — relances de la facture d'ABONNEMENT SaaS (S5 lot 2,
+#: ADR 0018 décision 4). **Première entorse assumée à la règle « un montant
+#: ne va qu'au tuteur »** : le destinataire est ici un membre du personnel,
+#: et le montant est celui que SON centre doit à Chioni — aucune donnée
+#: patient, aucune donnée médicale, aucun détail de ligne n'entre dans ces
+#: textes, et ils ne partent qu'au DIRECTEUR (jamais au reste du personnel :
+#: une dette commerciale n'est pas l'affaire de la secrétaire).
+#:
+#: Le nom du centre est volontairement ABSENT — même discipline que partout
+#: ailleurs (un SMS se lit par-dessus l'épaule ; « la clinique X doit
+#: 25 000 KMF » n'a pas à circuler). Le numéro de facture suffit à
+#: l'identifier dans l'app, qui porte le détail.
+SMS_SUBSCRIPTION_INVOICE_DUE = (
+    "Chioni : votre facture d'abonnement {number} de {amount_kmf} KMF "
+    "arrive à échéance aujourd'hui. Détail et règlement sur Chioni."
+)
+
+#: Relances suivantes (J+7, J+21) — ton d'information, jamais de menace :
+#: un retard de paiement ne ferme rien (l'abonnement passe « impayé », qui
+#: est un état d'alerte), et le gel reste une décision humaine motivée.
+SMS_SUBSCRIPTION_INVOICE_OVERDUE = (
+    "Chioni : votre facture d'abonnement {number} de {amount_kmf} KMF "
+    "reste à régler (échéance du {due_date}). Ouvrez Chioni ou "
+    "contactez-nous."
+)
+
 
 # ---------------------------------------------------------------------------
 # Plumbing
@@ -136,6 +168,29 @@ def _patient_phone(profile):
 
 def _guardian_phone(guardian_profile):
     return guardian_profile.user.phone or None
+
+
+def center_director_phones(center_id):
+    """Phones of the ACTIVE directors of a center — the ONLY staff audience.
+
+    S5 lot 2 (ADR 0018 décision 4): the subscription reminders are the
+    first business SMS carrying an amount to a member of staff, and they
+    stop at the director. A center may legitimately have two directors
+    (co-gérance) — both are responsible, both are told. Duplicates are
+    collapsed so one person never gets the same text twice.
+    """
+    from apps.centers.models import StaffMembership
+
+    phones = (
+        StaffMembership.objects.filter(
+            center_id=center_id,
+            role=StaffMembership.Role.DIRECTOR,
+            is_active=True,
+        )
+        .values_list("user__phone", flat=True)
+        .order_by("user_id")
+    )
+    return list(dict.fromkeys(phone for phone in phones if phone))
 
 
 def _schedule(event: str, phone, message: str) -> None:
@@ -289,3 +344,33 @@ def notify_appointment_reminder(appointment):
         _patient_phone(appointment.patient),
         SMS_APPOINTMENT_REMINDER.format(time=f"{local:%Hh%M}"),
     )
+
+
+def notify_subscription_invoice_reminder(invoice, *, balance_kmf, first):
+    """Événements 8/9 — relance d'une facture d'abonnement, AU DIRECTEUR.
+
+    Appelé par ``apps.billing.services.send_subscription_payment_reminders``
+    DANS la transaction qui incrémente ``reminders_sent`` : le on_commit de
+    ``_schedule`` garantit qu'aucun SMS ne part si l'anti-doublon n'est pas
+    commité (patron du rappel de rendez-vous).
+
+    ``balance_kmf`` est le SOLDE RESTANT (un règlement partiel a pu passer),
+    jamais le montant facturé — relancer sur un montant déjà réglé pour
+    moitié serait faux et vexant. ``first`` distingue le jour de l'échéance
+    (« arrive à échéance aujourd'hui ») des rappels suivants.
+
+    Un centre sans directeur actif joignable ne reçoit rien : l'appelant
+    l'écarte AVANT d'incrémenter son compteur de relances (sinon un tenant
+    injoignable brûlerait ses trois relances en silence), et Chioni le voit
+    dans son back-office (``director_active_count == 0``), pas par SMS.
+    """
+    template = (
+        SMS_SUBSCRIPTION_INVOICE_DUE if first else SMS_SUBSCRIPTION_INVOICE_OVERDUE
+    )
+    message = template.format(
+        number=invoice.number,
+        amount_kmf=format_kmf(balance_kmf),
+        due_date=f"{invoice.due_date:%d/%m/%Y}",
+    )
+    for phone in center_director_phones(invoice.center_id):
+        _schedule("relance_abonnement", phone, message)

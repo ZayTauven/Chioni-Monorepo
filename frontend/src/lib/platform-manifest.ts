@@ -12,6 +12,7 @@
  */
 
 import raw from '../data/platform-nav-manifest.json';
+import type { PlatformRole } from './types';
 import {
   groupsInSectionOf,
   hrefForSlug,
@@ -35,11 +36,38 @@ export function platformGroupsInSection(section: string): NavNode[] {
 /** Section codes → sidebar headings (the manifest stores them upper-case). */
 const SECTION_LABELS: Record<string, string> = {
   TENANTS: 'Centres de santé',
+  COMMERCE: 'Abonnements',
   EXPLOITATION: 'Exploitation',
 };
 
 export function platformSectionLabel(section: string): string {
   return SECTION_LABELS[section] ?? section;
+}
+
+/**
+ * Entrées de navigation gatées par RÔLE d'exploitant (S5, ADR 0018 lot 3 §17).
+ *
+ * Le manifeste reste role-agnostic (contrat de nœud Vireo) : le masquage vit
+ * au rendu, exactement comme `NAV_ROLE_GATES` côté centre.
+ *
+ * Une SEULE entrée est concernée, et c'est un arbitrage backend explicite :
+ * `/platform/operators/` est réservé à l'`admin` **même en LECTURE** — savoir
+ * qui détient la 4ᵉ casquette relève de la gouvernance, pas de la matière de
+ * support. C'est la seule lecture du back-office fermée au `support`, et un
+ * lien qui mènerait droit à un 403 lui apprendrait à se méfier du menu.
+ *
+ * Toutes les autres entrées restent visibles : le `support` LIT partout, et
+ * ce sont les commandes d'écriture — jamais montées pour lui — qui portent la
+ * distinction (`usePlatformRole().canWrite`).
+ */
+const PLATFORM_NAV_ROLE_GATES: Record<string, PlatformRole[]> = {
+  'plateforme.exploitants': ['admin'],
+};
+
+export function platformNodeVisible(nodeId: string, role: PlatformRole | null): boolean {
+  const allowed = PLATFORM_NAV_ROLE_GATES[nodeId];
+  if (!allowed) return true;
+  return role !== null && allowed.includes(role);
 }
 
 /**

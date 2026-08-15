@@ -24,6 +24,13 @@ from django.core.management.base import CommandError
 from django.test import override_settings
 
 from apps.accounts.models import ErasureRequest, PlatformStaff
+from apps.billing import services as billing_services
+from apps.billing.models import (
+    CenterSubscription,
+    SubscriptionInvoice,
+    SubscriptionPayment,
+    SubscriptionPlan,
+)
 from apps.centers.models import (
     HealthCenter,
     KycDocument,
@@ -46,6 +53,7 @@ from apps.patients.models import (
     PatientInsurance,
     PatientProfile,
 )
+from apps.support.models import SupportMessage, SupportTicket
 from apps.trustbridge.models import Invoice, PaymentRequest, PaymentRequestShare
 
 pytestmark = pytest.mark.django_db
@@ -228,6 +236,88 @@ class TestSeedDemoScenario:
         assert erasure_request.refusal_reason == ""
 
     @override_settings(DEBUG=True)
+    def test_the_demo_tenant_has_a_live_saas_contract(self):
+        """S5 (ADR 0018) — une offre et un abonnement ACTIF : la démo du
+        gel administratif est une ÉTAPE (suspendre depuis l'espace
+        plateforme), jamais l'état de départ."""
+        run_command()
+
+        plan = SubscriptionPlan.objects.get(code="ESSENTIEL")
+        assert plan.price_kmf == Decimal("25000")
+        assert plan.included_staff == 10 and plan.included_practitioners == 3
+
+        center = HealthCenter.objects.get(name="Clinique Ylang")
+        subscription = CenterSubscription.objects.get(center=center)
+        assert subscription.plan_id == plan.pk
+        assert subscription.status == CenterSubscription.Status.ACTIVE
+        assert subscription.is_frozen is False
+        assert subscription.current_period_end is not None
+        assert subscription.status_reason == ""
+
+    @override_settings(DEBUG=True)
+    def test_the_demo_tenant_has_a_saas_invoice_half_settled(self):
+        """S5 lot 2 (ADR 0018 décision 4) — le cas le plus parlant : une
+        facture « A- » émise, un virement partiel enregistré, un solde
+        restant visible des deux côtés. Émise par les VRAIS services : la
+        période, l'échéance et le curseur sont ceux de la production."""
+        run_command()
+
+        subscription = CenterSubscription.objects.get(
+            center__name="Clinique Ylang"
+        )
+        invoice = SubscriptionInvoice.objects.get(subscription=subscription)
+        assert invoice.number == "A-000001"
+        assert invoice.amount_kmf == Decimal("25000")
+        assert invoice.status == SubscriptionInvoice.Status.ISSUED
+        assert invoice.plan_code == "ESSENTIEL"
+        # L'émission entretient le curseur de période (lot 1 le posait à la
+        # main : depuis le lot 2, c'est la facture qui fait foi).
+        assert subscription.current_period_end == invoice.period_end
+        assert invoice.due_date > invoice.period_start
+
+        (payment,) = SubscriptionPayment.objects.filter(invoice=invoice)
+        assert payment.amount_kmf == Decimal("10000")
+        assert payment.method == SubscriptionPayment.Method.TRANSFER
+        assert not hasattr(payment, "reversal")
+        assert billing_services.subscription_invoice_balance_kmf(
+            invoice
+        ) == Decimal("15000.00")
+
+    @override_settings(DEBUG=True)
+    def test_the_support_channel_has_an_open_ticket_and_two_messages(self):
+        """S5 lot 3 (ADR 0018 décision 5) — le cas le plus parlant : c'est
+        la SECRÉTAIRE qui ouvre (pas le directeur), et Chioni a déjà
+        répondu. Le contenu de démo ne nomme aucun patient : le seed montre
+        l'usage attendu."""
+        run_command()
+
+        center = HealthCenter.objects.get(name="Clinique Ylang")
+        ticket = SupportTicket.objects.for_center(center).get()
+        assert ticket.status == SupportTicket.Status.OPEN
+        assert ticket.opened_by.username == "secretaire.demo"
+        assert ticket.category == SupportTicket.Category.BUG
+
+        first, second = ticket.messages.all()
+        assert first.author_side == SupportMessage.Side.CENTER
+        assert second.author_side == SupportMessage.Side.CHIONI
+        assert second.author.username == "support.demo"
+        for message in (first, second):
+            assert "Anfia" not in message.body and "Saïd" not in message.body
+
+    @override_settings(DEBUG=True)
+    def test_a_support_operator_stands_beside_the_admin(self):
+        """S5 lot 3 (ADR 0018 décision 6) — la seconde casquette du
+        back-office, sans laquelle l'arbitrage « le support répond aux
+        tickets » n'est pas démontrable."""
+        run_command()
+
+        support = PlatformStaff.objects.get(user__username="support.demo")
+        assert support.role == PlatformStaff.Role.SUPPORT
+        assert support.is_active
+        assert not support.user.is_staff and not support.user.is_superuser
+        assert PlatformStaff.objects.count() == 2
+
+    @override_settings(DEBUG=True)
     def test_recap_output_names_the_accounts_and_the_demo_flow(self):
         output = run_command()
 
@@ -235,11 +325,15 @@ class TestSeedDemoScenario:
         for username in (
             "admin", "directeur.demo", "medecin.demo", "secretaire.demo",
             "caissier.demo", "patient.demo", "tuteur.demo", "tuteur2.demo",
-            "plateforme.demo",
+            "plateforme.demo", "support.demo",
         ):
             assert username in output
         assert "simulate_psp_payment --latest" in output
         assert "20 000 KMF" in output
+        # S5 — l'abonnement du tenant est lisible dans le récapitulatif…
+        assert "Essentiel" in output and "25 000 KMF/mois" in output
+        # …et sa facture SaaS avec son solde restant (lot 2).
+        assert "A-000001" in output and "15 000 KMF" in output
 
 
 class TestSeedDemoIdempotence:
@@ -277,6 +371,14 @@ class TestSeedDemoIdempotence:
             "platform_staff": PlatformStaff.objects.count(),
             "kyc_documents": KycDocument.objects.count(),
             "erasure_requests": ErasureRequest.objects.count(),
+            # S5 (ADR 0018) — abonnement SaaS et sa facturation.
+            "plans": SubscriptionPlan.objects.count(),
+            "subscriptions": CenterSubscription.objects.count(),
+            "saas_invoices": SubscriptionInvoice.objects.count(),
+            "saas_payments": SubscriptionPayment.objects.count(),
+            # S5 lot 3 (ADR 0018 décision 5) — le canal de support.
+            "support_tickets": SupportTicket.objects.count(),
+            "support_messages": SupportMessage.objects.count(),
         }
 
 

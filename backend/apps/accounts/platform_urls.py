@@ -12,6 +12,8 @@ from django.urls import path
 from apps.accounts.platform_views import (
     PlatformErasureRequestListView,
     PlatformErasureRequestProcessView,
+    PlatformOperatorDetailView,
+    PlatformOperatorListCreateView,
 )
 
 app_name = "platform-accounts"
@@ -26,5 +28,17 @@ urlpatterns = [
         "erasure-requests/<int:pk>/process/",
         PlatformErasureRequestProcessView.as_view(),
         name="erasure-request-process",
+    ),
+    # S5 lot 3 (ADR 0018 décision 6) — la 4ᵉ casquette se gère ici, et
+    # l'admin Django s'est refermé sur elle.
+    path(
+        "operators/",
+        PlatformOperatorListCreateView.as_view(),
+        name="operator-list",
+    ),
+    path(
+        "operators/<int:pk>/",
+        PlatformOperatorDetailView.as_view(),
+        name="operator-detail",
     ),
 ]

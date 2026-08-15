@@ -34,6 +34,7 @@ export {
   IconCheck,
   IconChevronRight,
   IconClose,
+  IconEdit,
   IconPlus,
   IconRefresh,
   IconSearch,
@@ -41,6 +42,10 @@ export {
   Modal,
   PAGE_SIZE,
   Pagination,
+  SUBSCRIPTION_INVOICE_TONES,
+  SUBSCRIPTION_TONES,
+  SUPPORT_PRIORITY_TONES,
+  SUPPORT_TONES,
   StatusBadge,
   TableSkeleton,
   toApiError,
@@ -48,6 +53,21 @@ export {
   useDebounced,
   type BadgeTone,
 } from '@/screens/centre/shared';
+
+/*
+ * S5 — le papier imprimable (facture / reçu), adapté de
+ * `ecommerce/InvoiceDetails` du template. Neutre par construction : aucun
+ * contexte, aucun appel API — il est donc réexporté ici comme les primitives
+ * du socle, pour que les écrans de cet espace gardent leur règle de module
+ * (n'importer QUE depuis `./shared`).
+ */
+export {
+  DocumentPaper,
+  PrintDocumentButton,
+  type DocumentLine,
+  type DocumentParty,
+  type DocumentTotal,
+} from '@/components/documents/DocumentPaper';
 
 /**
  * The operator's role, and the single write gate of the space.
@@ -71,7 +91,10 @@ export function ReadOnlyNotice() {
       style={{
         margin: 0,
         fontSize: 'var(--ax-text-xs)',
-        color: 'var(--ax-text-subtle)',
+        /* Une consigne de RÔLE (« vous êtes en lecture seule ») explique
+           pourquoi des boutons manquent : `--ax-text-muted` (AA), jamais
+           `--ax-text-subtle` (4,32:1 clair, 3,55:1 sombre). */
+        color: 'var(--ax-text-muted)',
       }}
     >
       {PLATFORM_READ_ONLY_NOTICE}

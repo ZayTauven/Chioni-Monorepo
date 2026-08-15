@@ -184,11 +184,21 @@ class TestRecordVitalSigns:
             url(center, encounter), {"systolic_bp": 142, "spo2": 97}
         )
         entry = AuditLog.objects.get(action=AuditAction.VITAL_SIGNS_RECORDED)
-        payload = str(entry.payload)
         assert entry.payload["fields"] == "spo2,systolic_bp"
         assert entry.payload["encounter_id"] == encounter.pk
-        assert "142" not in payload
-        assert "97" not in payload
+        # Le contrat est un contrat de CLÉS : rien d'autre que des
+        # références et la liste des champs renseignés. Chercher « 142 » ou
+        # « 97 » dans le payload sérialisé était une sonde fragile — un id
+        # de patient à 1297 la faisait rougir sans qu'aucune mesure ait
+        # fuité (constaté au lot 3 de S5, quand les séquences ont bougé).
+        assert set(entry.payload) == {
+            "vital_signs_id", "encounter_id", "patient_id", "center_id",
+            "fields",
+        }
+        measured = {142, 97}
+        assert not measured & {
+            value for value in entry.payload.values() if isinstance(value, int)
+        }
 
 
 class TestPatientVitalSignsTransversal:

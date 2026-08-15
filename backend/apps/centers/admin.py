@@ -63,29 +63,43 @@ class KycDocumentAdmin(ReadOnlyAdminMixin, admin.ModelAdmin):
 
 
 @admin.register(StaffMembership)
-class StaffMembershipAdmin(admin.ModelAdmin):
-    """Kept WRITABLE on purpose (ADR 0017 décision 4) — rescue bootstrap.
+class StaffMembershipAdmin(ReadOnlyAdminMixin, admin.ModelAdmin):
+    """READ-ONLY since S5 lot 3 (ADR 0018 décision 6 — dette de l'ADR 0017).
 
-    This is the tenant's equivalent of ``PlatformStaffAdmin``: the very
-    last way back into a center that has locked itself out (no active
-    director left, and no Chioni operator available to run
-    ``POST /platform/centers/{pk}/directors/``). Since S4 the platform API
-    IS the normal path — the admin stopped being the only door, which was
-    the actual problem — so this form should now be a rarity.
+    S4 kept this form writable as « the last way back into a center that
+    has locked itself out », while noting the condition of its closure:
+    « si un futur sprint donne à la plateforme un module personnel
+    complet, cette porte doit se fermer ». The rescue path it was standing
+    in for has existed by API since S4 and is now the normal one:
+    ``POST /platform/centers/{pk}/directors/`` — audited
+    (``staff.membership_created``), carrying the separation-of-duties
+    guard (an operator cannot mint a tenant hat onto their own account),
+    and deliberately NOT frozen by a subscription suspension, so Chioni
+    can always seed a director back into a tenant it has sanctioned.
 
-    What it costs, stated plainly: a membership created here skips
-    ``add_staff_member`` (no ``staff.membership_created`` audit entry, no
-    duplicate-role check beyond the DB constraint, no shadow-account
-    creation by phone) and a role changed here skips the « last active
-    director » guard. Whoever uses it owes the tenant a written trace
-    elsewhere. If a future sprint gives the platform a complete staff
-    module (S5 support), this door should close.
+    What closing this form removes, stated plainly:
+
+    - creating a membership WITHOUT ``add_staff_member`` — i.e. without an
+      audit entry the director reads in his journal, without the
+      shadow-account-by-phone creation, and without the duplicate-role
+      refusal ;
+    - changing a role WITHOUT the « last active director » guard (whose
+      ordered ``FOR UPDATE`` closed a real race in vague 1) ;
+    - deactivating a membership by hand on a center whose subscription is
+      frozen — which the product allows anyway (deactivation is a SECURITY
+      act, never a paid feature, ADR 0018 lot 1 §9).
+
+    What remains, and is enough: a Chioni ``admin`` seeds a director by
+    API. If NO operator is reachable either, the offline bootstrap
+    (``python manage.py create_platform_staff``) makes one.
     """
 
     list_display = ("user", "center", "role", "is_active", "created_at")
     list_filter = ("role", "is_active", "center")
     search_fields = ("user__username", "user__phone", "center__name")
-    autocomplete_fields = ("user", "center")
+    readonly_fields = (
+        "user", "center", "role", "is_active", "created_at", "updated_at",
+    )
 
 
 @admin.register(TariffItem)

@@ -21,8 +21,19 @@ urlpatterns = [
     path("platform/", include("apps.centers.platform_urls")),
     path("platform/", include("apps.trustbridge.platform_urls")),
     path("platform/", include("apps.accounts.platform_urls")),
+    # S5 (ADR 0018) — abonnement SaaS : offres et contrats des tenants.
+    path("platform/", include("apps.billing.platform_urls")),
+    # S5 lot 3 — module Support (file des tickets) et gestion de l'équipe
+    # Chioni elle-même (la 4ᵉ casquette se gère par API auditée depuis que
+    # l'admin Django est refermé).
+    path("platform/", include("apps.support.platform_urls")),
     path("", include("apps.patients.urls")),
     path("", include("apps.medical.urls")),
     path("", include("apps.scheduling.urls")),
     path("", include("apps.trustbridge.urls")),
+    # S5 — `centers/{c}/subscription/` (directeur seul) : l'app porte
+    # l'objet, l'URL dit quelle casquette le lit.
+    path("", include("apps.billing.urls")),
+    # S5 lot 3 — `centers/{c}/support/tickets/` (tout staff actif).
+    path("", include("apps.support.urls")),
 ]

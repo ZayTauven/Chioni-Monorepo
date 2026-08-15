@@ -146,9 +146,12 @@ function UploadKycModal({ onClose, onUploaded }: { onClose: () => void; onUpload
           stockées de façon privée&nbsp;: personne d&apos;autre dans votre centre n&apos;y a accès.
         </p>
 
-        <div className="ax-dropzone">
+        {/* `is-dragover` va sur le WRAPPER : le design system cible
+            `.ax-dropzone.is-dragover .ax-dropzone__area`. Posée sur l'aire
+            elle-même, la règle ne s'applique jamais et le survol reste muet. */}
+        <div className={`ax-dropzone${dragging ? ' is-dragover' : ''}`}>
           <div
-            className={`ax-dropzone__area${dragging ? ' is-dragover' : ''}`}
+            className="ax-dropzone__area"
             role="button"
             tabIndex={0}
             onDragOver={(e) => {

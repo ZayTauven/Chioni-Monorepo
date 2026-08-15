@@ -15,6 +15,8 @@ import type {
   CashJournal,
   CashMethod,
   CashPayment,
+  CenterSubscription,
+  CenterSubscriptionInvoice,
   ConsentCollectedVia,
   DeskClinicalConsent,
   Dispute,
@@ -45,6 +47,14 @@ import type {
   Sex,
   StaffMember,
   StaffRole,
+  SubscriptionInvoiceStatus,
+  SupportAttachment,
+  SupportCategory,
+  SupportMessage,
+  SupportPriority,
+  SupportTicket,
+  SupportTicketDetail,
+  SupportTicketStatus,
   TariffItem,
   UnpaidInvoice,
   UnpaidOrdering,
@@ -986,4 +996,139 @@ export function updateTariff(
   payload: Partial<TariffPayload>,
 ): Promise<TariffItem> {
   return apiFetch(`/centers/${centerId}/tariffs/${tariffId}/`, { method: 'PATCH', body: payload });
+}
+
+/* ── abonnement SaaS du centre (S5, ADR 0018 — DIRECTEUR SEUL) ── */
+
+/**
+ * Le contrat du tenant, lu par son directeur.
+ *
+ * **404 = état NORMAL**, pas une erreur : tous les centres nés avant S5 n'ont
+ * pas de ligne d'abonnement, et un tenant sans contrat n'est pas un tenant en
+ * défaut. L'appelant rend un état vide honnête (`SUBSCRIPTION_NONE_*`).
+ *
+ * Rôle : directeur uniquement (arbitrage RÉVERSIBLE, symétrique du dossier KYC
+ * et du journal d'audit). **Ne pas monter l'écran hors casquette directeur** —
+ * il s'afficherait pour recevoir un 403.
+ */
+export function getSubscription(centerId: number): Promise<CenterSubscription> {
+  return apiFetch(`/centers/${centerId}/subscription/`);
+}
+
+/**
+ * Les factures d'abonnement du centre — **lecture seule de bout en bout** :
+ * c'est Chioni qui émet, encaisse et corrige. Liste vide = 200, là où
+ * l'absence de contrat est un 404 : « pas de contrat » et « pas encore de
+ * facture » ne sont pas la même nouvelle.
+ */
+export function listSubscriptionInvoices(
+  centerId: number,
+  { status, page = 1 }: { status?: SubscriptionInvoiceStatus; page?: number } = {},
+): Promise<Paginated<CenterSubscriptionInvoice>> {
+  const query = new URLSearchParams({ page: String(page) });
+  if (status) query.set('status', status);
+  return apiFetch(`/centers/${centerId}/subscription/invoices/?${query.toString()}`);
+}
+
+export function getSubscriptionInvoice(
+  centerId: number,
+  invoiceId: number,
+): Promise<CenterSubscriptionInvoice> {
+  return apiFetch(`/centers/${centerId}/subscription/invoices/${invoiceId}/`);
+}
+
+/* ── support du centre (S5 lot 3 — TOUT STAFF ACTIF) ── */
+
+/**
+ * Les tickets : les siens, plus TOUS ceux du centre pour le directeur.
+ *
+ * Deux règles qui gouvernent les écrans :
+ * - **l'ouverture n'est gatée sur aucun rôle** — c'est la secrétaire qui
+ *   rencontre le bug, pas le directeur ;
+ * - **le support n'est JAMAIS gelé par l'abonnement** : un centre suspendu
+ *   ouvre un ticket et dépose une capture. C'est précisément le moment où il
+ *   en a besoin, et fermer le canal qui répond ferait une boucle sans sortie.
+ */
+export function listSupportTickets(
+  centerId: number,
+  {
+    status,
+    category,
+    page = 1,
+  }: { status?: SupportTicketStatus; category?: SupportCategory; page?: number } = {},
+): Promise<Paginated<SupportTicket>> {
+  const query = new URLSearchParams({ page: String(page) });
+  if (status) query.set('status', status);
+  if (category) query.set('category', category);
+  return apiFetch(`/centers/${centerId}/support/tickets/?${query.toString()}`);
+}
+
+export interface SupportTicketPayload {
+  subject: string;
+  category: SupportCategory;
+  priority?: SupportPriority;
+  /** Devient le PREMIER message du fil, dans la même transaction. */
+  body?: string;
+}
+
+/** 201 = le ticket AVEC son fil : un seul aller-retour sur une connexion faible. */
+export function createSupportTicket(
+  centerId: number,
+  payload: SupportTicketPayload,
+): Promise<SupportTicketDetail> {
+  return apiFetch(`/centers/${centerId}/support/tickets/`, { method: 'POST', body: payload });
+}
+
+/** Le ticket d'un collègue est un 404, jamais un 403 qui apprendrait son existence. */
+export function getSupportTicket(
+  centerId: number,
+  ticketId: number,
+): Promise<SupportTicketDetail> {
+  return apiFetch(`/centers/${centerId}/support/tickets/${ticketId}/`);
+}
+
+/**
+ * Répondre — possible pour quiconque peut lire (un fil que son auteur ne peut
+ * pas alimenter est un formulaire, pas une conversation). Poster ne déplace
+ * RIEN : un message sur un ticket `resolu` le laisse `resolu`.
+ */
+export function postSupportMessage(
+  centerId: number,
+  ticketId: number,
+  body: string,
+): Promise<SupportMessage> {
+  return apiFetch(`/centers/${centerId}/support/tickets/${ticketId}/messages/`, {
+    method: 'POST',
+    body: { body },
+  });
+}
+
+/**
+ * Dépôt d'une pièce — socle ADR 0014 tel quel (JPEG/PNG/WebP réels, 2 Mo, EXIF
+ * strippé), throttle `uploads` 20/h. **Le PDF est refusé** : une capture
+ * d'écran est un PNG.
+ */
+export function uploadSupportAttachment(
+  centerId: number,
+  ticketId: number,
+  file: File,
+): Promise<SupportAttachment> {
+  const form = new FormData();
+  form.append('file', file);
+  return apiFetch(`/centers/${centerId}/support/tickets/${ticketId}/attachments/`, {
+    method: 'POST',
+    body: form,
+  });
+}
+
+/** Téléchargement authentifié — le stockage est privé, il n'existe aucune URL. */
+export function downloadSupportAttachment(
+  centerId: number,
+  ticketId: number,
+  attachmentId: number,
+): Promise<void> {
+  return apiDownload(
+    `/centers/${centerId}/support/tickets/${ticketId}/attachments/${attachmentId}/download/`,
+    `piece-${attachmentId}`,
+  );
 }

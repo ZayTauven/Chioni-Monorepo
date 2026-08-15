@@ -23,6 +23,7 @@ import { PLATFORM_ROLE_LABELS } from '@/lib/labels';
 import {
   hrefForSlug,
   platformGroupsInSection,
+  platformNodeVisible,
   platformSectionLabel,
   platformSections,
   platformSlugFromPath,
@@ -79,13 +80,21 @@ export function PlatformSidebar() {
       </div>
 
       <nav className="ax-sidebar__nav" role="tree" aria-label="Menu de la plateforme">
-        {platformSections().map((section) => (
+        {platformSections()
+          // Une rubrique dont toutes les entrées sont gatées ne laisse pas un
+          // titre orphelin dans le menu.
+          .filter((section) =>
+            platformGroupsInSection(section).some(
+              (node) => node.inMenu && platformNodeVisible(node.id, role ?? null),
+            ),
+          )
+          .map((section) => (
           <div key={section}>
             <p className="ax-sidebar__section" role="presentation">
               {platformSectionLabel(section)}
             </p>
             {platformGroupsInSection(section)
-              .filter((node) => node.inMenu)
+              .filter((node) => node.inMenu && platformNodeVisible(node.id, role ?? null))
               .map((node) => {
                 const active = isActive(node.slug, current);
                 const cls = ['ax-nav__item', 'ax-nav__item--parent'];

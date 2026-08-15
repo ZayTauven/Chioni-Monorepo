@@ -64,6 +64,36 @@ DIRECTOR_JOURNAL_ACTIONS = frozenset(
         # The price grid — money-adjacent configuration.
         AuditAction.TARIFF_CREATED,
         AuditAction.TARIFF_UPDATED,
+        # The SaaS subscription of THIS center (S5, ADR 0018 invariant 6).
+        # A conscious addition: opening a contract, changing an offer or
+        # freezing the administration are exploitation events of his own
+        # center — the director must be able to see when, and by whom.
+        # The motive of a freeze is NOT here (payloads carry
+        # ``has_reason``); he reads it on `GET /centers/{c}/subscription/`.
+        # ``subscription_plan.*`` (the offer catalogue) is transverse and
+        # deliberately absent: it belongs to no tenant.
+        AuditAction.SUBSCRIPTION_CREATED,
+        AuditAction.SUBSCRIPTION_PLAN_CHANGED,
+        AuditAction.SUBSCRIPTION_STATUS_CHANGED,
+        # …et sa facturation (S5 lot 2). C'est l'argent de SON centre :
+        # ce que Chioni lui a facturé, ce qu'elle a enregistré comme reçu,
+        # ce qu'elle a annulé ou contre-passé. Les motifs n'y sont jamais
+        # (payloads ``has_reason``) — ils se lisent sur la facture.
+        AuditAction.SUBSCRIPTION_INVOICE_ISSUED,
+        AuditAction.SUBSCRIPTION_INVOICE_CANCELLED,
+        AuditAction.SUBSCRIPTION_PAYMENT_RECORDED,
+        AuditAction.SUBSCRIPTION_PAYMENT_REVERSED,
+        # …et le canal de support de SON centre (S5 lot 3, ADR 0018
+        # invariant 6). Ajout CONSCIENT : savoir que sa secrétaire a
+        # signalé une anomalie et où en est le dossier est de
+        # l'exploitation. Le CONTENU n'y est jamais (les payloads ne
+        # portent que des ids, la catégorie et les codes de statut) — le
+        # directeur lit le fil sur `GET /centers/{c}/support/tickets/`,
+        # dans le périmètre de lecture qui est le sien.
+        AuditAction.SUPPORT_TICKET_OPENED,
+        AuditAction.SUPPORT_TICKET_STATUS_CHANGED,
+        AuditAction.SUPPORT_MESSAGE_POSTED,
+        AuditAction.SUPPORT_ATTACHMENT_UPLOADED,
         # Invoicing and the diaspora payment request lifecycle.
         AuditAction.INVOICE_CREATED,
         AuditAction.INVOICE_ISSUED,

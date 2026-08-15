@@ -3,12 +3,20 @@
 Realistic Comorian demo data: names, towns, KMF tariffs.
 """
 
+from datetime import timedelta
 from decimal import Decimal
 from itertools import count
 
 from django.contrib.auth import get_user_model
+from django.db.models import Max
+from django.utils import timezone
 
 from apps.accounts.models import PlatformStaff
+from apps.billing.models import (
+    CenterSubscription,
+    SubscriptionInvoice,
+    SubscriptionPlan,
+)
 from apps.centers.models import HealthCenter, StaffMembership, TariffItem
 from apps.medical.models import ActPerformed, Encounter
 from apps.patients.models import GuardianLink, GuardianProfile, PatientProfile
@@ -54,6 +62,93 @@ def make_platform_staff(user=None, role=PlatformStaff.Role.ADMIN, is_active=True
         user=user, role=role, is_active=is_active
     )
     return user, operator
+
+
+def make_plan(code=None, price_kmf="25000", **kwargs):
+    """A SaaS offer (S5, ADR 0018). Quotas default to None = unlimited,
+    so a plain plan never makes a center « over quota » by accident."""
+    defaults = {
+        "name": "Essentiel",
+        "billing_period": SubscriptionPlan.BillingPeriod.MONTHLY,
+        "is_active": True,
+    }
+    defaults.update(kwargs)
+    return SubscriptionPlan.objects.create(
+        code=code or f"PLAN{next(_seq):03d}",
+        price_kmf=Decimal(price_kmf),
+        **defaults,
+    )
+
+
+def make_subscription(center=None, plan=None, status=None, **kwargs):
+    """A center's subscription. Direct ORM on purpose (like ``make_center``
+    for ``kyc_status``): this factory sets a STATE, the state machine of
+    ``billing.services`` is exercised by its own tests."""
+    return CenterSubscription.objects.create(
+        center=center or make_center(),
+        plan=plan or make_plan(),
+        status=status or CenterSubscription.Status.ACTIVE,
+        **kwargs,
+    )
+
+
+def make_subscription_invoice(
+    subscription=None, *, amount_kmf="25000", period_start=None,
+    due_date=None, status=SubscriptionInvoice.Status.ISSUED, days_overdue=None,
+):
+    """A SaaS invoice (S5 lot 2). Direct ORM on purpose, like
+    ``make_subscription``: this factory sets a STATE — the issuance
+    service, its numbering and its state machine are exercised by their own
+    tests.
+
+    ``days_overdue`` places the échéance N days in the PAST (the shortcut
+    every dunning/flagging test needs).
+    """
+    subscription = subscription or make_subscription()
+    today = timezone.localdate()
+    if period_start is None:
+        period_start = today.replace(day=1)
+    if due_date is None:
+        due_date = (
+            today - timedelta(days=days_overdue)
+            if days_overdue is not None
+            else period_start + timedelta(days=15)
+        )
+    last = (
+        SubscriptionInvoice.objects.aggregate(m=Max("sequence_number"))["m"] or 0
+    )
+    return SubscriptionInvoice.objects.create(
+        center=subscription.center,
+        subscription=subscription,
+        sequence_number=last + 1,
+        period_start=min(period_start, due_date),
+        period_end=period_start + timedelta(days=29),
+        amount_kmf=Decimal(amount_kmf),
+        plan_code=subscription.plan.code,
+        plan_label=subscription.plan.name,
+        due_date=due_date,
+        status=status,
+    )
+
+
+def make_support_ticket(center=None, opened_by=None, **kwargs):
+    """A support ticket (S5 lot 3). Direct ORM on purpose, like
+    ``make_subscription``: this factory sets a STATE — the opening
+    service, its audit and its state machine are exercised by their own
+    tests."""
+    from apps.support.models import SupportTicket
+
+    defaults = {
+        "subject": "Le sélecteur de tarifs reste vide",
+        "category": SupportTicket.Category.BUG,
+        "status": SupportTicket.Status.OPEN,
+        "priority": SupportTicket.Priority.NORMAL,
+    }
+    defaults.update(kwargs)
+    center = center or make_center()
+    return SupportTicket.objects.create(
+        center=center, opened_by=opened_by or make_user(), **defaults
+    )
 
 
 def make_staff(user=None, center=None, role=StaffMembership.Role.DOCTOR):

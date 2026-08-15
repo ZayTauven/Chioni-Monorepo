@@ -333,9 +333,10 @@ class TestActivityStats:
     def test_query_count_is_flat(self, django_assert_num_queries):
         center, director, *_ = activity_scenario()
         client = client_for(director)
-        # 1 center resolution + 1 membership check + 4 grouped aggregates —
-        # NEVER a query per appointment/encounter/patient row.
-        with django_assert_num_queries(6):
+        # 1 center resolution + 1 membership check + 1 subscription-freeze
+        # guard (S5, ADR 0018 — une lecture indexée par pk) + 4 grouped
+        # aggregates — NEVER a query per appointment/encounter/patient row.
+        with django_assert_num_queries(7):
             response = client.get(activity_url(center))
         assert response.status_code == 200
 
@@ -495,9 +496,10 @@ class TestFinanceStats:
     def test_query_count_is_flat(self, django_assert_num_queries):
         center, director, *_ = finance_scenario()
         client = client_for(director)
-        # 1 center + 1 membership + revenue/reversals/invoiced/unpaid = 6 —
-        # never a query per payment or invoice row.
-        with django_assert_num_queries(6):
+        # 1 center + 1 membership + 1 garde de gel (S5, ADR 0018) +
+        # revenue/reversals/invoiced/unpaid = 7 — never a query per payment
+        # or invoice row.
+        with django_assert_num_queries(7):
             response = client.get(finances_url(center))
         assert response.status_code == 200
 

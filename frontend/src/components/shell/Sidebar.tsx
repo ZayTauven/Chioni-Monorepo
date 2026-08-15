@@ -44,6 +44,14 @@ const NAV_ROLE_GATES: Record<string, StaffRole[]> = {
   // litiges : DIRECTEUR SEUL, et pas « rôles BILLING ». Les cinq autres rôles
   // reçoivent un 403 côté API : l'entrée n'a aucune raison de leur apparaître.
   'centre.journal': DIRECTOR_ONLY,
+  // S5 (ADR 0018 lot 1 §18) — le contrat d'abonnement porte un prix, une
+  // échéance et le motif d'une sanction : `GET /centers/{c}/subscription/` est
+  // DIRECTEUR SEUL. La garde frontend REFLÈTE la permission backend, sinon
+  // l'écran s'afficherait pour recevoir un 403.
+  //
+  // « Support » n'est volontairement PAS gaté : l'ouverture d'un ticket est
+  // ouverte à tout staff actif — c'est la secrétaire qui rencontre le bug.
+  'centre.abonnement': DIRECTOR_ONLY,
 };
 
 /** Shared with the command palette — one source of truth for nav visibility.

@@ -28,6 +28,7 @@ import { listAuditLog } from '@/lib/endpoints/centers';
 import {
   AUDIT_ACTION_GROUPS,
   AUDIT_ACTION_LABELS,
+  AUDIT_ACTOR_AUTOMATIC,
   AUDIT_JOURNAL_EMPTY,
   AUDIT_NO_CLINICAL_NOTICE,
   AUDIT_PAYLOAD_LABELS,
@@ -251,8 +252,15 @@ export function AuditJournal() {
                         </td>
                         <td className="ax-table__td" style={{ color: 'var(--ax-text-muted)' }}>
                           {/* Un nom seulement pour un membre de CE centre ;
-                              sinon « — » : ne jamais deviner une identité. */}
-                          {entry.actor_display ?? '—'}
+                              sinon « — » : ne jamais deviner une identité.
+                              S5 : un passage `actif ⇄ impayé` posé par la tâche
+                              quotidienne n'a PAS d'acteur (`actor: null` +
+                              `automatic: true`). Le dire vaut mieux qu'un tiret
+                              qui ferait chercher une main. */}
+                          {entry.actor_display ??
+                            (entry.actor === null && entry.payload?.automatic === true
+                              ? AUDIT_ACTOR_AUTOMATIC
+                              : '—')}
                         </td>
                         <td className="ax-table__td">
                           <PayloadCell entry={entry} />

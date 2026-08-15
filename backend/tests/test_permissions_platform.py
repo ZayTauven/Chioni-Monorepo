@@ -16,21 +16,36 @@ Three things are locked here, in the exact spirit of
    patient serializer. Chioni supervises centers, not sick people.
 """
 
+from decimal import Decimal
+
 import pytest
 from django.urls import get_resolver
 from django.urls.resolvers import URLPattern, URLResolver
 
 from apps.accounts.models import PlatformStaff
 from apps.accounts.services import request_erasure
+from apps.billing.models import SubscriptionPayment
+from apps.billing.services import record_subscription_payment
 from apps.centers.models import HealthCenter
+from apps.support.models import SupportMessage, SupportTicket
+from apps.support.services import open_ticket, post_message
 
 from .api_helpers import (
     client_for,
     make_center_with_director,
     make_claimed_patient,
     make_guardian_user,
+    make_staff_user,
 )
-from .factories import make_center, make_encounter, make_platform_staff, make_user
+from .factories import (
+    make_center,
+    make_encounter,
+    make_plan,
+    make_platform_staff,
+    make_subscription,
+    make_subscription_invoice,
+    make_user,
+)
 
 pytestmark = pytest.mark.django_db
 
@@ -85,14 +100,43 @@ class TestTheHatIsAModelNotAFlag:
             )
 
     def test_support_reads_but_never_writes(self):
+        """« support lit, admin seul écrit » — avec UNE exception, déclarée.
+
+        S5 lot 3 (ADR 0018 décision 5) : répondre à un ticket et le faire
+        avancer EST le métier du support. L'exception est vérifiée
+        POSITIVEMENT dans la classe dédiée plus bas
+        (:class:`TestSupportAnswersTicketsAndNothingElse`) plutôt que
+        laissée implicite ici — et elle ne touche ni un tenant, ni un
+        franc, ni un patient.
+        """
         user, _op = make_platform_staff(role=PlatformStaff.Role.SUPPORT)
         center = make_center()
         # S4 lot 3 — a real erasure request, so the « process » route is
         # exercised on an existing object (a 404 would hide the 403).
         erasure_request = request_erasure(user=make_user())
+        # S5 lot 1 — same reasoning for the subscription write routes.
+        plan = make_plan(code="ESSENTIEL")
+        subscription = make_subscription(center=center, plan=plan)
+        # S5 lot 2 — a REAL invoice and a REAL settlement, so the four
+        # billing write routes are refused on existing objects.
+        saas_invoice = make_subscription_invoice(subscription)
+        saas_payment = record_subscription_payment(
+            actor=make_platform_staff()[0], invoice=saas_invoice,
+            amount_kmf=Decimal("5000"),
+            method=SubscriptionPayment.Method.TRANSFER,
+        )
         client = client_for(user)
         assert client.get(f"/api/v1/platform/centers/{center.pk}/").status_code == 200
         assert client.get("/api/v1/platform/erasure-requests/").status_code == 200
+        assert client.get("/api/v1/platform/plans/").status_code == 200
+        assert client.get("/api/v1/platform/subscriptions/").status_code == 200
+        assert client.get("/api/v1/platform/subscription-invoices/").status_code == 200
+        assert client.get("/api/v1/platform/support/tickets/").status_code == 200
+        # S5 lot 3 — la SEULE lecture fermée au support : la liste des
+        # exploitants. Qui détient la 4ᵉ casquette est de la gouvernance
+        # (« admin » seul), pas de la matière de support : un `support`
+        # n'a pas à savoir qui peut le désactiver.
+        assert client.get("/api/v1/platform/operators/").status_code == 403
         for url, body in (
             ("/api/v1/platform/centers/", {"name": "X"}),
             (f"/api/v1/platform/centers/{center.pk}/kyc/", {"status": "actif"}),
@@ -104,10 +148,60 @@ class TestTheHatIsAModelNotAFlag:
                 f"/api/v1/platform/erasure-requests/{erasure_request.pk}/process/",
                 {"decision": "anonymiser"},
             ),
+            # S5 lot 1 (ADR 0018) — l'abonnement : support lit, admin écrit.
+            ("/api/v1/platform/plans/", {"code": "X", "name": "X",
+                                         "price_kmf": "1000"}),
+            (
+                "/api/v1/platform/subscriptions/",
+                {"center": center.pk, "plan": plan.pk},
+            ),
+            (
+                f"/api/v1/platform/subscriptions/{subscription.pk}/status/",
+                {"status": "suspendu", "reason": "Motif."},
+            ),
+            (
+                f"/api/v1/platform/subscriptions/{subscription.pk}/plan/",
+                {"plan": plan.pk},
+            ),
+            # S5 lot 2 (ADR 0018 décision 4) — la facturation SaaS : émettre,
+            # encaisser, contre-passer, annuler sont des actes d'``admin``.
+            (
+                f"/api/v1/platform/subscriptions/{subscription.pk}/invoices/",
+                {},
+            ),
+            (
+                f"/api/v1/platform/subscription-invoices/{saas_invoice.pk}/payments/",
+                {"amount_kmf": "1000", "method": "virement"},
+            ),
+            (
+                f"/api/v1/platform/subscription-invoices/{saas_invoice.pk}"
+                f"/payments/{saas_payment.pk}/reverse/",
+                {"reason": "Erreur de saisie."},
+            ),
+            (
+                f"/api/v1/platform/subscription-invoices/{saas_invoice.pk}/cancel/",
+                {"reason": "Facture erronée."},
+            ),
+            # S5 lot 3 (ADR 0018 décision 6) — l'équipe Chioni elle-même :
+            # créer un exploitant est un acte de gouvernance, pas de
+            # support (sinon un `support` se promeut administrateur).
+            ("/api/v1/platform/operators/", {"phone": "+2693390222",
+                                             "role": "admin"}),
         ):
             response = client.post(url, body)
             assert response.status_code == 403, url
             assert "administrateurs de la plateforme" in str(response.data)
+        # Les deux routes d'écriture qui ne sont pas des POST.
+        patched = client.patch(
+            f"/api/v1/platform/plans/{plan.pk}/", {"price_kmf": "30000"}
+        )
+        assert patched.status_code == 403
+        assert "administrateurs de la plateforme" in str(patched.data)
+        promoted = client.patch(
+            f"/api/v1/platform/operators/{_op.pk}/", {"role": "admin"}
+        )
+        assert promoted.status_code == 403
+        assert "administrateurs de la plateforme" in str(promoted.data)
 
 
 # ---------------------------------------------------------------------------
@@ -212,6 +306,33 @@ class TestNoPatientEverReachesThePlatform:
         # The back-office queue must still carry an id and hats, never a
         # name (« Anfia »/« Saïd » are asserted absent from the body).
         request_erasure(user=patient.user)
+        # S5 lot 1 — un contrat d'abonnement RÉEL sur ce centre : les
+        # payloads d'abonnement sont mesurés pleins, jamais vides.
+        subscription = make_subscription(
+            center=center, plan=make_plan(code="ESSENTIEL")
+        )
+        # S5 lot 2 — une facture SaaS RÉELLE, réglée pour partie : le
+        # payload le plus chargé du module (facture + règlements imbriqués)
+        # est celui qu'on mesure. Le patient d'à côté n'y entre jamais.
+        saas_invoice = make_subscription_invoice(subscription)
+        record_subscription_payment(
+            actor=operator, invoice=saas_invoice, amount_kmf=Decimal("5000"),
+            method=SubscriptionPayment.Method.TRANSFER,
+        )
+        # S5 lot 3 — un ticket RÉEL avec son fil : c'est le payload
+        # plateforme le plus exposé au risque (du texte libre écrit par un
+        # humain du centre). Le corps du ticket ne nomme personne, et rien
+        # dans la structure ne pointe un patient.
+        ticket = open_ticket(
+            actor=director, center=center,
+            subject="Le sélecteur de tarifs est vide",
+            category=SupportTicket.Category.BUG,
+            body="Depuis ce matin la liste des tarifs ne se charge pas.",
+        )
+        post_message(
+            actor=operator, ticket=ticket, body="Nous regardons, merci.",
+            side=SupportMessage.Side.CHIONI,
+        )
 
         client = client_for(operator)
         for url in (
@@ -223,6 +344,23 @@ class TestNoPatientEverReachesThePlatform:
             "/api/v1/platform/reconciliation/",
             # S4 lot 3 — RGPD (ADR 0017 décision 7).
             "/api/v1/platform/erasure-requests/",
+            # S5 lot 1 — abonnement SaaS (ADR 0018 décisions 2 & 3).
+            "/api/v1/platform/plans/",
+            "/api/v1/platform/subscriptions/",
+            f"/api/v1/platform/subscriptions/{subscription.pk}/",
+            # S5 lot 2 — facturation SaaS (ADR 0018 décision 4).
+            "/api/v1/platform/subscription-invoices/",
+            "/api/v1/platform/subscription-invoices/?overdue=true",
+            f"/api/v1/platform/subscription-invoices/{saas_invoice.pk}/",
+            f"/api/v1/platform/subscription-invoices/{saas_invoice.pk}/payments/",
+            f"/api/v1/platform/subscriptions/{subscription.pk}/invoices/",
+            # S5 lot 3 — module Support (ADR 0018 décision 5) et gestion de
+            # l'équipe Chioni (décision 6).
+            "/api/v1/platform/support/tickets/",
+            "/api/v1/platform/support/tickets/?open=true",
+            f"/api/v1/platform/support/tickets/{ticket.pk}/",
+            f"/api/v1/platform/support/tickets/{ticket.pk}/messages/",
+            "/api/v1/platform/operators/",
         ):
             response = client.get(url)
             assert response.status_code == 200, url
@@ -237,7 +375,11 @@ class TestNoPatientEverReachesThePlatform:
         module mounted under the platform prefix, whatever its app."""
         from apps.accounts import platform_serializers as acc_platform_serializers
         from apps.accounts import platform_views as acc_platform_views
+        from apps.billing import platform_serializers as bil_platform_serializers
+        from apps.billing import platform_views as bil_platform_views
         from apps.centers import platform_serializers, platform_views
+        from apps.support import platform_serializers as sup_platform_serializers
+        from apps.support import platform_views as sup_platform_views
         from apps.trustbridge import platform_views as tb_platform_views
 
         for module in (
@@ -246,6 +388,10 @@ class TestNoPatientEverReachesThePlatform:
             tb_platform_views,
             acc_platform_views,
             acc_platform_serializers,
+            bil_platform_views,
+            bil_platform_serializers,
+            sup_platform_views,
+            sup_platform_serializers,
         ):
             names = [n.lower() for n in vars(module)]
             assert not [n for n in names if "patient" in n], module.__name__
@@ -261,6 +407,59 @@ class TestNoPatientEverReachesThePlatform:
             "created_at", "staff_active_count", "director_active_count",
             "kyc_document_count",
         }
+
+
+class TestSupportAnswersTicketsAndNothingElse:
+    """THE documented exception of « support lit, admin seul écrit ».
+
+    S5 lot 3, ADR 0018 décision 5 : un `support` répond aux tickets et les
+    fait avancer — c'est littéralement son métier, et un rôle qui lirait la
+    file sans jamais pouvoir y répondre serait décoratif. L'exception est
+    étroite, et ce test la borne dans les DEUX sens : ce qu'elle ouvre, et
+    ce qu'elle n'ouvre pas.
+    """
+
+    def _ticket(self):
+        center, director = make_center_with_director()
+        return open_ticket(
+            actor=director, center=center, subject="Écran blanc à la caisse",
+            category=SupportTicket.Category.BUG,
+        )
+
+    def test_support_answers_a_ticket(self):
+        user, _op = make_platform_staff(role=PlatformStaff.Role.SUPPORT)
+        ticket = self._ticket()
+        response = client_for(user).post(
+            f"/api/v1/platform/support/tickets/{ticket.pk}/messages/",
+            {"body": "Bonjour, pouvez-vous préciser l'heure du blocage ?"},
+        )
+        assert response.status_code == 201
+        assert response.data["author_side"] == SupportMessage.Side.CHIONI
+
+    def test_support_moves_a_ticket_along(self):
+        user, _op = make_platform_staff(role=PlatformStaff.Role.SUPPORT)
+        ticket = self._ticket()
+        response = client_for(user).post(
+            f"/api/v1/platform/support/tickets/{ticket.pk}/status/",
+            {"status": SupportTicket.Status.IN_PROGRESS},
+        )
+        assert response.status_code == 200
+        ticket.refresh_from_db()
+        assert ticket.status == SupportTicket.Status.IN_PROGRESS
+
+    def test_the_exception_stops_at_the_conversation(self):
+        """Ni tenant, ni argent, ni équipe : le `support` reste un lecteur
+        partout ailleurs (le balayage complet est au-dessus)."""
+        user, _op = make_platform_staff(role=PlatformStaff.Role.SUPPORT)
+        center = make_center()
+        client = client_for(user)
+        assert client.post(
+            f"/api/v1/platform/centers/{center.pk}/kyc/", {"status": "actif"}
+        ).status_code == 403
+        assert client.post(
+            "/api/v1/platform/operators/",
+            {"phone": "+2693390333", "role": "support"},
+        ).status_code == 403
 
 
 class TestMePayloadRoutesTheFourthSpace:

@@ -164,6 +164,35 @@
     --_btn-px: var(--ax-space-3);
     --_btn-fz: var(--ax-text-xs);
   }
+
+  /* Cibles tactiles ≥ 44 px — exigence non négociable du projet (Android
+     d'entrée de gamme, littératie numérique faible), tenue jusqu'ici par les
+     espaces patient/tuteur seulement. Les boutons `--sm` sont à 32 px et
+     `--icon --sm` à 32 × 32 : c'est la croix de fermeture de TOUTES les
+     modales, les actions en ligne de tableau (« Retirer l'accès »,
+     « Contre-passer », « Télécharger ») et les transitions de statut d'un
+     ticket, souvent trois côte à côte à 8 px d'écart.
+
+     Le relèvement est borné à `pointer: coarse` : au doigt on gagne la cible,
+     à la souris la densité du poste de travail ne bouge pas d'un pixel — un
+     tableau de bord de centre reste un outil dense. Correctif de la revue
+     a11y S5 ; réversible en supprimant ce bloc. */
+  @media (pointer: coarse) {
+    .ax-btn--sm,
+    .ax-btn--compact {
+      min-height: 44px;
+    }
+    .ax-btn--icon.ax-btn--sm,
+    .ax-btn--icon.ax-btn--compact {
+      min-width: 44px;
+    }
+    .ax-pagination__page,
+    .ax-pagination__prev,
+    .ax-pagination__next {
+      min-width: 44px;
+      min-height: 44px;
+    }
+  }
   .ax-btn--lg {
     --_btn-h: var(--ax-control-h-lg);
     --_btn-px: var(--ax-space-5);
@@ -2857,9 +2886,15 @@
     min-height: var(--ax-leading-xs);
     font-size: var(--ax-text-xs);
   }
+  /* Texte d'erreur : `--ax-danger-500` (#D24535) plafonne à 4,45:1 sur une
+     carte claire et tombe à 4,07:1 sur `--ax-surface-subtle` — sous AA pour du
+     12 px, et c'est précisément le texte qu'il faut pouvoir lire. Le ton 700
+     est le ton ACCESSIBLE des deux thèmes (#A2301F clair = 7,4:1, #F1998B
+     sombre), exactement comme les `--ax-*-700` posés par la revue de S1.
+     Correctif de la revue a11y S5. */
   .ax-error,
   .ax-field__message--error {
-    color: var(--ax-danger-500);
+    color: var(--ax-danger-700);
   }
   .ax-field__message--success {
     color: var(--ax-success-500);

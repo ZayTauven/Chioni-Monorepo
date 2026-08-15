@@ -20,6 +20,12 @@ import { useAuth } from '@/context/AuthContext';
 import { useCenter } from '@/context/CenterContext';
 import { ApiError } from '@/lib/api';
 import { getPatient } from '@/lib/endpoints/centers';
+import {
+  SUPPORT_PRIVACY_EXAMPLE,
+  SUPPORT_PRIVACY_HOWTO,
+  SUPPORT_PRIVACY_NOTICE,
+  SUPPORT_PRIVACY_TITLE,
+} from '@/lib/labels';
 import type {
   AppointmentStatus,
   ClaimStatus,
@@ -29,6 +35,10 @@ import type {
   KycStatus,
   PaymentRequestStatus,
   StaffRole,
+  SubscriptionInvoiceStatus,
+  SubscriptionStatus,
+  SupportPriority,
+  SupportTicketStatus,
 } from '@/lib/types';
 
 /* ── constants ── */
@@ -225,6 +235,90 @@ export const APPOINTMENT_TONES: Record<AppointmentStatus, BadgeTone> = {
   annule: 'neutral',
 };
 
+/**
+ * S5 — l'abonnement. Le ton SUIT l'arbitrage produit, il ne le trahit pas :
+ * `impaye` est un `warning` parce que ça appelle un geste, PAS un `danger`
+ * (rien n'est fermé) ; `suspendu` et `resilie` sont des `danger` parce que
+ * quelque chose est réellement gelé. Confondre les deux apprendrait à un
+ * directeur à ignorer la couleur.
+ */
+export const SUBSCRIPTION_TONES: Record<SubscriptionStatus, BadgeTone> = {
+  essai: 'info',
+  actif: 'success',
+  impaye: 'warning',
+  suspendu: 'danger',
+  resilie: 'neutral',
+};
+
+/** Une facture d'abonnement : « à régler » informe, il n'alarme pas. */
+export const SUBSCRIPTION_INVOICE_TONES: Record<SubscriptionInvoiceStatus, BadgeTone> = {
+  emise: 'info',
+  payee: 'success',
+  annulee: 'neutral',
+};
+
+/** Un ticket de support — `ferme` est définitif, donc neutre et non rouge. */
+export const SUPPORT_TONES: Record<SupportTicketStatus, BadgeTone> = {
+  ouvert: 'info',
+  en_cours: 'accent',
+  resolu: 'success',
+  ferme: 'neutral',
+};
+
+/** L'urgence déclarée à l'ouverture — jamais re-priorisable ensuite. */
+export const SUPPORT_PRIORITY_TONES: Record<SupportPriority, BadgeTone> = {
+  basse: 'neutral',
+  normale: 'neutral',
+  haute: 'warning',
+  urgente: 'danger',
+};
+
+/**
+ * S5 — l'avertissement de confidentialité du module Support, AU CONTACT du
+ * champ de saisie (ADR 0018 décision 5, parade (b) du risque assumé).
+ *
+ * Il vit dans le socle et non dans un écran : les DEUX portes d'écriture le
+ * montent (la modale d'ouverture et le champ de réponse du fil), et le faire
+ * descendre d'un écran vers l'autre embarquerait la liste complète des tickets
+ * dans le bundle du détail — sur une connexion comorienne, ce n'est pas un
+ * détail.
+ *
+ * **Revue UX care S5 — deux correctifs, aucun sur le texte du backend :**
+ *
+ * 1. Le bloc était un `ax-alert--warning`, soit le poids visuel exact de
+ *    « Gestion administrative suspendue ». Sur l'écran où l'on vient DEMANDER
+ *    de l'aide, un panneau jaune en tête de formulaire se lit comme un
+ *    reproche avant d'avoir écrit un mot, et le premier réflexe est de
+ *    refermer. Ton `info` + un titre qui annonce de l'AIDE : la consigne reste
+ *    aussi visible, elle n'intimide plus.
+ * 2. La phrase du backend renvoie au « numéro de dossier » — introuvable :
+ *    aucun écran du centre n'affiche de numéro de dossier patient. On ajoute
+ *    donc ce qui EST recopiable à l'écran (numéro de facture, de reçu, date,
+ *    nom de la page) et un exemple : c'est l'exemple qui débloque la
+ *    rédaction, pas la règle.
+ *
+ * `SUPPORT_PRIVACY_NOTICE` reste repris à la lettre (parité avec
+ * `apps/support/models.py`) : seul le cadrage change.
+ */
+export function SupportPrivacyNotice() {
+  return (
+    <div className="ax-alert ax-alert--info" role="note">
+      <div className="ax-alert__content">
+        <p className="ax-alert__title">{SUPPORT_PRIVACY_TITLE}</p>
+        <p className="ax-alert__message" style={{ lineHeight: 1.7 }}>
+          {SUPPORT_PRIVACY_HOWTO}
+        </p>
+        <p className="ax-alert__message" style={{ lineHeight: 1.7 }}>
+          {SUPPORT_PRIVACY_NOTICE}
+        </p>
+        <p className="ax-alert__message" style={{ lineHeight: 1.7 }}>
+          {SUPPORT_PRIVACY_EXAMPLE}
+        </p>
+      </div>
+    </div>
+  );
+}
+
 export function StatusBadge({ tone, label }: { tone: BadgeTone; label: string }) {
   return (
     <span className={`ax-badge ax-badge--soft ax-badge--${tone} ax-badge--pill`}>
@@ -353,10 +447,27 @@ export function ErrorAlert({ error, onRetry }: { error: ApiError; onRetry?: () =
 }
 
 /** Field-level serializer error, rendered under its input. */
+/**
+ * Le refus d'un champ, rendu par le backend.
+ *
+ * `role="alert"` (correctif de la revue a11y S5) : le composant apparaît APRÈS
+ * une soumission refusée, et sans région live il n'existait tout simplement
+ * pas pour un lecteur d'écran — la personne restait sur le bouton d'envoi avec
+ * un formulaire qui n'avait « rien fait ». Il est monté par TOUS les
+ * formulaires des quatre espaces : la réparation vaut pour tous.
+ *
+ * Reste ouvert, repo-wide : `aria-invalid` sur les `input`/`select`/`textarea`
+ * concernés (aujourd'hui seule la classe `is-invalid` marque le champ) et le
+ * déplacement du focus vers le premier champ refusé.
+ */
 export function FieldError({ error, field }: { error: ApiError | null; field: string }) {
   const messages = error?.fieldErrors[field];
   if (!messages || messages.length === 0) return null;
-  return <span className="ax-field__message ax-field__message--error">{messages.join(' ')}</span>;
+  return (
+    <span className="ax-field__message ax-field__message--error" role="alert">
+      {messages.join(' ')}
+    </span>
+  );
 }
 
 /* ── loading / empty states ── */
@@ -590,12 +701,22 @@ export function Modal({
 
 /* ── small display helpers ── */
 
-/** Detail row: label above value — used by every detail screen. */
+/**
+ * Detail row: label above value — used by every detail screen.
+ *
+ * Le libellé était en `--ax-text-subtle` : 11 px, capitales, interlettrage
+ * élargi, 4,32:1 en clair et 3,55:1 en sombre — la pire combinaison de
+ * lisibilité du produit, et elle nomme la valeur juste en dessous (« Échéance »,
+ * « Urgence déclarée », « Reste à régler »). Sans le libellé, la valeur ne veut
+ * rien dire : ce n'est pas de la décoration. Passé en `--ax-text-muted` (AA
+ * dans les deux thèmes) — correctif de la revue a11y S5, qui vaut pour tous
+ * les écrans de détail des quatre espaces.
+ */
 export function DetailItem({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div>
       <div
-        style={{ fontSize: 'var(--ax-text-2xs)', color: 'var(--ax-text-subtle)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 2 }}
+        style={{ fontSize: 'var(--ax-text-2xs)', color: 'var(--ax-text-muted)', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 2 }}
       >
         {label}
       </div>

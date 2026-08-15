@@ -526,7 +526,7 @@ class TestTariffIntegrality:
 
 
 class TestQueryCountsAtVolume:
-    def test_activity_stays_at_6_queries_with_a_busy_month(
+    def test_activity_stays_at_7_queries_with_a_busy_month(
         self, django_assert_num_queries
     ):
         center, director = make_center_with_director()
@@ -541,12 +541,15 @@ class TestQueryCountsAtVolume:
             )
             make_patient(created_by_center=center)
         client = client_for(director)
-        with django_assert_num_queries(6):
+        # 7 depuis S5 : la garde de gel d'abonnement lit le statut en base
+        # (ADR 0018 — jamais l'objet en mémoire). Le compte reste CONSTANT
+        # avec le volume, ce que cette probe mesure.
+        with django_assert_num_queries(7):
             response = client.get(activity_url(center))
         assert response.status_code == 200
         assert response.data["totals"]["encounters"] == 10
 
-    def test_finances_stays_at_6_queries_with_many_payments(
+    def test_finances_stays_at_7_queries_with_many_payments(
         self, django_assert_num_queries
     ):
         center, director = make_center_with_director()
@@ -560,7 +563,7 @@ class TestQueryCountsAtVolume:
                 actor=cashier, cash_payment=reversed_one, reason="Erreur"
             )
         client = client_for(director)
-        with django_assert_num_queries(6):
+        with django_assert_num_queries(7):  # +1 garde de gel (S5)
             response = client.get(finances_url(center))
         assert response.status_code == 200
         assert Decimal(response.data["totals"]["total_kmf"]) == Decimal("12000")

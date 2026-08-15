@@ -51,6 +51,14 @@ INSTALLED_APPS = [
     "apps.medical",
     "apps.scheduling",
     "apps.trustbridge",
+    # S5 (ADR 0018) — abonnement SaaS Chioni → centre. REGISTRE SÉPARÉ :
+    # cette app n'écrit jamais dans le ledger des soins (ADR 0003).
+    "apps.billing",
+    # S5 lot 3 (ADR 0018 décision 5) — canal support centre → Chioni.
+    # App à part de `billing` : une conversation n'est pas de l'argent, et
+    # le registre d'abonnement porte une discipline (aucune écriture du
+    # ledger) qu'un fil de discussion brouillerait.
+    "apps.support",
     "apps.audit",
 ]
 
@@ -383,6 +391,22 @@ if OTP_PURGE_GRACE_HOURS < 1:
         "des codes OTP encore valides."
     )
 
+# Délai de règlement d'une facture d'abonnement SaaS (S5 lot 2, ADR 0018
+# décision 4) : nombre de jours entre le début de la période facturée et
+# l'échéance. Une échéance dépassée fait passer l'abonnement en « impayé »
+# (état d'ALERTE qui ne ferme rien) — jamais en « suspendu », qui reste une
+# décision humaine motivée.
+SUBSCRIPTION_INVOICE_DUE_DAYS = env.int("SUBSCRIPTION_INVOICE_DUE_DAYS", default=15)
+# Boot guard (même philosophie que PSP_INTENT_GUARD_MINUTES) : 0 rendrait
+# toute facture exigible le jour même de son émission — donc « impayée » dès
+# le lendemain, avant même que le centre ait pu la lire ; une valeur négative
+# la rendrait exigible avant d'exister.
+if SUBSCRIPTION_INVOICE_DUE_DAYS < 1:
+    raise ImproperlyConfigured(
+        "SUBSCRIPTION_INVOICE_DUE_DAYS doit être >= 1 : une facture exigible "
+        "le jour de son émission serait « impayée » avant d'avoir été lue."
+    )
+
 CELERY_BEAT_SCHEDULE = {
     # RGPD hygiene: drop dead OtpCode rows past the investigation grace
     # (accounts/tasks.py — utility table, outside the append-only socle).
@@ -403,6 +427,39 @@ CELERY_BEAT_SCHEDULE = {
     "send-appointment-reminders": {
         "task": "scheduling.send_appointment_reminders",
         "schedule": crontab(hour=18, minute=0),
+    },
+    # --- Facturation SaaS Chioni → centre (S5 lot 2, ADR 0018 décision 4).
+    # Les trois tâches vivent dans apps/billing/tasks.py et ne font que
+    # déléguer à leur service (seul chemin d'écriture, verrous + audit).
+    # Elles sont référencées PAR NOM : les settings n'importent jamais de
+    # code applicatif.
+    #
+    # Émission : la facturation est MENSUELLE PAR TENANT (une facture par
+    # période, garantie par `current_period_end` + l'index unique
+    # (subscription, period_start)) ; le DÉCLENCHEUR, lui, est quotidien —
+    # les périodes courent depuis la date de souscription de chaque centre,
+    # pas depuis le 1er du mois. Un beat mensuel retarderait de 30 jours la
+    # facture d'un centre dont la période s'achève le 14 (écart documenté
+    # dans l'addendum LOT 2 de l'ADR 0018 ; réversible en une ligne). 06h00
+    # heure des Comores : la facture existe avant les deux tâches suivantes.
+    "issue-due-subscription-invoices": {
+        "task": "billing.issue_due_subscription_invoices",
+        "schedule": crontab(hour=6, minute=0),
+    },
+    # Échéance dépassée → l'abonnement passe « impayé » (alerte, ne ferme
+    # RIEN) ; retour automatique à « actif » dès que plus aucune facture
+    # échue n'a de solde. « Suspendu » n'est JAMAIS automatique : un centre
+    # qui a payé par virement non encore saisi ne doit pas être gelé par une
+    # tâche de nuit.
+    "flag-overdue-subscriptions": {
+        "task": "billing.flag_overdue_subscriptions",
+        "schedule": crontab(hour=7, minute=0),
+    },
+    # Relances SMS au DIRECTEUR SEUL (ADR 0012 étendu) : J+0, J+7, J+21 après
+    # l'échéance, puis silence. 08h00 locale — jamais la nuit.
+    "send-subscription-payment-reminders": {
+        "task": "billing.send_subscription_payment_reminders",
+        "schedule": crontab(hour=8, minute=0),
     },
 }
 

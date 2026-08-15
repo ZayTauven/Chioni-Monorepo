@@ -36,6 +36,7 @@ from drf_spectacular.utils import extend_schema
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.billing.guards import require_center_can_administer
 from apps.common.periods import (
     DEFAULT_PERIOD_DAYS,
     MAX_PERIOD_DAYS,
@@ -89,6 +90,11 @@ class CenterActivityStatsView(CenterScopedViewMixin, APIView):
 
     @extend_schema(responses=None)
     def get(self, request, *args, **kwargs):
+        # S5 (ADR 0018 décision 2) — piloting is part of the ADMINISTRATIVE
+        # perimeter frozen by a suspended/terminated subscription. Reading
+        # a patient's file, the day queue or the cash journal is NOT: what
+        # a center needs to work today never depends on its contract.
+        require_center_can_administer(self.center)
         from_day, to_day, start, end = parse_period(request)
         tz = timezone.get_current_timezone()  # Indian/Comoro (settings)
 
@@ -226,6 +232,10 @@ class CenterFinanceStatsView(CenterScopedViewMixin, APIView):
 
     @extend_schema(responses=None)
     def get(self, request, *args, **kwargs):
+        # S5 (ADR 0018 décision 2) — frozen with the rest of the piloting.
+        # The CASH JOURNAL (`/centers/{c}/cash-journal/`) is NOT frozen:
+        # a cashier must always be able to close their day.
+        require_center_can_administer(self.center)
         from_day, to_day, start, end = parse_period(request)
         tz = timezone.get_current_timezone()
 

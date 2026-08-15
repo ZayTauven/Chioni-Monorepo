@@ -71,6 +71,36 @@ SENSITIVE_MODELS = {
     # Tenant configuration that is money-adjacent or evidence
     "centers.TariffItem",
     "centers.KycDocument",
+    # S5 lot 3 (ADR 0018 décision 6) — les DEUX dernières portes d'écriture
+    # sensibles de l'admin, explicitement renvoyées à S5 par l'ADR 0017.
+    # Elles se referment parce que leurs portes produit existent enfin :
+    # `POST /platform/centers/{pk}/directors/` (audité, avec la séparation
+    # des pouvoirs) pour l'une, `/platform/operators/` + la commande
+    # `create_platform_staff` pour l'autre.
+    "centers.StaffMembership",
+    "accounts.PlatformStaff",
+    # Module Support (S5 lot 3, ADR 0018 décision 5) — machine à états
+    # (« fermé » est définitif), ``author_side`` posé par le service,
+    # audit lu par le directeur, et un fichier qui doit TOUJOURS passer le
+    # pipeline durci de l'ADR 0014. Un formulaire contournerait les quatre.
+    "support.SupportTicket",
+    "support.SupportMessage",
+    "support.SupportAttachment",
+    # SaaS subscription (S5, ADR 0018) — a plan price carries a DB
+    # integrality constraint, and a status carries a state machine, a
+    # mandatory motive and an audit entry. Flipping « suspendu » in a
+    # change form would freeze a real center's administration with no
+    # motive for its director and no trace of who decided it.
+    "billing.SubscriptionPlan",
+    "billing.CenterSubscription",
+    # …et sa facturation (S5 lot 2) : une facture émise est gelée par
+    # ``save()`` et son solde est DÉRIVÉ — un formulaire d'admin poserait
+    # « payée » sur une facture que personne n'a réglée, sans règlement,
+    # sans audit et sans que le centre le sache. Les deux autres sont
+    # append-only au niveau modèle : la base refuserait de toute façon.
+    "billing.SubscriptionInvoice",
+    "billing.SubscriptionPayment",
+    "billing.SubscriptionPaymentReversal",
     # RGPD (S4 lot 3, ADR 0007/0017 §7) — a change form here would flip a
     # request to « traitée » WITHOUT anonymising anything.
     "accounts.ErasureRequest",
@@ -83,18 +113,9 @@ SENSITIVE_MODELS = {
 #: conscious decision, reviewable in a diff.
 WRITABLE_BY_DESIGN = {
     "accounts.User": "Django auth management (password reset, deactivation).",
-    "accounts.PlatformStaff": (
-        "Bootstrap of the back-office itself: the FIRST Chioni operator "
-        "can only be born here, and this is the emergency revocation lever "
-        "(ADR 0017 lot 1)."
-    ),
     "centers.HealthCenter": (
         "Tenant profile (name, address, contact) — not sensitive. The KYC "
         "block IS read-only, asserted separately below."
-    ),
-    "centers.StaffMembership": (
-        "Rescue bootstrap of a tenant locked out of its own space "
-        "(ADR 0017 décision 4). The platform API is now the normal path."
     ),
     "scheduling.Appointment": (
         "Appointments are OPERATING data, explicitly not on the sensitive "
@@ -244,10 +265,38 @@ class TestTheRealAdminRefusesASuperuser:
             "/admin/trustbridge/cashpayment/add/",
             "/admin/centers/tariffitem/add/",
             "/admin/audit/auditlog/add/",
+            # S5 lot 3 — les deux dernières portes, refermées.
+            "/admin/accounts/platformstaff/add/",
+            "/admin/centers/staffmembership/add/",
+            "/admin/support/supportticket/add/",
+            "/admin/support/supportmessage/add/",
         ],
     )
     def test_add_views_are_403(self, admin_client, path):
         assert admin_client.get(path).status_code == 403
+
+    def test_a_superuser_can_no_longer_mint_the_fourth_hat(self, admin_client):
+        """THE vigilance of the S4 adversarial review, soldée ici.
+
+        « Un superuser Django est toujours à un formulaire de la 4ᵉ
+        casquette » : the change form of an EXISTING operator row is now
+        refused too, so neither creating nor editing a ``PlatformStaff``
+        is reachable from ``/admin/``. The product doors
+        (`/platform/operators/`, `create_platform_staff`) are the only
+        ways in, and both are audited.
+        """
+        from apps.accounts.models import PlatformStaff
+
+        from .factories import make_platform_staff
+
+        _user, operator = make_platform_staff(role=PlatformStaff.Role.SUPPORT)
+        posted = admin_client.post(
+            f"/admin/accounts/platformstaff/{operator.pk}/change/",
+            {"user": operator.user_id, "role": "admin", "is_active": "on"},
+        )
+        assert posted.status_code == 403
+        operator.refresh_from_db()
+        assert operator.role == PlatformStaff.Role.SUPPORT
 
     def test_change_view_of_a_consent_is_read_only(self, admin_client):
         """The most sensitive object of the product: granting a clinical

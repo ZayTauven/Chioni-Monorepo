@@ -31,7 +31,7 @@ Usage::
     python manage.py seed_demo
 """
 
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 from io import BytesIO
 
@@ -44,6 +44,13 @@ from django.utils import timezone
 
 from apps.accounts import services as account_services
 from apps.accounts.models import ErasureRequest, PlatformStaff
+from apps.billing import services as billing_services
+from apps.billing.models import (
+    CenterSubscription,
+    SubscriptionInvoice,
+    SubscriptionPayment,
+    SubscriptionPlan,
+)
 from apps.centers import services as center_services
 from apps.centers.models import (
     HealthCenter,
@@ -68,6 +75,8 @@ from apps.patients.models import (
     PatientInsurance,
     PatientProfile,
 )
+from apps.support import services as support_services
+from apps.support.models import SupportMessage, SupportTicket
 from apps.trustbridge import services as trustbridge_services
 from apps.trustbridge.models import Invoice, PaymentRequest
 
@@ -83,6 +92,15 @@ GUARDIAN_PHONE = "+33612345678"
 GUARDIAN2_PHONE = "+33698765432"
 #: S4 (ADR 0017) — the fourth hat: a Chioni operator, tenant-side of nothing.
 PLATFORM_PHONE = "+2693440020"
+#: S5 lot 3 (ADR 0018 décision 6) — the SECOND operator, role « support » :
+#: c'est la casquette qui répond aux tickets, et la seule qui écrit dans le
+#: back-office sans être « admin ». Sans elle, l'arbitrage du lot 3
+#: (« répondre à un ticket EST le métier du support ») n'est pas démontrable.
+SUPPORT_PHONE = "+2693440021"
+
+#: S5 (ADR 0018) — the SaaS offer sold to the demo center.
+DEMO_PLAN_CODE = "ESSENTIEL"
+DEMO_PLAN_PRICE_KMF = Decimal("25000")
 
 #: The money scenario is found back (idempotence) by these reasons.
 ENCOUNTER_1_REASON = "Contrôle hypertension"
@@ -134,7 +152,8 @@ class Command(BaseCommand):
 
     def _seed(self):
         admin = self._ensure_superuser()
-        self._ensure_platform_staff()
+        platform_operator = self._ensure_platform_staff()
+        support_operator = self._ensure_support_operator()
         center = self._ensure_center()
         # The director is provisioned by the back-office (admin); the
         # director then onboards the rest of the team — the real chain.
@@ -150,8 +169,15 @@ class Command(BaseCommand):
                 director = staff[role]
         doctor = staff[StaffMembership.Role.DOCTOR]
         cashier = staff[StaffMembership.Role.CASHIER]
+        secretary = staff[StaffMembership.Role.SECRETARY]
         tariffs = self._ensure_tariffs(center=center, director=director)
         self._ensure_kyc_document(center=center, director=director)
+        subscription = self._ensure_subscription(
+            center=center, operator=platform_operator
+        )
+        support_ticket = self._ensure_support_ticket(
+            center=center, secretary=secretary, operator=support_operator
+        )
 
         guardian2, guardian2_profile = self._ensure_guardian(
             username="tuteur2.demo", phone=GUARDIAN2_PHONE,
@@ -188,6 +214,8 @@ class Command(BaseCommand):
             "patient": patient,
             "link1": link1,
             "link2": link2,
+            "subscription": subscription,
+            "support_ticket": support_ticket,
         }
 
     def _ensure_superuser(self):
@@ -216,18 +244,170 @@ class Command(BaseCommand):
             "plateforme.demo", phone=PLATFORM_PHONE,
             first_name="Zaïnaba", last_name="Combo", verify_phone=True,
         )
-        operator = PlatformStaff.objects.filter(user=user).first()
-        if operator is None:
-            PlatformStaff.objects.create(
-                user=user, role=PlatformStaff.Role.ADMIN, is_active=True
+        if PlatformStaff.objects.filter(user=user).exists():
+            self._note("Équipe Chioni : plateforme.demo déjà en place.")
+            return user
+        # S5 lot 3 : passage par le service (l'admin Django s'est refermé
+        # sur cette table) — même porte que la commande d'amorçage
+        # `create_platform_staff`, avec son audit.
+        account_services.create_platform_staff(
+            actor=None, phone=PLATFORM_PHONE, role=PlatformStaff.Role.ADMIN
+        )
+        self._note(
+            "Équipe Chioni : plateforme.demo (administrateur) — "
+            "espace back-office."
+        )
+        return user
+
+    def _ensure_support_operator(self):
+        """S5 lot 3 (ADR 0018 décision 6) — the « support » operator.
+
+        Second hat of the back-office, and the one that makes the lot's
+        arbitrage demonstrable: a ``support`` reads everything, writes
+        NOTHING about the tenant or the money… and answers tickets, which
+        is its job.
+        """
+        user = self._ensure_user(
+            "support.demo", phone=SUPPORT_PHONE,
+            first_name="Moinaecha", last_name="Bacar", verify_phone=True,
+        )
+        if PlatformStaff.objects.filter(user=user).exists():
+            self._note("Équipe Chioni : support.demo déjà en place.")
+            return user
+        account_services.create_platform_staff(
+            actor=None, phone=SUPPORT_PHONE, role=PlatformStaff.Role.SUPPORT
+        )
+        self._note(
+            "Équipe Chioni : support.demo (support) — répond aux tickets."
+        )
+        return user
+
+    def _ensure_support_ticket(self, *, center, secretary, operator):
+        """S5 lot 3 (ADR 0018 décision 5) — un ticket OUVERT et son échange.
+
+        Le cas le plus parlant : c'est la SECRÉTAIRE qui ouvre (pas le
+        directeur), et Chioni répond. Le contenu est volontairement
+        exemplaire — aucun nom de patient, aucune donnée médicale : le
+        seed montre l'usage qu'on attend, l'avertissement de l'écran fait
+        le reste.
+
+        Passe par les vrais services (append-only sur les messages, audit
+        sans le contenu) — jamais un ``objects.create`` de complaisance.
+        """
+        ticket = SupportTicket.objects.for_center(center).first()
+        if ticket is not None:
+            self._note("Support : ticket de démo déjà ouvert.")
+            return ticket
+        ticket = support_services.open_ticket(
+            actor=secretary,
+            center=center,
+            subject="Le tarif « Échographie » n'apparaît pas dans la liste",
+            category=SupportTicket.Category.BUG,
+            priority=SupportTicket.Priority.NORMAL,
+            body=(
+                "Bonjour, depuis ce matin le tarif ECHO01 n'apparaît plus "
+                "dans le sélecteur quand je prépare une facture. Les "
+                "autres tarifs sont bien là. Merci de votre aide."
+            ),
+        )
+        support_services.post_message(
+            actor=operator,
+            ticket=ticket,
+            body=(
+                "Bonjour, merci pour votre message. Nous regardons la "
+                "grille tarifaire de votre centre et revenons vers vous "
+                "dans la journée."
+            ),
+            side=SupportMessage.Side.CHIONI,
+        )
+        self._note(
+            "Support : ticket ouvert par secretaire.demo, une réponse de "
+            "Chioni (2 messages)."
+        )
+        return ticket
+
+    def _ensure_subscription(self, *, center, operator):
+        """S5 (ADR 0018) — the demo tenant has a real contract: one offer,
+        one ACTIVE subscription with an échéance in three weeks.
+
+        ACTIVE on purpose: the whole demo (personnel, tarifs, statistiques)
+        must keep working. Freezing is a DEMO STEP — suspend the
+        subscription from the platform space and watch the administration
+        close while the cash desk and the consultations keep going.
+        """
+        plan = SubscriptionPlan.objects.filter(code=DEMO_PLAN_CODE).first()
+        if plan is None:
+            plan = billing_services.create_plan(
+                actor=operator,
+                code=DEMO_PLAN_CODE,
+                name="Essentiel",
+                price_kmf=DEMO_PLAN_PRICE_KMF,
+                billing_period=SubscriptionPlan.BillingPeriod.MONTHLY,
+                included_practitioners=3,
+                included_staff=10,
             )
             self._note(
-                "Équipe Chioni : plateforme.demo (administrateur) — "
-                "espace back-office."
+                "Abonnement : offre « Essentiel » créée "
+                "(25 000 KMF/mois, 10 membres, 3 praticiens)."
+            )
+        subscription = CenterSubscription.objects.filter(center=center).first()
+        if subscription is None:
+            # Aucune échéance posée à la main depuis le lot 2 : c'est
+            # l'ÉMISSION de la première facture qui pose le curseur de
+            # période (``current_period_end``), comme en production.
+            subscription = billing_services.create_subscription(
+                actor=operator,
+                center=center,
+                plan=plan,
+                status=CenterSubscription.Status.ACTIVE,
+            )
+            self._note(
+                "Abonnement : Clinique Ylang souscrit « Essentiel » (actif)."
             )
         else:
-            self._note("Équipe Chioni : plateforme.demo déjà en place.")
-        return user
+            self._note("Abonnement : Clinique Ylang déjà abonnée.")
+        self._ensure_subscription_invoice(
+            subscription=subscription, operator=operator
+        )
+        subscription.refresh_from_db()
+        return subscription
+
+    def _ensure_subscription_invoice(self, *, subscription, operator):
+        """S5 lot 2 (ADR 0018 décision 4) — une facture SaaS ÉMISE et
+        réglée pour MOITIÉ : le cas le plus parlant de la démo (solde
+        restant visible côté centre comme côté plateforme, et une
+        contre-passation possible depuis le back-office).
+
+        Passe par les vrais services (numérotation « A- », audit,
+        transitions) — jamais un ``objects.create`` de complaisance.
+        """
+        if SubscriptionInvoice.objects.filter(subscription=subscription).exists():
+            self._note("Abonnement : facture de démo déjà émise.")
+            return
+        if subscription.current_period_end is not None:
+            # Base de dev semée par le lot 1 : le curseur pointait une
+            # échéance à trois semaines, donc la période EN COURS n'était
+            # pas encore facturable. On le remet à zéro pour que la démo
+            # ait sa facture tout de suite (outil DEBUG-only).
+            CenterSubscription.objects.filter(pk=subscription.pk).update(
+                current_period_end=None
+            )
+            subscription.refresh_from_db()
+        invoice = billing_services.issue_subscription_invoice(
+            actor=operator, subscription=subscription
+        )
+        billing_services.record_subscription_payment(
+            actor=operator,
+            invoice=invoice,
+            amount_kmf=Decimal("10000"),
+            method=SubscriptionPayment.Method.TRANSFER,
+            reference="VIR-DEMO-0001",
+        )
+        self._note(
+            f"Abonnement : facture {invoice.number} émise "
+            f"(25 000 KMF, échéance {invoice.due_date}) — 10 000 KMF reçus "
+            "par virement, solde 15 000 KMF."
+        )
 
     def _ensure_erasure_request(self, *, user):
         """S4 lot 3 (ADR 0017 §7) — one PENDING erasure request to demo.
@@ -628,6 +808,7 @@ class Command(BaseCommand):
         center = state["center"]
         patient = state["patient"]
         link1, link2 = state["link1"], state["link2"]
+        subscription = state["subscription"]
         payment_request = (
             PaymentRequest.objects.filter(
                 invoice__center=center, invoice__patient=patient
@@ -654,6 +835,27 @@ class Command(BaseCommand):
             "Grille : Consultation 5 000 | Analyses 15 000 | "
             "Médicaments 8 000 | Échographie 12 000 (KMF)"
         )
+        write(
+            f"Abonnement : {subscription.plan.name} — "
+            f"{self._kmf(subscription.plan.price_kmf)} KMF/mois — "
+            f"{subscription.get_status_display().lower()} "
+            f"(période en cours jusqu'au {subscription.current_period_end})"
+        )
+        saas_invoice = (
+            SubscriptionInvoice.objects.filter(subscription=subscription)
+            .order_by("-sequence_number")
+            .first()
+        )
+        if saas_invoice is not None:
+            balance = billing_services.subscription_invoice_balance_kmf(
+                saas_invoice
+            )
+            write(
+                f"Facture d'abonnement : {saas_invoice.number} — "
+                f"{self._kmf(saas_invoice.amount_kmf)} KMF, échéance "
+                f"{saas_invoice.due_date} — solde restant "
+                f"{self._kmf(balance)} KMF (10 000 reçus par virement)"
+            )
         write("")
         write(f"Comptes (mot de passe commun : {DEMO_PASSWORD}) :")
         rows = [
@@ -677,6 +879,9 @@ class Command(BaseCommand):
             ("plateforme.demo", PLATFORM_PHONE,
              "Zaïnaba Combo — équipe Chioni (admin)",
              "Espace plateforme (back-office)"),
+            ("support.demo", SUPPORT_PHONE,
+             "Moinaecha Bacar — équipe Chioni (support)",
+             "Espace plateforme — tickets seuls"),
         ]
         widths = [
             max(len(row[i]) for row in rows) for i in range(len(rows[0]))
@@ -688,6 +893,16 @@ class Command(BaseCommand):
             if index == 0:
                 write("  " + "-+-".join("-" * width for width in widths))
 
+        support_ticket = state["support_ticket"]
+        if support_ticket is not None:
+            write("")
+            write(
+                f"Support : ticket #{support_ticket.pk} "
+                f"« {support_ticket.subject} » — "
+                f"{support_ticket.get_status_display().lower()}, "
+                f"{support_ticket.messages.count()} message(s), ouvert par "
+                "secretaire.demo (pas le directeur)."
+            )
         write("")
         write("État du Pont de Confiance :")
         if payment_request is not None:
@@ -737,6 +952,25 @@ class Command(BaseCommand):
             "8. RGPD : GET /api/v1/platform/erasure-requests/ — la demande "
             "de tuteur2.demo attend ; la traiter anonymise son compte "
             "(le carnet d'Anfia, lui, n'est jamais effacé).",
+            "9. Abonnement : POST /api/v1/platform/subscriptions/{id}/status/ "
+            "{\"status\": \"suspendu\", \"reason\": \"…\"} — le "
+            "personnel, les tarifs et les statistiques se gèlent ; les "
+            "consultations, les rendez-vous, l'inscription au guichet et la "
+            "caisse continuent (ADR 0018).",
+            "10. Facturation SaaS : le directeur lit GET "
+            "/api/v1/centers/{id}/subscription/invoices/ (solde 15 000 KMF) ; "
+            "la plateforme solde le reste via POST "
+            "/api/v1/platform/subscription-invoices/{id}/payments/, ou "
+            "contre-passe le virement avec un motif.",
+            "11. Support : connexion support.demo → GET "
+            "/api/v1/platform/support/tickets/?open=true — répondre au "
+            "ticket (POST .../messages/) puis le passer « en_cours » "
+            "(POST .../status/). Le MÊME support reçoit 403 sur toute "
+            "écriture de tenant ou d'argent : répondre est son métier, "
+            "gouverner le tenant ne l'est pas.",
+            "12. Support sur centre gelé : suspendre l'abonnement (étape 9) "
+            "puis rouvrir un ticket depuis le centre — il passe. Le gel ne "
+            "ferme JAMAIS le canal qui explique le gel.",
         ):
             write(f"  {step}")
         write("")

@@ -16,20 +16,33 @@ class UserAdmin(DjangoUserAdmin):
 
 
 @admin.register(PlatformStaff)
-class PlatformStaffAdmin(admin.ModelAdmin):
-    """The FOURTH hat (S4, ADR 0017) — kept writable ON PURPOSE.
+class PlatformStaffAdmin(ReadOnlyAdminMixin, admin.ModelAdmin):
+    """The FOURTH hat — READ-ONLY since S5 lot 3 (ADR 0018 décision 6).
 
-    This is the bootstrap of the back-office itself: the very first Chioni
-    operator can only be born here (there is no operator yet to create
-    him through the API). It is also the only lever to revoke an operator
-    in an emergency. Keeping it small and visible is the parade: a row
-    here grants product rights, ``is_staff`` does NOT.
+    It stayed writable through the whole of S4 « à dessein » (ADR 0017 lot
+    1 §13): the very first Chioni operator could be born nowhere else. The
+    S4 adversarial review consigned the price of that choice — « un
+    superuser Django est toujours à un formulaire de la 4ᵉ casquette » —
+    and S5 pays it off, because the two doors that were missing now exist:
+
+    - the PRODUCT door: `GET|POST /platform/operators/` and
+      `PATCH /platform/operators/{pk}/` (``admin`` only, audited
+      ``platform_staff.created|updated``, with the « last active admin »
+      guard that stops Chioni from locking itself out of its own
+      back-office) ;
+    - the BOOTSTRAP door: ``python manage.py create_platform_staff``,
+      usable in production, granting no credential (shadow account + OTP).
+
+    What closing this form removes, stated plainly: an emergency
+    revocation by a Django superuser. That lever moves to the API — where
+    it is audited and where the last-admin guard applies, which the form
+    never enforced.
     """
 
     list_display = ("user", "role", "is_active", "created_at")
     list_filter = ("role", "is_active")
     search_fields = ("user__username", "user__phone", "user__email")
-    autocomplete_fields = ("user",)
+    readonly_fields = ("user", "role", "is_active", "created_at", "updated_at")
 
 
 @admin.register(ErasureRequest)

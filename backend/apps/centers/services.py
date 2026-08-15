@@ -10,6 +10,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from apps.audit.services import AuditAction, audit
+from apps.billing.guards import require_center_can_administer
 from apps.centers.models import (
     HealthCenter,
     KycDocument,
@@ -26,6 +27,31 @@ def add_staff_member(*, actor, center, phone, role, first_name="", last_name="")
 
     The account is created as a shadow (unusable password) when the phone
     is unknown: it becomes loggable through the OTP chantier only.
+
+    THE TENANT's door — hence the subscription freeze (S5, ADR 0018
+    décision 2): a suspended/terminated center cannot hire through the
+    product until it regularises. The PLATFORM's door
+    (:func:`add_center_director`) shares the write below but NOT this
+    guard: Chioni must always be able to seed a director back into a
+    tenant it has itself frozen, otherwise the sanction locks the rescue
+    path too.
+    """
+    require_center_can_administer(center)
+    return _create_staff_membership(
+        actor=actor, center=center, phone=phone, role=role,
+        first_name=first_name, last_name=last_name,
+    )
+
+
+def _create_staff_membership(
+    *, actor, center, phone, role, first_name="", last_name="",
+):
+    """The membership write itself — shared by the tenant and platform doors.
+
+    Extracted at S5 so the subscription freeze can sit on the tenant door
+    ONLY (see :func:`add_staff_member`). Behaviour is byte-identical to the
+    historical ``add_staff_member`` body: shadow account, duplicate-role
+    refusal, audit entry. Callers are all ``transaction.atomic``.
     """
     user, created = get_or_create_shadow_user(phone)
     if created and (first_name or last_name):
@@ -135,7 +161,13 @@ def reactivate_staff_member(*, actor, membership):
     inactive rows (``add_staff_member`` refuses a duplicate even against
     an inactive membership), so flipping ``is_active`` back can never
     create a second membership for the same role.
+
+    Frozen by the subscription (S5, ADR 0018): re-opening an access grows
+    the tenant's use of the product again — unlike
+    :func:`deactivate_staff_member`, which stays OPEN on a frozen center
+    (revoking an access is a security act, never a paid feature).
     """
+    require_center_can_administer(membership.center)
     if membership.is_active:
         raise ValidationError("Ce membre est déjà actif.")
     membership.is_active = True
@@ -165,7 +197,11 @@ def update_staff_member(*, actor, membership, role=None, first_name=None, last_n
       never-claimed shadow (no verified phone, unusable password) — same
       rule as patient identity (R-API-2): an activated account manages its
       own identity through ``PATCH /auth/me/``.
+
+    Frozen by the subscription (S5, ADR 0018 décision 2: « modification de
+    personnel »).
     """
+    require_center_can_administer(membership.center)
     if not membership.is_active:
         raise ValidationError(
             "Ce membre est désactivé : seul un membre actif peut être modifié."
@@ -263,7 +299,14 @@ def remove_center_logo(*, actor, center):
 @transaction.atomic
 def create_tariff(*, actor, center, **fields):
     """Tariff creation — ``generic_category`` is REQUIRED by the serializer
-    (default « autre » accepted but always explicit — ADR 0005)."""
+    (default « autre » accepted but always explicit — ADR 0005).
+
+    Frozen by the subscription (S5, ADR 0018): the price grid is
+    configuration, and configuring is administration. Billing a patient
+    with the EXISTING grid keeps working on a frozen center — the desk
+    never stops.
+    """
+    require_center_can_administer(center)
     if TariffItem.objects.for_center(center).filter(code=fields.get("code")).exists():
         raise ValidationError("Ce code tarifaire existe déjà dans la grille du centre.")
     tariff = TariffItem.objects.create(center=center, **fields)
@@ -278,6 +321,8 @@ def create_tariff(*, actor, center, **fields):
 
 @transaction.atomic
 def update_tariff(*, actor, tariff, **fields):
+    """Tariff edition — frozen by the subscription (S5, ADR 0018)."""
+    require_center_can_administer(tariff.center)
     new_code = fields.get("code")
     if new_code and new_code != tariff.code:
         clash = (
@@ -397,9 +442,19 @@ def _refuse_platform_operator_as_director(membership):
     Raised AFTER the membership row exists, inside the caller's atomic
     block: the rollback takes the shadow account and the audit entry with
     it, and the guard never has to re-implement phone normalisation.
+
+    **The ``User`` row is LOCKED first** (revue guardian S5), exactly like
+    its mirror ``accounts.services._refuse_center_staff_as_operator``:
+    without it, two concurrent transactions taking the two doors on the
+    same number each read an un-written world and both passed. The user is
+    the pivot both doors resolve the person by, and the outermost level of
+    the product's lock hierarchy since S4.
     """
+    from django.contrib.auth import get_user_model
+
     from apps.accounts.models import PlatformStaff
 
+    get_user_model().objects.select_for_update().get(pk=membership.user_id)
     if PlatformStaff.objects.filter(
         user_id=membership.user_id, is_active=True
     ).exists():
@@ -417,8 +472,12 @@ def add_center_director(*, actor, center, phone, first_name="", last_name=""):
 
     Guarded by :func:`_refuse_platform_operator_as_director`: this door
     mints tenant rights, so it may not mint them for the operator using it.
+
+    Deliberately NOT guarded by the subscription freeze (S5, ADR 0018):
+    this is Chioni's OWN rescue path into a tenant, and a commercial
+    sanction must never lock the platform out of the center it sanctioned.
     """
-    membership = add_staff_member(
+    membership = _create_staff_membership(
         actor=actor,
         center=center,
         phone=phone,
