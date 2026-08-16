@@ -20,8 +20,8 @@ import type { ReactNode } from 'react';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/context/AuthContext';
 import { PLATFORM_READ_ONLY_NOTICE } from '@/lib/labels';
-import type { PlatformRole } from '@/lib/types';
-import { IconAlertTriangle, IconRefresh } from '@/screens/centre/shared';
+import type { PharmacyStatus, PlatformRole } from '@/lib/types';
+import { IconAlertTriangle, IconRefresh, type BadgeTone } from '@/screens/centre/shared';
 
 export {
   AvatarChip,
@@ -51,6 +51,7 @@ export {
   toApiError,
   useAsync,
   useDebounced,
+  useScopedState,
   type BadgeTone,
 } from '@/screens/centre/shared';
 
@@ -146,6 +147,26 @@ export function ErrorAlert({ error, onRetry }: { error: ApiError; onRetry?: () =
     </div>
   );
 }
+
+/**
+ * S9 — le ton de l'état d'une officine, **côté exploitant**.
+ *
+ * Il vit dans le socle et non dans l'écran de liste : le DÉTAIL en a besoin
+ * aussi, et l'importer depuis la liste embarquait tout cet écran (filtres,
+ * modale de création, détection de doublons) dans le bundle du détail — sur
+ * une connexion comorienne, ce n'est pas un détail.
+ *
+ * Aucun `danger`, et ce n'est pas de la timidité : `en_attente` est une FILE DE
+ * TRAVAIL — c'est même la raison d'ouvrir cet écran — et non une anomalie ;
+ * `warning` dit exactement « quelque chose attend un geste », et le geste est
+ * celui de l'exploitant. `suspendue` reste neutre : la décision est prise, sa
+ * couleur n'a plus rien à ajouter.
+ */
+export const PHARMACY_TONES: Record<PharmacyStatus, BadgeTone> = {
+  en_attente: 'warning',
+  validee: 'success',
+  suspendue: 'neutral',
+};
 
 /** Monospaced technical reference (ids, statuses) — the operator's material. */
 export function Ref({ children }: { children: ReactNode }) {

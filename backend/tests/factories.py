@@ -463,3 +463,55 @@ def make_ledger_tx(payment_request=None, description="Paiement tuteur", amount="
             },
         ],
     )
+
+
+# ---------------------------------------------------------------------------
+# S9 — le réseau des pharmacies (ADR 0022)
+# ---------------------------------------------------------------------------
+
+
+def make_pharmacy(name=None, status=None, island=None, city="Moroni", **kwargs):
+    """Une officine du réseau. ORM direct (comme ``make_center``) : les
+    factories posent un ÉTAT, les services et leur audit ont leurs tests.
+
+    Défaut ``validee`` : la très grande majorité des scénarios partent d'une
+    officine opérationnelle ; les tests de statut le passent explicitement.
+    """
+    from apps.common.geo import Island
+    from apps.pharmacy.models import Pharmacy
+
+    return Pharmacy.objects.create(
+        name=name or f"Pharmacie {next(_seq)}",
+        island=island or Island.NGAZIDJA,
+        city=city,
+        status=status or Pharmacy.Status.VALIDATED,
+        **kwargs,
+    )
+
+
+def make_pharmacy_member(pharmacy=None, user=None):
+    """Une personne de l'officine — JAMAIS un ``StaffMembership``.
+
+    C'est la décision 1 de l'ADR 0022 : sans membership de centre, le compte
+    ne peut atteindre aucune route de tenant, par construction.
+    """
+    from apps.pharmacy.models import PharmacyMembership
+
+    return PharmacyMembership.objects.create(
+        user=user or make_user(), pharmacy=pharmacy or make_pharmacy()
+    )
+
+
+def make_prescription(encounter=None, medications=None, **kwargs):
+    """Une ordonnance et ses lignes (``medication``/``dosage``)."""
+    from apps.medical.models import Prescription, PrescriptionItem
+
+    encounter = encounter or make_encounter()
+    prescription = Prescription.objects.create(encounter=encounter, **kwargs)
+    for medication in medications or ["Paracétamol 500 mg", "Amoxicilline 1 g"]:
+        PrescriptionItem.objects.create(
+            prescription=prescription,
+            medication=medication,
+            dosage="2 fois par jour pendant 7 jours",
+        )
+    return prescription

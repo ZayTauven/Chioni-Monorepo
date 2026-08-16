@@ -28,6 +28,7 @@ import {
   formatKmf,
   GENERIC_CATEGORY_LABELS,
   RECORD_ENTRY_TYPE_LABELS,
+  patientDeliveredOn,
   STAY_CANCELLED_PATIENT_HINT,
   STAY_PATIENT_ENCOUNTER_LINK,
   STAY_PATIENT_ONGOING_HINT,
@@ -37,6 +38,7 @@ import {
   vitalSummary,
 } from '@/lib/labels';
 import type { PatientMedicalFile, RecordEntry, RecordEntryType } from '@/lib/types';
+import { PatientAvailabilityPanel } from './PatientAvailability';
 import { useLoadMore } from './useLoadMore';
 import {
   EmptyState,
@@ -262,6 +264,29 @@ function OrdonnancesTab({ enabled }: { enabled: boolean }) {
                 </li>
               ))}
             </ul>
+            {/*
+              S9 — deux ajouts, et le second est le bénéfice du sprint :
+
+              - `delivered_at` en une phrase entière (« vos médicaments vous ont
+                été remis le … ») plutôt qu'une étiquette. Il n'y a PAS de
+                `delivered_by` dans ce payload, et il ne faut pas en chercher :
+                aucune identité de personnel ne traverse une vue patient ;
+              - « Où trouver mes médicaments ? », replié et chargé à la demande
+                — le carnet se consulte en 2G sur un téléphone d'entrée de
+                gamme, on ne précharge pas les recherches de toute une vie.
+            */}
+            {presc.delivered_at ? (
+              /* Les médicaments sont dans la main de la personne : « où
+                 trouver mes médicaments ? » n'a plus d'objet, et le proposer
+                 quand même enverrait chercher ce qu'on a déjà — en dépensant
+                 une requête au passage. Même règle que côté centre, où le
+                 bouton de recherche disparaît sur une ordonnance remise. */
+              <p className="pat-row__meta" style={{ margin: 0 }}>
+                {patientDeliveredOn(presc.delivered_at)}
+              </p>
+            ) : (
+              <PatientAvailabilityPanel prescriptionId={presc.id} />
+            )}
           </div>
         </section>
       ))}

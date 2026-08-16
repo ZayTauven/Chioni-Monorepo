@@ -31,7 +31,7 @@ import {
 } from '@/lib/tokens';
 import type { Me } from '@/lib/types';
 
-export type Space = 'centre' | 'patient' | 'tuteur' | 'plateforme';
+export type Space = 'centre' | 'patient' | 'tuteur' | 'plateforme' | 'pharmacie';
 
 export type AuthStatus = 'loading' | 'anonymous' | 'authenticated';
 
@@ -42,6 +42,16 @@ export type AuthStatus = 'loading' | 'anonymous' | 'authenticated';
  * Never derive it from anything else: `is_staff`/`is_superuser` are absent
  * from the payload by design and grant no API right at all. The backend only
  * surfaces an ACTIVE operator row, so `!== null` is the whole rule.
+ *
+ * S9 — the 5th hat: `pharmacy_memberships` is a LIST (one person may hold two
+ * officines), so the gate is « non-empty », and the active pharmacy is picked
+ * by PharmacyContext exactly as CenterContext picks the active center. The
+ * backend only surfaces ACTIVE memberships — a retired member gets an empty
+ * list, byte-identical to someone who never joined the network.
+ *
+ * A pharmacy account carries NO StaffMembership by construction (ADR 0022
+ * décision 1): it can therefore never reach a `/centers/…` route, and this
+ * function has nothing to arbitrate between the two hats.
  */
 export function spacesOf(me: Me | null): Space[] {
   if (!me) return [];
@@ -50,6 +60,7 @@ export function spacesOf(me: Me | null): Space[] {
   if (me.patient_profile) spaces.push('patient');
   if (me.guardian_profile) spaces.push('tuteur');
   if (me.platform_staff) spaces.push('plateforme');
+  if ((me.pharmacy_memberships ?? []).length > 0) spaces.push('pharmacie');
   return spaces;
 }
 
@@ -60,6 +71,7 @@ export function homeOfSpace(space: Space): string {
     patient: '/patient',
     tuteur: '/tuteur',
     plateforme: '/plateforme',
+    pharmacie: '/pharmacie',
   }[space];
 }
 

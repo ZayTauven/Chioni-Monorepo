@@ -22,7 +22,7 @@ import {
 } from '../../lib/manifest';
 import { Icon } from '../ui/Icon';
 import { useCenter } from '@/context/CenterContext';
-import { BILLING_ROLES, hasRole } from '@/screens/centre/shared';
+import { BILLING_ROLES, PRESCRIPTION_READ_ROLES, hasRole } from '@/screens/centre/shared';
 import type { StaffRole } from '@/lib/types';
 
 /*
@@ -72,6 +72,21 @@ const NAV_ROLE_GATES: Record<string, StaffRole[]> = {
   // geste central du module — signaler une panne — lui est ouvert aussi.
   // Seules l'écriture du parc et la machine à états sont directeur seul, et
   // elles sont gardées DANS l'écran, là où le backend les refuse.
+  //
+  // S9 (ADR 0022) — le réseau des pharmacies, et les DEUX entrées sont
+  // traitées différemment parce que leurs audiences le sont :
+  //
+  // - « Ordonnances » (`centre.ordonnances`) porte le comptoir ET le fil des
+  //   recherches : lire une ordonnance et diffuser une liste de médicaments
+  //   sont réservés aux rôles cliniques + pharmacien (R-API-1). Une secrétaire
+  //   ou un caissier reçoit 403 sur les deux — l'entrée n'a aucune raison de
+  //   leur apparaître, et l'écran s'auto-garde en plus (fetchs compris) ;
+  // - « Pharmacies » (`centre.pharmacies`) n'est volontairement PAS gaté :
+  //   l'annuaire des officines validées est ouvert à tout membre actif, parce
+  //   que savoir quelles pharmacies existent — et pouvoir en appeler une —
+  //   n'est pas une information clinique. C'est le même arbitrage que
+  //   « Équipe du jour » ouverte vs « Registre du personnel » directeur seul.
+  'centre.ordonnances': PRESCRIPTION_READ_ROLES,
 };
 
 /** Shared with the command palette — one source of truth for nav visibility.

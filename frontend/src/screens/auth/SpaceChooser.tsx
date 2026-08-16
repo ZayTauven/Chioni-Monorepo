@@ -140,6 +140,7 @@ export function SpaceChooser() {
 
   const hasSpaces = spaces.length > 0;
   const centerNames = (me.staff_memberships ?? []).map((m) => m.center.name);
+  const pharmacyNames = (me.pharmacy_memberships ?? []).map((m) => m.pharmacy.name);
 
   return (
     <AuthStandalone>
@@ -191,6 +192,21 @@ export function SpaceChooser() {
               {/* S4 — la 4ᵉ casquette. Elle n'apparaît que pour un exploitant
                   actif (`platform_staff` de /auth/me/), jamais déduite d'un
                   quelconque droit d'admin Django. */}
+              {/* S9 — la 5ᵉ casquette. `pharmacy_memberships` est une LISTE :
+                  une même personne peut tenir deux officines, et la carte
+                  nomme celles qu'elle tient plutôt qu'un libellé générique. */}
+              {spaces.includes('pharmacie') && (
+                <Link href={homeOfSpace('pharmacie')} className="ax-card ax-card--interactive" style={{ textDecoration: 'none' }}>
+                  <div className="ax-card__body" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--ax-space-1)' }}>
+                    <h2 style={cardTitleStyle}>Mon officine</h2>
+                    <p style={cardTextStyle}>
+                      {pharmacyNames.length > 0
+                        ? pharmacyNames.join(' · ')
+                        : 'Répondre aux demandes de médicaments des centres de santé.'}
+                    </p>
+                  </div>
+                </Link>
+              )}
               {spaces.includes('plateforme') && (
                 <Link href={homeOfSpace('plateforme')} className="ax-card ax-card--interactive" style={{ textDecoration: 'none' }}>
                   <div className="ax-card__body" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--ax-space-1)' }}>

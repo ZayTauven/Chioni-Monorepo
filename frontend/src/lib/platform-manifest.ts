@@ -35,7 +35,12 @@ export function platformGroupsInSection(section: string): NavNode[] {
 
 /** Section codes → sidebar headings (the manifest stores them upper-case). */
 const SECTION_LABELS: Record<string, string> = {
-  TENANTS: 'Centres de santé',
+  /* S9 — la rubrique accueille désormais les officines à côté des centres.
+     « Centres de santé » aurait rangé les pharmacies sous un titre qui ne les
+     nomme pas ; ce sont deux acteurs distincts (une pharmacie n'est PAS un
+     centre : ni patients, ni ledger, ni abonnement — ADR 0022 décision 1), et
+     le titre le dit. */
+  TENANTS: 'Centres et pharmacies',
   COMMERCE: 'Abonnements',
   EXPLOITATION: 'Exploitation',
 };

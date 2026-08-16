@@ -31,15 +31,20 @@ import {
   type EncounterStaff,
 } from '@/lib/endpoints/centers';
 import {
+  AVAILABILITY_SEND_ACTION,
+  COUNTER_SEARCH_DISABLED_HINT,
   ENCOUNTER_STATUS_LABELS,
   GENERIC_CATEGORY_LABELS,
   PRESCRIPTION_STATUS_LABELS,
   RECORD_ENTRY_TYPE_LABELS,
+  availabilitySent,
+  counterDeliveredOn,
   formatDate,
   formatDateTime,
   formatKmf,
 } from '@/lib/labels';
-import type { RecordEntryType } from '@/lib/types';
+import type { Prescription, RecordEntryType } from '@/lib/types';
+import { AvailabilitySendModal } from './AvailabilitySend';
 import { VitalSignsCard } from './VitalSignsCard';
 import {
   BILLING_ROLES,
@@ -307,6 +312,16 @@ export function ConsultationDetail({ encounterId }: { encounterId: number }) {
   const [rxOpen, setRxOpen] = useState(false);
   const [entryOpen, setEntryOpen] = useState(false);
   const [closeOpen, setCloseOpen] = useState(false);
+  /*
+   * S9 — chercher les médicaments d'une ordonnance dans le réseau. Le geste est
+   * monté ICI en plus du comptoir parce que c'est « le bon moment, la bonne
+   * personne » (arbitrage PO n° 3 de l'ADR 0022) : la recherche part en fin de
+   * consultation, pendant que le patient est encore là. La modale est le
+   * composant PARTAGÉ avec `/centre/ordonnances` — deux copies auraient
+   * divergé sur les phrases de confidentialité, qui sont l'essentiel.
+   */
+  const [searchingRx, setSearchingRx] = useState<Prescription | null>(null);
+  const [availabilityFlash, setAvailabilityFlash] = useState<string | null>(null);
   /** Rafraîchi en place après la clôture (S1) — pas de re-fetch complet. */
   const [freshEncounter, setFreshEncounter] = useState<EncounterStaff | null>(null);
 
@@ -488,6 +503,13 @@ export function ConsultationDetail({ encounterId }: { encounterId: number }) {
             )}
           </div>
           <div className="ax-card__body" style={{ paddingTop: 0 }}>
+            {availabilityFlash && (
+              <div className="ax-alert ax-alert--success" role="status" style={{ marginBlockEnd: 'var(--ax-space-3)' }}>
+                <div className="ax-alert__content">
+                  <p className="ax-alert__message">{availabilityFlash}</p>
+                </div>
+              </div>
+            )}
             {canPrescribe && e.status === 'terminee' && (
               <p style={{ margin: '0 0 var(--ax-space-3)', fontSize: 'var(--ax-text-xs)', color: 'var(--ax-text-muted)' }}>
                 Consultation terminée : elle n&apos;accepte plus de nouvelle ordonnance.
@@ -521,6 +543,27 @@ export function ConsultationDetail({ encounterId }: { encounterId: number }) {
                         </li>
                       ))}
                     </ul>
+                    {/* S9 — chercher en pharmacie, ou dire pourquoi c'est
+                        impossible. Une ordonnance DÉLIVRÉE ne se recherche
+                        plus : le bouton disparaît et la raison prend sa place,
+                        plutôt qu'un bouton grisé sans explication. */}
+                    <div style={{ marginTop: 'var(--ax-space-3)' }}>
+                      {rx.status === 'emise' ? (
+                        <button
+                          type="button"
+                          className="ax-btn ax-btn--secondary ax-btn--sm"
+                          onClick={() => setSearchingRx(rx)}
+                        >
+                          <span className="ax-btn__label">{AVAILABILITY_SEND_ACTION}</span>
+                        </button>
+                      ) : (
+                        <span style={{ fontSize: 'var(--ax-text-xs)', color: 'var(--ax-text-muted)' }}>
+                          {rx.delivered_at
+                            ? `${counterDeliveredOn(rx.delivered_at)} · ${COUNTER_SEARCH_DISABLED_HINT}`
+                            : COUNTER_SEARCH_DISABLED_HINT}
+                        </span>
+                      )}
+                    </div>
                   </div>
                 ))}
               </div>
@@ -579,6 +622,19 @@ export function ConsultationDetail({ encounterId }: { encounterId: number }) {
         </section>
       </div>
 
+      {searchingRx && (
+        <AvailabilitySendModal
+          /* Voir `Prescriptions.tsx` : les cases cochées sont semées au
+             montage, elles ne passent jamais d'une ordonnance à l'autre. */
+          key={searchingRx.id}
+          prescription={searchingRx}
+          onClose={() => setSearchingRx(null)}
+          onSent={(count) => {
+            setSearchingRx(null);
+            setAvailabilityFlash(availabilitySent(count));
+          }}
+        />
+      )}
       {rxOpen && (
         <PrescriptionModal
           encounterId={e.id}

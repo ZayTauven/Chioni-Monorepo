@@ -26,3 +26,12 @@ BILLING_ROLES = (Role.DIRECTOR, Role.SECRETARY, Role.CASHIER)
 #: Roles allowed to produce AND read clinical content (R-API-1) — also the
 #: perimeter of the practitioner directory (S1: annuaire praticiens).
 CLINICAL_ROLES = (Role.DOCTOR, Role.NURSE, Role.MIDWIFE)
+
+#: Roles allowed to READ a prescription: clinical + the pharmacist who
+#: delivers it (R-API-1). Défini dans ``apps.medical.views`` jusqu'à S9,
+#: remonté ici le jour où il a gagné un SECOND consommateur — le réseau des
+#: pharmacies (ADR 0022) réserve à ces mêmes rôles le droit de diffuser une
+#: liste de médicaments et de délivrer une ordonnance. La règle du module
+#: est respectée : un groupe monte ici quand deux apps en dépendent, pas
+#: avant.
+PRESCRIPTION_ROLES = CLINICAL_ROLES + (Role.PHARMACIST,)

@@ -42,13 +42,22 @@ class PrescriptionItemSerializer(serializers.ModelSerializer):
 
 
 class PrescriptionSerializer(serializers.ModelSerializer):
-    """Audience: staff of the producing center AND the patient owner."""
+    """Audience: staff of the producing center AND the patient owner.
+
+    ``delivered_at`` (S9) dit au patient « vos médicaments vous ont été
+    remis le… » et au comptoir ce qui reste à servir. ``delivered_by`` n'y
+    est PAS : le sérialiseur est partagé avec le patient, et l'identité d'un
+    membre du personnel ne traverse jamais une vue patient (même règle que
+    l'avatar du personnel, ADR 0014).
+    """
 
     items = PrescriptionItemSerializer(many=True, read_only=True)
 
     class Meta:
         model = Prescription
-        fields = ["id", "encounter", "status", "items", "created_at"]
+        fields = [
+            "id", "encounter", "status", "items", "delivered_at", "created_at",
+        ]
         read_only_fields = fields
 
 

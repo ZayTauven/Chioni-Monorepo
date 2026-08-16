@@ -1,0 +1,13 @@
+{
+  "$schema": "vireo-nav-manifest/v1",
+  "meta": {
+    "comment": "Chioni — navigation manifest of the PHARMACIE space only (the 5th space, S9/ADR 0022 décision 10). THIRD manifest of the repo, and separate for the same reason as the platform one (S4): nav-manifest.json declares itself CENTRE-ONLY in its own meta and feeds three surfaces that all live inside the centre shell (sidebar, breadcrumb, ⌘K palette). An officine is not a tenant — its four entries have no business in a director's command palette, and the reverse would be worse. Same node contract as Vireo ({id,title,slug,icon,parent,section,order,badge,keywords,inMenu,alias}) and the same indexing code (indexManifest): one contract, three data files. Slugs include the 'pharmacie/' prefix so hrefForSlug maps 1:1 to routes. NO role gating exists here and none is expected: an officine has no hierarchy (ADR 0022 §12) — every active member does the same work.",
+    "sections": ["OFFICINE"]
+  },
+  "nodes": [
+    { "id": "pharmacie.demandes", "title": "Demandes", "slug": "pharmacie", "icon": "message-circle", "parent": null, "section": "OFFICINE", "order": 1, "badge": null, "keywords": ["demandes", "médicaments", "disponibilité", "répondre", "boîte de réception", "stock"], "inMenu": true, "alias": null },
+    { "id": "pharmacie.officine", "title": "Ma fiche", "slug": "pharmacie/officine", "icon": "building-hospital", "parent": null, "section": "OFFICINE", "order": 2, "badge": null, "keywords": ["ma fiche", "officine", "adresse", "commune", "téléphone", "déménagement", "coordonnées"], "inMenu": true, "alias": null },
+    { "id": "pharmacie.equipe", "title": "Mon équipe", "slug": "pharmacie/equipe", "icon": "users-group", "parent": null, "section": "OFFICINE", "order": 3, "badge": null, "keywords": ["équipe", "collègues", "inscrire", "membres", "retirer"], "inMenu": true, "alias": null },
+    { "id": "pharmacie.pieces", "title": "Mes pièces", "slug": "pharmacie/pieces", "icon": "file-invoice", "parent": null, "section": "OFFICINE", "order": 4, "badge": null, "keywords": ["pièces", "licence", "registre du commerce", "justificatifs", "vérification", "validation"], "inMenu": true, "alias": null }
+  ]
+}

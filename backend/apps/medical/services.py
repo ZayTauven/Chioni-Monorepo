@@ -181,6 +181,48 @@ def create_prescription(*, actor, encounter, items):
 
 
 @transaction.atomic
+def deliver_prescription(*, actor, prescription):
+    """Le comptoir sert l'ordonnance — dette C.1 soldée (S9, ADR 0022 §6).
+
+    Geste du pharmacien du centre (ou d'un soignant, dans les centres qui
+    n'ont pas d'officine interne — la majorité aux Comores) : il dit que
+    les médicaments ont été remis.
+
+    **Sans marche arrière.** L'état est relu sous verrou de ligne : deux
+    comptoirs qui cliquent à la même seconde se sérialisent, le perdant
+    relit l'état du gagnant et reçoit un refus français — jamais un 500,
+    jamais une seconde entrée d'audit pour le même geste.
+
+    Volontairement NON conditionné à l'état de la consultation : les
+    médicaments se retirent souvent après la clôture de la visite, et
+    refuser reviendrait à empêcher de tracer ce qui s'est réellement passé.
+    Volontairement NON gelable non plus, et sans garde KYC : servir un
+    patient ne dépend pas de la situation commerciale du centre.
+    """
+    locked = Prescription.objects.select_for_update().get(pk=prescription.pk)
+    if locked.status == Prescription.Status.DELIVERED:
+        raise ValidationError("Cette ordonnance a déjà été délivrée.")
+    locked.status = Prescription.Status.DELIVERED
+    locked.delivered_at = timezone.now()
+    locked.delivered_by = actor
+    locked.save(
+        update_fields=["status", "delivered_at", "delivered_by", "updated_at"]
+    )
+    encounter = locked.encounter
+    audit(
+        actor=actor, action=AuditAction.PRESCRIPTION_DELIVERED, target=locked,
+        center=encounter.center,
+        prescription_id=locked.pk, encounter_id=encounter.pk,
+        patient_id=encounter.patient_id, center_id=encounter.center_id,
+    )
+    # L'instance de l'appelant reste cohérente (les vues la sérialisent).
+    prescription.status = locked.status
+    prescription.delivered_at = locked.delivered_at
+    prescription.delivered_by = locked.delivered_by
+    return prescription
+
+
+@transaction.atomic
 def create_record_entry(*, actor, encounter, entry_type, content):
     """Add a carnet entry sourced from an encounter (allergy, history…)."""
     _require_open_encounter(encounter, "une entrée de carnet")

@@ -52,6 +52,8 @@ from apps.billing.models import (
     SubscriptionPlan,
 )
 from apps.centers import services as center_services
+from apps.pharmacy import services as pharmacy_services
+from apps.pharmacy.models import AvailabilityRequest, Pharmacy
 from apps.centers.models import (
     HealthCenter,
     KycDocument,
@@ -144,6 +146,21 @@ EQUIPMENTS = (
 #: Celui qui est EN PANNE dans la démo — signalé par la médecin, mis hors
 #: service par le directeur : deux gestes, deux personnes (décision 1).
 BROKEN_EQUIPMENT = "Échographe portable"
+
+#: S9 (ADR 0022) — le réseau des pharmacies, 5ᵉ espace. DEUX officines :
+#: l'une validée (elle reçoit et répond), l'autre en attente (elle démontre
+#: la file de validation du back-office, et le fait qu'une officine non
+#: validée ne reçoit RIEN).
+PHARMACY_PHONE = "+2693440030"
+PHARMACY2_PHONE = "+2693440031"
+PHARMACIES = (
+    ("Pharmacie du Port", "Moroni", "Avenue de la Corniche",
+     "ngazidja", "validee",
+     "pharmacie.demo", "Nadjat", "Youssouf", PHARMACY_PHONE),
+    ("Pharmacie de Mitsamiouli", "Mitsamiouli", "Route du Nord",
+     "ngazidja", "en_attente",
+     "pharmacie2.demo", "Anrafa", "Mmadi", PHARMACY2_PHONE),
+)
 
 #: (username, first name, last name, phone, role) — distinct fictional +269.
 STAFF = (
@@ -266,6 +283,10 @@ class Command(BaseCommand):
         equipment = self._ensure_equipment(
             center=center, director=director, doctor=doctor
         )
+        pharmacy = self._ensure_pharmacy_network(
+            operator=platform_operator, center=center, doctor=doctor,
+            encounter=first_encounter,
+        )
         self._ensure_erasure_request(user=guardian2)
 
         return {
@@ -278,6 +299,7 @@ class Command(BaseCommand):
             "stay": stay,
             "hrm": hrm,
             "equipment": equipment,
+            "pharmacy": pharmacy,
         }
 
     def _ensure_superuser(self):
@@ -644,6 +666,14 @@ class Command(BaseCommand):
                     employment=employment, date=day
                 ).exists():
                     continue
+                # Le dossier RH est retrouvé par (centre, personne) — il a
+                # donc pu être créé À LA MAIN pendant un test du PO, avec
+                # une embauche récente ou une fin de contrat. Une journée
+                # hors période est refusée par le modèle (invariant S7) :
+                # on la saute, on ne fait pas échouer le seed sur une base
+                # de dev où l'on a joué.
+                if not employment.covers(day):
+                    continue
                 if day.weekday() == 4:  # vendredi
                     status = AttendanceRecord.Status.REST
                 elif (
@@ -766,6 +796,90 @@ class Command(BaseCommand):
             "mis « en panne » par le directeur (deux gestes, deux personnes)."
         )
         return {"broken": broken}
+
+    def _ensure_pharmacy_network(self, *, operator, center, doctor, encounter):
+        """S9 (ADR 0022) — deux officines, une recherche, une réponse.
+
+        Le scénario rend démontrables, en trois écrans, les deux décisions
+        du sprint :
+
+        - **la pharmacie n'est pas un tenant** : ``pharmacie.demo`` se
+          connecte et ne voit QUE sa boîte de réception — aucune route de
+          centre ne lui répond, elle ne porte aucun ``StaffMembership`` ;
+        - **la demande est anonyme** : la Pharmacie du Port lit trois
+          médicaments et une commune, jamais la Clinique Ylang ni Anfia.
+
+        La seconde officine reste « en attente » : le back-office a une
+        vraie file de validation à montrer, et l'on vérifie à l'œil qu'une
+        officine non validée ne reçoit RIEN.
+
+        Passe par les vrais services (audit, machine à états, SMS). Idempotent :
+        les officines sont retrouvées par leur nom, la demande par son
+        ordonnance.
+        """
+        pharmacies = {}
+        for (name, city, address, island, status, username, first_name,
+             last_name, phone) in PHARMACIES:
+            pharmacy = Pharmacy.objects.filter(name=name).first()
+            member_user = self._ensure_user(
+                username, phone=phone, first_name=first_name,
+                last_name=last_name,
+            )
+            if pharmacy is None:
+                pharmacy, _ = pharmacy_services.create_pharmacy_with_member(
+                    actor=operator, name=name, island=island, city=city,
+                    address=address, phone=phone,
+                    member_phone=member_user.phone,
+                    member_first_name=first_name, member_last_name=last_name,
+                )
+                self._note(f"Réseau : officine « {name} » enregistrée.")
+            if status == Pharmacy.Status.VALIDATED and (
+                pharmacy.status != Pharmacy.Status.VALIDATED
+            ):
+                pharmacy_services.set_pharmacy_status(
+                    actor=operator, pharmacy=pharmacy,
+                    status=Pharmacy.Status.VALIDATED,
+                )
+                self._note(f"Réseau : « {name} » validée par la plateforme.")
+            pharmacies[name] = pharmacy
+
+        validated = pharmacies[PHARMACIES[0][0]]
+        prescription = (
+            Prescription.objects.filter(encounter=encounter)
+            .order_by("pk")
+            .first()
+        )
+        if prescription is None:
+            return {"pharmacy": validated, "request": None}
+        request = AvailabilityRequest.objects.filter(
+            prescription=prescription
+        ).first()
+        if request is not None:
+            self._note("Réseau : recherche de disponibilité déjà en place.")
+            return {"pharmacy": validated, "request": request}
+
+        request = pharmacy_services.create_availability_request(
+            actor=doctor, center=center, prescription=prescription,
+            island=validated.island, city=validated.city,
+            # Les DEUX lignes de l'ordonnance sont cochées : le geste par
+            # défaut de l'écran. Décocher est ce qui se démontre à la main.
+            item_ids=list(prescription.items.values_list("pk", flat=True)),
+        )
+        recipient = request.recipients.get(pharmacy=validated)
+        member = validated.memberships.filter(is_active=True).first()
+        items = list(request.items.order_by("pk"))
+        pharmacy_services.answer_availability_request(
+            actor=member.user, recipient=recipient,
+            # L'amlodipine est là, le paracétamol non : une réponse
+            # PARTIELLEMENT positive est le cas intéressant à l'écran.
+            lines={items[0].pk: True, items[1].pk: False},
+            comment="J'ai l'amlodipine en boîte de 30, générique.",
+        )
+        self._note(
+            "Réseau : recherche envoyée à la Pharmacie du Port, qui a "
+            "répondu (1 médicament sur 2 disponible)."
+        )
+        return {"pharmacy": validated, "request": request}
 
     def _ensure_erasure_request(self, *, user):
         """S4 lot 3 (ADR 0017 §7) — one PENDING erasure request to demo.
@@ -1240,6 +1354,12 @@ class Command(BaseCommand):
             ("support.demo", SUPPORT_PHONE,
              "Moinaecha Bacar — équipe Chioni (support)",
              "Espace plateforme — tickets seuls"),
+            ("pharmacie.demo", PHARMACY_PHONE,
+             "Nadjat Youssouf — Pharmacie du Port (validée)",
+             "Espace pharmacie — une demande reçue"),
+            ("pharmacie2.demo", PHARMACY2_PHONE,
+             "Anrafa Mmadi — Pharmacie de Mitsamiouli (en attente)",
+             "Espace pharmacie — en attente de validation"),
         ]
         widths = [
             max(len(row[i]) for row in rows) for i in range(len(rows[0]))
@@ -1295,6 +1415,17 @@ class Command(BaseCommand):
                 f"{broken.get_status_display().lower()}, "
                 f"{broken.reports.count()} signalement(s) (constat de la "
                 "médecin, décision du directeur)."
+            )
+        network = state.get("pharmacy")
+        if network and network.get("request") is not None:
+            request = network["request"]
+            write("")
+            write(
+                f"Réseau pharmacies : demande #{request.pk} "
+                f"({request.items.count()} médicaments) diffusée à "
+                f"{request.recipients.count()} officine(s) de "
+                f"{request.city} — « {network['pharmacy'].name} » a répondu. "
+                "La seconde officine reste en attente de validation."
             )
         write("")
         write("État du Pont de Confiance :")
@@ -1395,6 +1526,21 @@ class Command(BaseCommand):
             "(POST .../status/) lui répond 403 — tout staff signale, le "
             "directeur décide. Et sur un centre suspendu, les trois gestes "
             "passent : le gel n'atteint jamais le parc.",
+            "18. Réseau pharmacies : connexion pharmacie.demo → "
+            "GET /api/v1/pharmacy/{id}/requests/ — l'officine lit DEUX "
+            "médicaments et une commune. Ni la Clinique Ylang, ni Anfia, ni "
+            "la posologie : c'est l'invariant du sprint, et il se vérifie à "
+            "l'œil. Le MÊME compte reçoit 403/404 sur toute route de centre "
+            "— il ne porte aucun StaffMembership.",
+            "19. Côté centre : GET /api/v1/centers/{id}/availability-requests/ "
+            "avec medecin.demo — la Pharmacie du Port a l'amlodipine, pas le "
+            "paracétamol, et son commentaire n'est lisible QUE là. Le patient "
+            "voit les mêmes réponses sans le commentaire "
+            "(GET /api/v1/patients/me/prescriptions/{id}/availability/).",
+            "20. Comptoir : GET /api/v1/centers/{id}/prescriptions/ avec "
+            "medecin.demo (la liste que le pharmacien n'a jamais eue), puis "
+            "POST .../prescriptions/{id}/deliver/ — la délivrance est "
+            "DÉFINITIVE, et une ordonnance délivrée ne se recherche plus.",
         ):
             write(f"  {step}")
         write("")

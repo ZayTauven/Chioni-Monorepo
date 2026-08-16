@@ -249,6 +249,20 @@ DIRECTOR_JOURNAL_EXCLUDED = frozenset(
         AuditAction.PATIENT_UPDATED,
         AuditAction.PATIENT_INSURANCE_CREATED,
         AuditAction.PATIENT_INSURANCE_UPDATED,
+        # Réseau des pharmacies (S9, ADR 0022) — sphère CLINIQUE, malgré des
+        # payloads qui ne portent que des compteurs. Une demande de
+        # disponibilité naît d'une ordonnance : « le dossier de ce patient a
+        # déclenché une recherche de médicaments ce jour-là » est de la même
+        # famille que ``prescription.created``, qui est exclue depuis S1. La
+        # délivrance l'est pour la même raison.
+        #
+        # Le pendant est vrai côté réseau : les actions de cycle de vie
+        # d'une officine (``pharmacy.*``) ne portent AUCUN centre, donc
+        # aucun journal ne peut les faire apparaître — elles ne sont pas
+        # listées ici parce qu'elles ne sont même pas candidates.
+        AuditAction.AVAILABILITY_REQUESTED,
+        AuditAction.AVAILABILITY_CLOSED,
+        AuditAction.PRESCRIPTION_DELIVERED,
     }
 )
 

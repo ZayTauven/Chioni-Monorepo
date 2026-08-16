@@ -109,6 +109,26 @@ SENSITIVE_MODELS = {
     # est déjà un mensonge.
     "equipment.Equipment",
     "equipment.EquipmentReport",
+    # Réseau des pharmacies (S9, ADR 0022) — les huit tables du premier
+    # acteur HORS tenant. Ce que l'admin ne doit surtout pas offrir ici :
+    # une seconde porte vers la VALIDATION d'une officine (la décision qui
+    # ouvre la réception des demandes, auditée et réservée à un
+    # administrateur plateforme) ; une écriture dans les tables
+    # append-only de la diffusion et des réponses ; et surtout un
+    # ``search_fields`` sur ``medication``, qui ferait de cet écran
+    # transverse un moteur de recherche sur les ordonnances de tout le
+    # pays — le contenu d'une ordonnance est du ``detail_clinique``
+    # (ADR 0005). Les pièces justificatives passent par le pipeline durci
+    # (ADR 0014) et le stockage privé : un fichier posé à la main y
+    # échapperait.
+    "pharmacy.Pharmacy",
+    "pharmacy.PharmacyMembership",
+    "pharmacy.PharmacyDocument",
+    "pharmacy.AvailabilityRequest",
+    "pharmacy.AvailabilityRequestItem",
+    "pharmacy.AvailabilityRequestRecipient",
+    "pharmacy.AvailabilityResponse",
+    "pharmacy.AvailabilityResponseLine",
     # Patient identity and guardianship (ADR 0008 R-API-2, OTP-1)
     "patients.PatientProfile",
     "patients.GuardianProfile",

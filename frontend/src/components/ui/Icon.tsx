@@ -63,6 +63,20 @@ const PATHS: Record<string, string> = {
   // Not in the template registry — Tabler outline transcriptions on the same contract.
   'cash-banknote': '<path d="M3 6m0 2a2 2 0 0 1 2 -2h14a2 2 0 0 1 2 2v8a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2z"/><path d="M12 12m-2 0a2 2 0 1 0 4 0a2 2 0 1 0 -4 0"/><path d="M6 12h.01"/><path d="M18 12h.01"/>',
   'file-alert': '<path d="M14 3v4a1 1 0 0 0 1 1h4"/><path d="M17 21h-10a2 2 0 0 1 -2 -2v-14a2 2 0 0 1 2 -2h7l5 5v11a2 2 0 0 1 -2 2z"/><path d="M12 17h.01"/><path d="M12 11v3"/>',
+  // S9 (ADR 0022) — le réseau des pharmacies. Deux transcriptions Tabler
+  // outline sur le même contrat de trait que les précédentes.
+  //
+  // `prescription` : la feuille d'ordonnance avec son Rx — l'objet que le
+  // comptoir manipule. Une gélule aurait dit « médicament » (le module ne gère
+  // aucun stock) et une croix verte « pharmacie » (c'est l'entrée d'à côté).
+  'prescription':
+    '<path d="M5 21v-12a3 3 0 0 1 3 -3h1a3 3 0 0 1 3 3v1a3 3 0 0 1 -3 3h-4"/><path d="M9 13l6 6"/><path d="M20 12l-6 6"/><path d="M14 12l6 6"/>',
+  // `map-pin-pharmacy` : le repère de lieu, pas la croix d'officine — ce que
+  // l'annuaire rend est une ADRESSE (île, commune, téléphone) et jamais une
+  // position : il n'y a ni carte, ni coordonnée, ni distance dans ce produit
+  // (ADR 0022 décision 4). Le repère dit « où », la croix aurait promis un plan.
+  'map-pin-pharmacy':
+    '<path d="M9 11a3 3 0 1 0 6 0a3 3 0 0 0 -6 0"/><path d="M17.657 16.657l-4.243 4.243a2 2 0 0 1 -2.827 0l-4.244 -4.243a8 8 0 1 1 11.314 0z"/>',
 };
 
 // Fallback: a small dot, used as the child-row bar substitute is handled in CSS.

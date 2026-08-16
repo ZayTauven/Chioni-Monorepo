@@ -28,7 +28,7 @@ from apps.common.permissions import (
     active_membership_qs,
     claimed_patient_profile,
 )
-from apps.common.roles import CLINICAL_ROLES
+from apps.common.roles import CLINICAL_ROLES, PRESCRIPTION_ROLES
 from apps.medical.models import (
     Encounter,
     HealthRecordEntry,
@@ -62,6 +62,7 @@ from apps.medical.services import (
     create_patient_document,
     create_prescription,
     create_record_entry,
+    deliver_prescription,
     record_vital_signs,
     update_patient_medical_file,
 )
@@ -69,8 +70,9 @@ from apps.patients.views import center_patients_qs
 from apps.scheduling.models import Appointment
 
 # ``CLINICAL_ROLES`` lives in apps.common.roles since S1 (single source —
-# it also feeds the practitioner directory); the derived groups below have
-# this module as their only consumer.
+# it also feeds the practitioner directory); ``PRESCRIPTION_ROLES`` joined
+# it in S9 when the pharmacy network became a second consumer. Only
+# ``PRESCRIBER_ROLES`` still has this module as its only consumer.
 
 #: Roles allowed to prescribe.
 PRESCRIBER_ROLES = (
@@ -78,8 +80,11 @@ PRESCRIBER_ROLES = (
     StaffMembership.Role.MIDWIFE,
 )
 #: Roles allowed to READ prescriptions: clinical + the pharmacist who
-#: delivers them (R-API-1).
-PRESCRIPTION_READ_ROLES = CLINICAL_ROLES + (StaffMembership.Role.PHARMACIST,)
+#: delivers them (R-API-1). Le groupe a MIGRÉ vers ``apps.common.roles`` en
+#: S9 (second consommateur : le réseau des pharmacies, ADR 0022) ; l'alias
+#: reste pour ne pas réécrire les appelants historiques ni les tests qui
+#: l'importent d'ici.
+PRESCRIPTION_READ_ROLES = PRESCRIPTION_ROLES
 
 
 def is_clinical_member(user, center):
@@ -326,6 +331,72 @@ class EncounterPrescriptionView(_EncounterNestedView):
         return Response(
             PrescriptionSerializer(prescription).data, status=status.HTTP_201_CREATED
         )
+
+
+class CenterPrescriptionListView(CenterScopedViewMixin, generics.ListAPIView):
+    """GET /centers/{center_pk}/prescriptions/?patient=&status=&date=
+
+    **Le poste de travail du pharmacien** (dette C.1 de l'audit, ouverte
+    depuis le premier jour et soldée par S9). Jusqu'ici il pouvait lire une
+    ordonnance consultation par consultation, à condition d'en connaître
+    l'identifiant : aucune liste, aucun filtre — un métier sans écran.
+
+    Même audience que la lecture d'une ordonnance (R-API-1 :
+    ``PRESCRIPTION_ROLES`` = cliniques + pharmacien). Le périmètre est le
+    CENTRE producteur : le carnet transversal reste l'espace du patient.
+    """
+
+    permission_classes = [IsStaffOfCenter(*PRESCRIPTION_READ_ROLES)]
+    serializer_class = PrescriptionSerializer
+
+    def get_queryset(self):
+        qs = (
+            Prescription.objects.filter(encounter__center=self.center)
+            .prefetch_related("items")
+            .order_by("-created_at", "-id")
+        )
+        params = self.request.query_params
+        patient_id = _validated_id_param(params, "patient", "patient")
+        if patient_id is not None:
+            qs = qs.filter(encounter__patient_id=patient_id)
+        status_filter = (params.get("status") or "").strip()
+        if status_filter:
+            if status_filter not in Prescription.Status.values:
+                raise DrfValidationError({"status": ["Statut inconnu."]})
+            qs = qs.filter(status=status_filter)
+        raw_date = (params.get("date") or "").strip()
+        if raw_date:
+            day_start, day_end = _local_day_bounds(raw_date)
+            qs = qs.filter(created_at__gte=day_start, created_at__lt=day_end)
+        return qs
+
+
+class CenterPrescriptionDeliverView(CenterScopedViewMixin, APIView):
+    """POST /centers/{center_pk}/prescriptions/{pk}/deliver/ — le comptoir.
+
+    C'est ici que ``Status.DELIVERED`` est enfin posé. Ouvert aux mêmes
+    rôles que la lecture : dans un centre sans officine interne — la
+    majorité aux Comores —, c'est l'infirmière qui remet les médicaments.
+
+    La délivrance est DÉFINITIVE (aucune route ne la défait, et le modèle
+    refuse le retour arrière sur tout chemin d'écriture) : une erreur se
+    raconte dans le carnet, elle ne s'efface pas.
+    """
+
+    permission_classes = [IsStaffOfCenter(*PRESCRIPTION_READ_ROLES)]
+
+    @extend_schema(request=None, responses=PrescriptionSerializer)
+    def post(self, request, center_pk, pk):
+        prescription = get_object_or_404(
+            Prescription.objects.filter(encounter__center=self.center), pk=pk
+        )
+        try:
+            prescription = deliver_prescription(
+                actor=request.user, prescription=prescription
+            )
+        except DjangoValidationError as error:
+            raise DrfValidationError(error.messages)
+        return Response(PrescriptionSerializer(prescription).data)
 
 
 class EncounterRecordEntryView(_EncounterNestedView):

@@ -78,6 +78,12 @@ INSTALLED_APPS = [
     # le registre d'abonnement porte une discipline (aucune écriture du
     # ledger) qu'un fil de discussion brouillerait.
     "apps.support",
+    # S9 (ADR 0022) — le réseau des pharmacies, premier acteur HORS tenant.
+    # App à part, et c'est LA décision du sprint : une pharmacie n'est pas
+    # un `HealthCenter` et ses gens ne portent JAMAIS de `StaffMembership`,
+    # donc aucune route de centre ne peut leur répondre — le cloisonnement
+    # est structurel, pas déclaratif.
+    "apps.pharmacy",
     "apps.audit",
 ]
 
@@ -248,6 +254,12 @@ REST_FRAMEWORK = {
         # that the endpoint never becomes a cheap scraping surface for a
         # stolen token.
         "data_export": env("THROTTLE_DATA_EXPORT", default="10/hour"),
+        # S9 (ADR 0022) — diffusion d'une demande de disponibilité. C'est le
+        # SEUL geste du produit qui parle à des tiers en nombre (une liste
+        # de médicaments part vers N officines) et qui déclenche N SMS : il
+        # a son propre budget, distinct de celui des lectures. Généreux pour
+        # une journée de consultations, serré pour une boucle.
+        "availability": env("THROTTLE_AVAILABILITY", default="60/hour"),
     },
 }
 
@@ -356,6 +368,37 @@ if PSP_INTENT_STALE_HOURS < 1:
     raise ImproperlyConfigured(
         "PSP_INTENT_STALE_HOURS doit être >= 1 : une valeur nulle ou négative "
         "ferait annuler par la purge des intentions de paiement encore actives."
+    )
+
+# ---------------------------------------------------------------------------
+# Réseau des pharmacies (S9 — ADR 0022)
+# ---------------------------------------------------------------------------
+
+# Durée de vie d'une demande de disponibilité. Au-delà, la demande est
+# refusée en réponse (garde immédiate, relue en base) puis soldée par le
+# beat horaire `pharmacy.close_stale_availability_requests`. Un
+# « disponible » vieux de trois semaines est un faux espoir, et un faux
+# espoir se paie en trajet.
+AVAILABILITY_REQUEST_TTL_HOURS = env.int("AVAILABILITY_REQUEST_TTL_HOURS", default=48)
+if AVAILABILITY_REQUEST_TTL_HOURS < 1:
+    raise ImproperlyConfigured(
+        "AVAILABILITY_REQUEST_TTL_HOURS doit être >= 1 : une valeur nulle ou "
+        "négative ferait périmer chaque demande à l'instant de son envoi."
+    )
+
+# Plafond de diffusion d'UNE demande. Au-delà, l'envoi est REFUSÉ avec le
+# compte réel (jamais tronqué en silence — leçon S8 : un plafond muet se lit
+# « tout est couvert »), et le prescripteur précise la commune. C'est la
+# traduction en réglage de la garde n° 2 de l'ADR 0022 : *la diffusion est
+# bornée et annoncée* — une liste de médicaments envoyée à cinquante
+# officines est le pire scénario de réidentification.
+AVAILABILITY_REQUEST_MAX_RECIPIENTS = env.int(
+    "AVAILABILITY_REQUEST_MAX_RECIPIENTS", default=15
+)
+if AVAILABILITY_REQUEST_MAX_RECIPIENTS < 1:
+    raise ImproperlyConfigured(
+        "AVAILABILITY_REQUEST_MAX_RECIPIENTS doit être >= 1 : une valeur "
+        "nulle rendrait toute recherche impossible."
     )
 
 # ---------------------------------------------------------------------------
@@ -479,6 +522,16 @@ CELERY_BEAT_SCHEDULE = {
     "send-subscription-payment-reminders": {
         "task": "billing.send_subscription_payment_reminders",
         "schedule": crontab(hour=8, minute=0),
+    },
+    # Péremption des demandes de disponibilité (S9, ADR 0022 décision 8) :
+    # apps/pharmacy/tasks.py délègue au service (verrou de ligne + audit
+    # acteur système), jamais un update() de masse. La péremption est déjà
+    # OPPOSABLE avant le passage du beat (le service de réponse compare
+    # `expires_at` à l'instant courant) : cette tâche solde l'enregistrement,
+    # elle n'est pas la garde — un beat en retard n'ouvre aucune fenêtre.
+    "close-stale-availability-requests": {
+        "task": "pharmacy.close_stale_availability_requests",
+        "schedule": timedelta(hours=1),
     },
 }
 

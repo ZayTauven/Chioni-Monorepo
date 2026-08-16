@@ -46,7 +46,11 @@ from apps.accounts.throttling import (
     OtpVerifyPerIpThrottle,
 )
 from apps.common.permissions import claimed_patient_profile, guardian_profile
-from apps.common.permissions import active_membership_qs, platform_staff
+from apps.common.permissions import (
+    active_membership_qs,
+    pharmacy_memberships_qs,
+    platform_staff,
+)
 from apps.common.uploads import media_url
 
 #: The ONE response body of `/auth/otp/request/` — byte-identical whether
@@ -67,7 +71,12 @@ def me_payload(user, request=None):
     S4 (ADR 0017): ``platform_staff`` is the FOURTH hat — it unlocks the
     Chioni back-office space. It is derived from the dedicated model, NOT
     from ``is_staff``/``is_superuser``: a Django admin account is not an
-    operator (and never was meant to be one)."""
+    operator (and never was meant to be one).
+
+    S9 (ADR 0022): ``pharmacy_memberships`` is the FIFTH — it unlocks the
+    pharmacy space. Same discipline: a dedicated model, never a
+    ``StaffMembership``, which is what keeps a pharmacy account structurally
+    unable to reach any center route."""
     return {
         "id": user.pk,
         "username": user.username,
@@ -79,6 +88,13 @@ def me_payload(user, request=None):
         "patient_profile": claimed_patient_profile(user),
         "guardian_profile": guardian_profile(user),
         "platform_staff": platform_staff(user),
+        # S9 (ADR 0022) — la CINQUIÈME casquette, et la première portée par
+        # un acteur HORS tenant. Une LISTE et non un objet : une même
+        # personne peut tenir deux officines (rare, mais réel), et le
+        # serveur ne doit jamais trancher « laquelle ? » en silence.
+        "pharmacy_memberships": pharmacy_memberships_qs(user).select_related(
+            "pharmacy"
+        ),
     }
 
 

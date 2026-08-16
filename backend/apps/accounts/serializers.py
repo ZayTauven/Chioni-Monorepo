@@ -1,9 +1,10 @@
 """Account serializers.
 
 ``MeSerializer`` — audience: the AUTHENTICATED USER about themself. It is
-what the frontend consumes to route the four spaces (center / patient /
-guardian / Chioni platform since S4): identity + every hat the user
-wears. It exposes nothing about OTHER people beyond minimal center labels.
+what the frontend consumes to route the five spaces (center / patient /
+guardian / Chioni platform since S4 / pharmacy of the network since S9):
+identity + every hat the user wears. It exposes nothing about OTHER people
+beyond minimal center labels.
 
 ``OtpRequestSerializer`` / ``OtpVerifySerializer`` — bodies of the OTP
 endpoints (ADR 0010). The phone is normalised to E.164 HERE (R-API-5),
@@ -18,6 +19,7 @@ from apps.centers.models import HealthCenter, StaffMembership
 from apps.common.phones import normalize_phone
 from apps.common.uploads import media_url
 from apps.patients.models import GuardianProfile, PatientProfile
+from apps.pharmacy.models import Pharmacy, PharmacyMembership
 
 
 class _CenterLabelSerializer(serializers.ModelSerializer):
@@ -78,6 +80,32 @@ class _OwnPlatformStaffSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
 
+class _PharmacyLabelSerializer(serializers.ModelSerializer):
+    """Minimal officine label embedded in memberships (S9, ADR 0022).
+
+    ``status`` rides along because the fifth space needs it to say the
+    truth on its very first screen: an officine « en attente » must read
+    « votre inscription est en cours d'examen », not an empty inbox that
+    looks like a bug.
+    """
+
+    class Meta:
+        model = Pharmacy
+        fields = ["id", "name", "island", "city", "status"]
+        read_only_fields = fields
+
+
+class _PharmacyMembershipSerializer(serializers.ModelSerializer):
+    """The FIFTH hat — and it carries no role, by design (ADR 0022)."""
+
+    pharmacy = _PharmacyLabelSerializer(read_only=True)
+
+    class Meta:
+        model = PharmacyMembership
+        fields = ["id", "pharmacy"]
+        read_only_fields = fields
+
+
 class MeSerializer(serializers.Serializer):
     """Identity + hats of the current user (read-only aggregate).
 
@@ -97,6 +125,7 @@ class MeSerializer(serializers.Serializer):
     patient_profile = _OwnPatientProfileSerializer(read_only=True, allow_null=True)
     guardian_profile = _OwnGuardianProfileSerializer(read_only=True, allow_null=True)
     platform_staff = _OwnPlatformStaffSerializer(read_only=True, allow_null=True)
+    pharmacy_memberships = _PharmacyMembershipSerializer(many=True, read_only=True)
 
 
 class MeUpdateSerializer(serializers.Serializer):

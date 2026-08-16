@@ -1,12 +1,12 @@
 """Central permission toolkit — audiences (« casquettes ») are defined HERE.
 
-Chioni serves four audiences and a user may hold several hats at once
+Chioni serves five audiences and a user may hold several hats at once
 (doctor in a center AND guardian of a relative — ADR 0001). Cross-hat
 privilege bleed is prevented by construction: every view declares exactly
 ONE audience through these classes/helpers, and derives its queryset from
 that audience only — never from "any right the user happens to hold".
 
-The four audiences:
+The five audiences:
 
 - **Staff of a center** — ``IsStaffOfCenter(*roles)`` + ``CenterScopedViewMixin``.
   Operating data is tenant-scoped (ADR 0002): the mixin resolves the center
@@ -30,6 +30,15 @@ The four audiences:
   NEVER sees a patient — no clinical data, no patient PII, no patient
   serializer under ``/api/v1/platform/``. ``is_staff``/``is_superuser``
   grant NOTHING here: the right is a dedicated ``PlatformStaff`` row.
+
+- **A pharmacy of the network** — ``IsPharmacyMember`` +
+  ``PharmacyScopedViewMixin`` (S9, ADR 0022). The FIFTH hat, and the first
+  one held by an actor OUTSIDE any tenant: a pharmacy has no patients, no
+  ledger, no subscription. Its right is a dedicated ``PharmacyMembership``
+  row and **never** a ``centers.StaffMembership`` — which is precisely what
+  makes the isolation structural: a pharmacy account holds no membership,
+  so ``active_membership_qs`` is empty for it and EVERY center route
+  answers 404/403 without any of them knowing pharmacies exist.
 
 IDOR policy (mission rule "jamais de 404-par-hasard"): scoping happens in
 the QUERYSET, so an object outside the caller's perimeter is structurally
@@ -404,3 +413,95 @@ def IsPlatformStaff(*roles):
             return True
 
     return _IsPlatformStaff
+
+
+# ---------------------------------------------------------------------------
+# Audience: a pharmacy of the network (S9 — the fifth hat, ADR 0022)
+# ---------------------------------------------------------------------------
+#
+# The first audience that is NOT a tenant, not a patient and not Chioni: an
+# independent business that answers « I have it / I don't ». Everything it
+# may read is scoped by ONE thing — the lines of diffusion addressed to it
+# (``AvailabilityRequestRecipient``) — and its payloads are whitelists that
+# carry no center, no prescription, no patient (ADR 0022 décision 2).
+#
+# Testable guard-rail: the class exposes a ``pharmacy_gate`` marker so the
+# structural test (tests/test_pharmacy.py) can walk every ``/pharmacy/…``
+# route and refuse a view that declares no pharmacy permission — same
+# patron as the ``/guardian/`` and ``/platform/`` rails. A future endpoint
+# of this space cannot ship unguarded.
+
+
+def pharmacy_memberships_qs(user):
+    """ACTIVE pharmacy memberships of ``user`` (possibly several).
+
+    Mirrors :func:`active_membership_qs`: a deactivated row is
+    indistinguishable from never having been a member. The pharmacy's own
+    status (``en_attente``/``validee``/``suspendue``) is NOT consulted here
+    — an officine awaiting validation must be able to log in and deposit
+    its papers, and a suspended one keeps reading its own history (ADR 0022
+    décision 5: on ne prend jamais ses données en otage). What a status
+    closes is the RECEPTION and the ANSWER, both enforced in the services.
+    """
+    from apps.pharmacy.models import PharmacyMembership
+
+    if not (user and user.is_authenticated):
+        return None
+    return PharmacyMembership.objects.filter(user=user, is_active=True)
+
+
+def user_pharmacies_qs(user):
+    """Pharmacies where ``user`` holds an ACTIVE membership.
+
+    THE queryset the fifth space resolves its URL against: a pharmacy
+    outside it does not exist for this caller (404), whatever their other
+    hats — including « director of a center » and « Chioni operator ».
+    """
+    from apps.pharmacy.models import Pharmacy
+
+    memberships = pharmacy_memberships_qs(user)
+    if memberships is None:
+        return Pharmacy.objects.none()
+    return Pharmacy.objects.filter(memberships__in=memberships).distinct()
+
+
+class PharmacyScopedViewMixin:
+    """Resolves ``self.pharmacy`` from the URL, scoped to the caller's own.
+
+    Same shape as :class:`CenterScopedViewMixin`, and for the same reason:
+    a pharmacy the caller does not belong to is INVISIBLE (404), never
+    « forbidden » — the refusal must not confirm that the row exists.
+    """
+
+    pharmacy_url_kwarg = "pharmacy_pk"
+
+    @cached_property
+    def pharmacy(self):
+        pharmacy = (
+            user_pharmacies_qs(self.request.user)
+            .filter(pk=self.kwargs[self.pharmacy_url_kwarg])
+            .first()
+        )
+        if pharmacy is None:
+            raise NotFound("Pharmacie introuvable.")
+        return pharmacy
+
+
+class IsPharmacyMember(BasePermission):
+    """The caller holds an ACTIVE membership in a pharmacy of the network.
+
+    - anonymous                          → 401
+    - authenticated, no active membership → 403 « Réservé aux pharmacies… »
+    - member of ANOTHER pharmacy          → 404, raised by the mixin
+
+    Deliberately role-less: an officine is one to three people doing the
+    same job (ADR 0022). And deliberately status-blind, see
+    :func:`pharmacy_memberships_qs`.
+    """
+
+    message = "Réservé aux pharmacies du réseau Chioni."
+    pharmacy_gate = True
+
+    def has_permission(self, request, view):
+        memberships = pharmacy_memberships_qs(request.user)
+        return bool(memberships is not None and memberships.exists())

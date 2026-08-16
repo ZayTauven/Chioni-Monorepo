@@ -15,6 +15,8 @@ from apps.medical.views import (
     CenterPatientDocumentDownloadView,
     CenterPatientDocumentListCreateView,
     CenterPatientMedicalFileView,
+    CenterPrescriptionDeliverView,
+    CenterPrescriptionListView,
     EncounterPrescriptionView,
     EncounterRecordEntryView,
     EncounterVitalSignsView,
@@ -50,6 +52,19 @@ urlpatterns = [
         "centers/<int:center_pk>/encounters/<int:encounter_pk>/prescriptions/",
         EncounterPrescriptionView.as_view(),
         name="encounter-prescriptions",
+    ),
+    # S9 (ADR 0022 décision 6) — le poste de travail du pharmacien : la
+    # LISTE que l'audit C.1 réclamait, et la délivrance qui pose enfin
+    # `Status.DELIVERED`.
+    path(
+        "centers/<int:center_pk>/prescriptions/",
+        CenterPrescriptionListView.as_view(),
+        name="center-prescriptions",
+    ),
+    path(
+        "centers/<int:center_pk>/prescriptions/<int:pk>/deliver/",
+        CenterPrescriptionDeliverView.as_view(),
+        name="center-prescription-deliver",
     ),
     path(
         "centers/<int:center_pk>/encounters/<int:encounter_pk>/record-entries/",

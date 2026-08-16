@@ -161,7 +161,15 @@ class ActPerformed(TimeStampedModel):
 
 
 class Prescription(TimeStampedModel):
-    """A prescription issued during an encounter."""
+    """A prescription issued during an encounter.
+
+    ``DELIVERED`` existe depuis le premier jour et n'était posé par AUCUN
+    service (dette C.1 de l'audit, soldée par S9 — ADR 0022 décision 6) :
+    le pharmacien d'un centre pouvait lire une ordonnance, jamais dire
+    qu'il l'avait servie. La délivrance est désormais un geste tracé
+    (``deliver_prescription``), **sans marche arrière** : on ne « dé-délivre »
+    pas — une erreur se raconte dans le carnet, elle ne s'efface pas.
+    """
 
     class Status(models.TextChoices):
         ISSUED = "emise", "Émise"
@@ -176,6 +184,15 @@ class Prescription(TimeStampedModel):
     status = models.CharField(
         "statut", max_length=16, choices=Status.choices, default=Status.ISSUED
     )
+    delivered_at = models.DateTimeField("délivrée le", null=True, blank=True)
+    delivered_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        verbose_name="délivrée par",
+        on_delete=models.PROTECT,
+        related_name="prescriptions_delivered",
+        null=True,
+        blank=True,
+    )
 
     objects = ViaEncounterQuerySet.as_manager()
 
@@ -185,6 +202,32 @@ class Prescription(TimeStampedModel):
 
     def __str__(self) -> str:
         return f"Ordonnance #{self.pk} ({self.get_status_display()})"
+
+    @property
+    def is_delivered(self) -> bool:
+        return self.status == self.Status.DELIVERED
+
+    def save(self, *args, **kwargs):
+        # Invariant STRUCTUREL rejoué sur tout chemin d'écriture (règle
+        # d'ingénierie CLAUDE.md) : la délivrance est définitive. Relu EN
+        # BASE et jamais sur l'instance en mémoire (leçon S8) — une vue qui
+        # charge l'ordonnance puis écrit ne doit pas pouvoir revenir en
+        # arrière sur une délivrance commise entre-temps. Pas de
+        # ``select_for_update`` ici : ``save()`` est appelable hors
+        # transaction (factories, imports), où il lèverait — leçon S4.
+        if self.pk is not None and self.status != self.Status.DELIVERED:
+            previous = (
+                type(self)
+                .objects.filter(pk=self.pk)
+                .values_list("status", flat=True)
+                .first()
+            )
+            if previous == self.Status.DELIVERED:
+                raise ValidationError(
+                    "Une ordonnance délivrée le reste : la délivrance est "
+                    "définitive."
+                )
+        super().save(*args, **kwargs)
 
 
 class PrescriptionItem(TimeStampedModel):

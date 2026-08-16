@@ -251,6 +251,44 @@ class AuditAction:
     EQUIPMENT_STATUS_CHANGED = "equipment.status_changed"
     EQUIPMENT_REPORTED = "equipment.reported"
 
+    # Réseau des pharmacies (S9, ADR 0022). Payload contract, et c'est LA
+    # garde du sprint : **jamais un libellé de médicament** — le contenu
+    # d'une ordonnance est du ``detail_clinique`` (ADR 0005) et ce journal se
+    # relit longtemps après. Des ids, des codes de statut, des COMPTEURS
+    # (combien de lignes, combien de destinataires, combien de disponibles)
+    # et des booléens de présence (``has_reason``, ``has_comment``).
+    #
+    # Les CINQ actions de cycle de vie d'une officine sont TRANSVERSES
+    # (``center=None``) : une pharmacie n'appartient à aucun tenant, donc
+    # aucun journal de directeur ne les montre — même posture que
+    # ``platform_staff.*``.
+    #
+    # ``availability.requested`` et ``availability.closed`` portent bien
+    # leur ``center`` (c'est ce centre-là qui a diffusé), mais restent
+    # HORS de la liste blanche du journal du directeur : elles disent qu'une
+    # ordonnance d'un patient a déclenché une recherche, ce qui est de la
+    # même famille que ``prescription.created`` (voir
+    # ``DIRECTOR_JOURNAL_EXCLUDED``). ``availability.answered``, elle, ne
+    # porte AUCUN centre : c'est l'acte d'un tiers hors tenant, et le
+    # journal d'un directeur n'a pas à devenir la fenêtre par laquelle le
+    # réseau se lit.
+    PHARMACY_CREATED = "pharmacy.created"
+    PHARMACY_UPDATED = "pharmacy.updated"
+    PHARMACY_STATUS_CHANGED = "pharmacy.status_changed"
+    PHARMACY_MEMBER_ADDED = "pharmacy.member_added"
+    PHARMACY_MEMBER_REMOVED = "pharmacy.member_removed"
+    PHARMACY_DOCUMENT_UPLOADED = "pharmacy_document.uploaded"
+    PHARMACY_DOCUMENT_ARCHIVED = "pharmacy_document.archived"
+    AVAILABILITY_REQUESTED = "availability.requested"
+    AVAILABILITY_ANSWERED = "availability.answered"
+    AVAILABILITY_CLOSED = "availability.closed"
+    # Délivrance d'une ordonnance au comptoir du centre (dette C.1 de
+    # l'audit, soldée par S9) : ``Prescription.Status.DELIVERED`` existait
+    # depuis le premier jour sans qu'aucun service ne la pose. Famille
+    # clinique — exclue du journal du directeur, comme
+    # ``prescription.created``.
+    PRESCRIPTION_DELIVERED = "prescription.delivered"
+
     # Trust Bridge — money (phase B). Payloads: references, amounts and
     # currencies ONLY — never an act label (ADR 0005/0007).
     INVOICE_CREATED = "invoice.created"

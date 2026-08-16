@@ -277,6 +277,30 @@ export interface MePlatformStaff {
   is_active: boolean;
 }
 
+/**
+ * S9 — la 5ᵉ casquette dans `/auth/me/` (ADR 0022 décision 10).
+ *
+ * Une **LISTE**, et non un objet nullable comme `platform_staff` : une même
+ * personne peut tenir deux officines (rare, mais réel aux Comores), et
+ * l'ambiguïté « laquelle ? » ne doit jamais être tranchée en silence — d'où
+ * l'identifiant de pharmacie dans chaque URL de l'espace.
+ *
+ * `pharmacy.status` voyage ici **exprès** : le 5ᵉ espace en a besoin sur son
+ * tout premier écran, avant le moindre fetch, pour dire la vérité (« votre
+ * inscription est en cours d'examen ») plutôt qu'afficher une boîte vide qui
+ * ressemble à une panne.
+ */
+export interface MePharmacyMembership {
+  id: number;
+  pharmacy: {
+    id: number;
+    name: string;
+    island: Island;
+    city: string;
+    status: PharmacyStatus;
+  };
+}
+
 export interface Me {
   id: number;
   username: string;
@@ -290,6 +314,8 @@ export interface Me {
   guardian_profile: GuardianProfile | null;
   /** S4 — the 4th hat. `null` for everyone who is not a Chioni operator. */
   platform_staff: MePlatformStaff | null;
+  /** S9 — the 5th hat. Empty array for everyone outside the network. */
+  pharmacy_memberships: MePharmacyMembership[];
 }
 
 /**
@@ -376,11 +402,25 @@ export interface PrescriptionItem {
   dosage: string;
 }
 
+/**
+ * Une ordonnance — même payload pour le staff du centre producteur et pour le
+ * patient titulaire.
+ *
+ * **S9** : `delivered_at` dit au comptoir ce qui reste à servir et au patient
+ * « vos médicaments vous ont été remis le … ». Il n'y a **pas** de
+ * `delivered_by` : le sérialiseur est partagé avec le patient, et aucune
+ * identité de personnel ne traverse une vue patient (même règle que l'avatar
+ * du staff, ADR 0014). Ne pas prévoir d'emplacement pour.
+ *
+ * La délivrance est **définitive** : aucune route ne la défait, donc aucun
+ * écran ne propose « annuler la délivrance ».
+ */
 export interface Prescription {
   id: number;
   encounter: number;
   status: PrescriptionStatus;
   items: PrescriptionItem[];
+  delivered_at: string | null;
   created_at: string;
 }
 
@@ -1763,4 +1803,260 @@ export interface EquipmentReport {
   reported_by?: number;
   /** DIRECTEUR SEUL — absent (jamais `null`) pour toute autre casquette. */
   reported_by_display?: string;
+}
+
+/* ── S9 — le réseau des pharmacies (ADR 0022) ───────────────────────────────
+
+   LE module où une donnée de soin franchit la frontière du centre vers un
+   tiers qui n'a signé aucun consentement. Tout le typage de cette section
+   sert **un seul invariant**, et il vaut pour le code du frontend autant que
+   pour les types :
+
+       une officine connaît une ZONE, une LISTE DE MÉDICAMENTS et un NUMÉRO
+       de demande. Jamais le centre, jamais l'ordonnance, jamais le patient,
+       jamais la posologie.
+
+   Le backend ne les envoie pas — et les types ci-dessous ne réservent aucun
+   emplacement pour eux. Ne pas « enrichir » un écran de pharmacie avec un nom
+   de clinique : il n'y a rien à y brancher, et c'est délibéré. */
+
+/**
+ * Le cycle de vie d'une officine (machine fermée côté serveur) :
+ * `en_attente → validee|suspendue`, `validee → suspendue|en_attente`,
+ * `suspendue → validee`.
+ *
+ * `validee → en_attente` n'est PAS une sanction : c'est le retour en
+ * vérification d'une officine qui a DÉCLARÉ un déménagement (revue guardian
+ * S9), ou une plateforme qui revérifie sans suspendre.
+ */
+export type PharmacyStatus = 'en_attente' | 'validee' | 'suspendue';
+
+/** Pièces justificatives d'une officine — photos seulement, le PDF est différé. */
+export type PharmacyDocType =
+  | 'registre_commerce'
+  | 'licence_officine'
+  | 'piece_identite_responsable'
+  | 'autre';
+
+/** Une recherche de disponibilité vit 48 h, puis se ferme toute seule. */
+export type AvailabilityRequestStatus = 'ouverte' | 'close';
+
+/**
+ * Pourquoi une recherche s'est fermée. `''` tant qu'elle est ouverte.
+ * `peremption` n'est **pas un échec** : le centre n'attend simplement plus.
+ */
+export type AvailabilityCloseReason = 'manuelle' | 'peremption' | '';
+
+/**
+ * Une officine telle que le centre et le patient la voient.
+ *
+ * Cinq champs publics par nature — c'est ce qu'une enseigne affiche sur sa
+ * devanture. **Pas de statut** : l'annuaire ne rend que des officines
+ * validées, donc le champ n'apprendrait rien, et il ferait de l'annuaire une
+ * fenêtre sur les décisions de la plateforme.
+ *
+ * `phone` est **le geste utile** côté patient : un lien `tel:` avant tout le
+ * reste (ADR 0022 décision 4 — on ne localise personne, il n'y a ni carte, ni
+ * coordonnées, ni calcul de distance).
+ */
+export interface PharmacyDirectoryEntry {
+  id: number;
+  name: string;
+  island: Island;
+  city: string;
+  address: string;
+  phone: string;
+}
+
+/** Un médicament parti au réseau — copie FIGÉE du libellé, sans posologie. */
+export interface AvailabilityItem {
+  id: number;
+  medication: string;
+}
+
+/** « Ce médicament-là : oui / non. » `item` = id d'un `AvailabilityItem`. */
+export interface AvailabilityResponseLine {
+  item: number;
+  is_available: boolean;
+}
+
+/**
+ * La réponse d'une officine, telle que le CENTRE la lit.
+ *
+ * Elle porte le `comment` (« j'ai le générique ») — texte libre écrit par un
+ * tiers, utile au personnel, **et qui s'arrête ici** : il ne descend pas dans
+ * le carnet du patient (ADR 0022 décision 3).
+ */
+export interface AvailabilityResponseCenter {
+  id: number;
+  pharmacy: PharmacyDirectoryEntry;
+  comment: string;
+  lines: AvailabilityResponseLine[];
+  created_at: string;
+}
+
+/**
+ * Une recherche vue du centre.
+ *
+ * `recipient_count` / `response_count` / `last_response_at` sont **annotés par
+ * la liste** : ils valent `0`/`null` dans la réponse d'une création — relire
+ * la liste plutôt que de s'y fier juste après un envoi.
+ */
+export interface AvailabilityRequestCenter {
+  id: number;
+  prescription: number;
+  island: Island;
+  city: string;
+  status: AvailabilityRequestStatus;
+  close_reason: AvailabilityCloseReason;
+  items: AvailabilityItem[];
+  recipient_count: number;
+  response_count: number;
+  last_response_at: string | null;
+  created_at: string;
+  expires_at: string;
+  closed_at: string | null;
+}
+
+/**
+ * Le détail : la même, plus les réponses reçues (plus récente d'abord).
+ *
+ * **Plusieurs réponses d'une même officine sont NORMALES** — le stock bouge,
+ * la dernière fait foi, l'historique reste. Ne jamais présenter une correction
+ * comme une contradiction.
+ */
+export interface AvailabilityRequestCenterDetail extends AvailabilityRequestCenter {
+  responses: AvailabilityResponseCenter[];
+}
+
+/** La réponse telle que le PATIENT la lit — volontairement SANS `comment`. */
+export interface AvailabilityResponsePatient {
+  id: number;
+  pharmacy: PharmacyDirectoryEntry;
+  lines: AvailabilityResponseLine[];
+  created_at: string;
+}
+
+/**
+ * Une recherche dans le carnet du patient — **lecture seule**.
+ *
+ * Le patient ne lance pas de recherche (arbitrage PO S9 : c'est le médecin ou
+ * le pharmacien du centre, en fin de consultation). Ne pas construire de
+ * bouton « chercher mes médicaments ».
+ */
+export interface AvailabilityRequestPatient {
+  id: number;
+  status: AvailabilityRequestStatus;
+  city: string;
+  island: Island;
+  items: AvailabilityItem[];
+  responses: AvailabilityResponsePatient[];
+  created_at: string;
+  expires_at: string;
+}
+
+/**
+ * L'officine telle qu'elle se voit elle-même (5ᵉ espace).
+ *
+ * `status_reason` est la consigne écrite par Chioni — miroir exact du
+ * `kyc_reason` d'un directeur de centre : suspendre quelqu'un sans lui dire ce
+ * qu'il doit corriger n'est pas une décision, c'est une punition. L'afficher
+ * en toutes lettres.
+ */
+export interface PharmacySelf {
+  id: number;
+  name: string;
+  island: Island;
+  city: string;
+  address: string;
+  phone: string;
+  email: string;
+  status: PharmacyStatus;
+  status_reason: string;
+  status_updated_at: string | null;
+  created_at: string;
+}
+
+/**
+ * Un membre de l'officine. **Aucun rôle, aucune hiérarchie** (ADR 0022 §12) :
+ * une officine comorienne compte une à trois personnes qui font le même
+ * travail. Tout membre actif répond, dépose les pièces et inscrit un collègue.
+ *
+ * Pas de téléphone : il a servi à créer le compte (pivot d'identité) et n'a
+ * aucune raison de circuler dans une liste.
+ */
+export interface PharmacyMember {
+  id: number;
+  display_name: string;
+  is_active: boolean;
+  created_at: string;
+}
+
+/** Une pièce justificative — **jamais d'URL** (stockage privé, `apiDownload`). */
+export interface PharmacyDocument {
+  id: number;
+  doc_type: PharmacyDocType;
+  created_at: string;
+  archived_at: string | null;
+}
+
+/** Ce que CETTE officine a déjà répondu — jamais ce que les autres ont dit. */
+export interface InboxResponse {
+  id: number;
+  comment: string;
+  lines: AvailabilityResponseLine[];
+  created_at: string;
+}
+
+/**
+ * **LA liste blanche du sprint.** Ce qu'une pharmacie voit d'une demande.
+ *
+ * `id` est celui de la **ligne de diffusion**, pas de la demande. Et il n'y a
+ * RIEN d'autre : ni centre, ni ordonnance, ni patient, ni prescripteur, ni
+ * posologie — le backend n'a aucun chemin pour les ajouter (sérialiseur nu
+ * monté sur la ligne de diffusion, pas sur la demande).
+ *
+ * `my_response` vaut `null` tant que l'officine n'a pas répondu. **Répondre à
+ * nouveau est prévu et normal** : le bouton reste « Mettre à jour ma
+ * réponse », jamais grisé après le premier envoi.
+ */
+export interface InboxRequest {
+  id: number;
+  island: Island;
+  city: string;
+  status: AvailabilityRequestStatus;
+  created_at: string;
+  expires_at: string;
+  items: AvailabilityItem[];
+  my_response: InboxResponse | null;
+}
+
+/**
+ * Une officine vue du back-office Chioni.
+ *
+ * Des **compteurs**, jamais une liste de personnes ni un médicament : savoir
+ * qu'une pharmacie n'a plus aucun membre actif est de la supervision (sa boîte
+ * de réception n'est plus relevée) ; parcourir ses gens, ou lire les
+ * ordonnances du pays, ne l'est pas. `received_request_count` n'ouvre sur rien.
+ */
+export interface PlatformPharmacy {
+  id: number;
+  name: string;
+  island: Island;
+  city: string;
+  address: string;
+  phone: string;
+  email: string;
+  status: PharmacyStatus;
+  status_reason: string;
+  status_updated_at: string | null;
+  member_active_count: number;
+  document_count: number;
+  received_request_count: number;
+  created_at: string;
+}
+
+/** La création rend l'officine ET sa première personne, en un appel. */
+export interface PlatformPharmacyCreated extends PlatformPharmacy {
+  member: PharmacyMember;
 }

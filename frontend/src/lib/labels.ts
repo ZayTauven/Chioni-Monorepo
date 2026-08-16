@@ -57,6 +57,13 @@ import type {
   VitalSignsMeasures,
 } from './types';
 
+import type {
+  AvailabilityCloseReason,
+  AvailabilityRequestStatus,
+  PharmacyDocType,
+  PharmacyStatus,
+} from './types';
+
 /* ── enum labels ── */
 
 export const GUARDIAN_LINK_STATUS_LABELS: Record<GuardianLinkStatus, string> = {
@@ -2908,3 +2915,798 @@ export const EQUIPMENT_SEARCH_EMPTY_MESSAGE =
 
 export const EQUIPMENT_NOT_FOUND_TITLE = 'Équipement introuvable';
 export const EQUIPMENT_NOT_FOUND_MESSAGE = 'Cet appareil n’existe pas dans ce centre.';
+
+/* ════════════════════════════════════════════════════════════════════════════
+   S9 — LE RÉSEAU DES PHARMACIES (ADR 0022)
+   ════════════════════════════════════════════════════════════════════════════
+
+   Deux lignes de vocabulaire traversent tout ce bloc, et elles ne sont pas
+   décoratives : ce sont les deux choses que les écrans doivent DIRE, pas
+   sous-entendre.
+
+   1. **Ce que la pharmacie ne voit PAS.** Ni le nom du centre, ni le patient,
+      ni la posologie. C'est l'argument qui fera utiliser la fonction — un
+      prescripteur qui doute de la confidentialité ne coche rien. Il s'écrit
+      donc en toutes lettres, à l'endroit du geste (la modale d'envoi), et pas
+      dans une aide repliée.
+
+   2. **Rien de ce qui n'est pas un échec n'est peint en rouge.** « Pas
+      disponible » est une information utile — elle évite un trajet. « Recherche
+      terminée » est l'issue normale au bout de 48 h. « En attente de
+      validation » est l'état ordinaire d'une officine qui vient de s'inscrire.
+      Aucun de ces trois n'a mal tourné. Même arbitrage que « Manqué » sur un
+      rendez-vous (S2), `annule` sur un séjour (S6), « absent » sur une feuille
+      de présence (S7) et `en_panne` sur un appareil (S8).
+
+   Et une troisième, propre au 5ᵉ espace : **une officine « en attente » doit
+   lire pourquoi sa boîte est vide.** Une boîte vide sans phrase ressemble à
+   une panne, et on n'y revient pas.
+   ════════════════════════════════════════════════════════════════════════════ */
+
+/* ── vocabulaire des états ── */
+
+/**
+ * L'état d'une officine, tel qu'elle-même et la plateforme le lisent.
+ *
+ * « En attente de validation » n'est **jamais** un `danger` (voir
+ * `PHARMACY_TONES`) : c'est l'état normal du premier jour.
+ */
+export const PHARMACY_STATUS_LABELS: Record<PharmacyStatus, string> = {
+  en_attente: 'En attente de validation',
+  validee: 'Validée',
+  suspendue: 'Suspendue',
+};
+
+/** Ordre des filtres du back-office (« Toutes » est ajouté en tête par l'écran). */
+export const PHARMACY_STATUSES: PharmacyStatus[] = ['en_attente', 'validee', 'suspendue'];
+
+export const PHARMACY_DOC_TYPE_LABELS: Record<PharmacyDocType, string> = {
+  registre_commerce: 'Registre du commerce',
+  licence_officine: 'Licence d’officine',
+  piece_identite_responsable: 'Pièce d’identité du responsable',
+  autre: 'Autre',
+};
+
+export const PHARMACY_DOC_TYPES: PharmacyDocType[] = [
+  'registre_commerce',
+  'licence_officine',
+  'piece_identite_responsable',
+  'autre',
+];
+
+/**
+ * L'état d'une recherche, **côté centre**.
+ *
+ * « Terminée » et non « Fermée » : le centre a trouvé, ou n'attend plus. Rien
+ * n'a échoué, et le mot ne doit pas le laisser croire.
+ */
+export const AVAILABILITY_STATUS_LABELS: Record<AvailabilityRequestStatus, string> = {
+  ouverte: 'En cours',
+  close: 'Terminée',
+};
+
+/**
+ * Pourquoi une recherche s'est terminée — dit simplement, sans jargon.
+ * `''` (recherche encore ouverte) ne s'affiche jamais.
+ */
+export const AVAILABILITY_CLOSE_REASON_LABELS: Record<AvailabilityCloseReason, string> = {
+  manuelle: 'Fermée par le centre',
+  peremption: 'Sans réponse au bout de 48 h',
+  '': '',
+};
+
+/* ── ce que la pharmacie ne voit pas : LA phrase du sprint ── */
+
+/**
+ * Au contact du geste d'envoi, jamais dans une aide repliée.
+ *
+ * Elle est écrite du point de vue du prescripteur qui hésite, et elle nomme
+ * les trois choses précises qui ne sortent pas — « anonyme » seul ne
+ * rassurerait personne, et serait d'ailleurs faux : une liste de médicaments
+ * reste réidentifiable dans une petite commune, ce que la ligne suivante dit.
+ */
+export const AVAILABILITY_PRIVACY_TITLE = 'Ce que la pharmacie va recevoir';
+
+export const AVAILABILITY_PRIVACY_NOTICE =
+  'Les pharmacies reçoivent seulement la liste des médicaments cochés et la commune. Elles ne voient ni le nom du patient, ni le nom de votre centre, ni la posologie.';
+
+/**
+ * La contrepartie honnête, à côté des cases : un médicament peut désigner
+ * quelqu'un. C'est la raison d'être des cases à cocher — sans cette phrase,
+ * décocher n'a pas de sens et personne ne le fera.
+ */
+export const AVAILABILITY_PRIVACY_UNCHECK_HINT =
+  'Décochez un médicament si, à lui seul, il pourrait faire deviner de qui il s’agit dans cette commune.';
+
+/** Sous la liste des destinataires, avant le bouton d'envoi. */
+export const AVAILABILITY_BROADCAST_HINT =
+  'Plus la diffusion est large, plus la liste circule : préférez la commune du patient quand vous la connaissez.';
+
+/* ── l'envoi d'une recherche ── */
+
+export const AVAILABILITY_SEND_ACTION = 'Chercher en pharmacie';
+export const AVAILABILITY_SEND_TITLE = 'Chercher ces médicaments en pharmacie';
+export const AVAILABILITY_SEND_SUBMIT = 'Envoyer aux pharmacies';
+export const AVAILABILITY_ITEMS_LEGEND = 'Médicaments à chercher';
+export const AVAILABILITY_ZONE_LEGEND = 'Où chercher';
+export const AVAILABILITY_ISLAND_LABEL = 'Île';
+export const AVAILABILITY_CITY_LABEL = 'Commune';
+export const AVAILABILITY_CITY_HINT =
+  'Laissez vide pour toute l’île — l’envoi sera refusé s’il dépasse le nombre de pharmacies autorisé.';
+export const AVAILABILITY_CITY_ALL = 'Toute l’île';
+
+/** L'annonce de diffusion, en tête de la liste réelle des destinataires. */
+export function availabilityRecipientsTitle(count: number): string {
+  if (count === 0) return 'Aucune pharmacie validée dans cette zone';
+  if (count === 1) return '1 pharmacie va recevoir cette liste';
+  return `${count} pharmacies vont recevoir cette liste`;
+}
+
+export const AVAILABILITY_RECIPIENTS_EMPTY =
+  'Aucune officine validée n’est enregistrée ici pour le moment. Essayez une autre commune, ou toute l’île.';
+
+export const AVAILABILITY_RECIPIENTS_LOADING = 'Recherche des pharmacies de la zone…';
+
+/**
+ * La zone saisie n'est pas encore celle de la liste affichée (frappe en
+ * cours). L'ADR exige que le nombre d'officines destinataires soit affiché
+ * AVANT l'envoi : tant que l'annonce n'est pas à jour, on ne laisse pas
+ * envoyer — sinon la liste part vers une zone que personne n'a lue.
+ */
+export const AVAILABILITY_RECIPIENTS_STALE =
+  'Mise à jour de la liste des pharmacies de cette commune…';
+
+/** Aucune ligne cochée : dire pourquoi le bouton ne part pas. */
+export const AVAILABILITY_NO_ITEM_HINT =
+  'Cochez au moins un médicament : c’est ce que les pharmacies recevront.';
+
+/** Sous une ligne, à côté de la posologie affichée au centre. */
+export const AVAILABILITY_DOSAGE_NOT_SENT = 'non transmis à la pharmacie';
+
+export const AVAILABILITY_SENDING = 'Envoi…';
+
+/**
+ * Le 429 du scope dédié `availability` (60/h).
+ *
+ * La diffusion est le SEUL geste du produit qui parle à des tiers en masse :
+ * elle a son propre budget, et le message brut de DRF qui l'accompagne est en
+ * anglais (« Request was throttled… »). Sur la surface la plus sensible du
+ * sprint, un refus incompréhensible se rejoue — on le traduit, et on dit
+ * l'attente en toutes lettres (patron `uploadThrottled` de S3/S4).
+ */
+export function availabilityThrottled(retryAfterSeconds?: number): string {
+  return retryAfterSeconds
+    ? `Trop de recherches envoyées coup sur coup. Réessayez dans ${formatWait(retryAfterSeconds)}.`
+    : 'Trop de recherches envoyées coup sur coup. Patientez un moment avant de réessayer.';
+}
+
+export function availabilitySent(count: number): string {
+  const target = count === 1 ? '1 pharmacie' : `${count} pharmacies`;
+  return `Recherche envoyée à ${target}. Les réponses arriveront ici, et dans le carnet du patient.`;
+}
+
+/** Le refus le plus fréquent, reformulé nulle part : le backend le dit mieux. */
+export const AVAILABILITY_ALREADY_DELIVERED =
+  'Cette ordonnance a été délivrée : il n’y a plus de médicament à chercher.';
+
+/* ── ce qui a DÉJÀ été envoyé pour cette ordonnance ──
+   (revue guardian S9 : la route existait, aucun écran ne la lisait — le
+   prescripteur découvrait le doublon par un refus, après avoir lu toute
+   l'annonce de diffusion.) */
+
+export const AVAILABILITY_EXISTING_TITLE = 'Déjà envoyée pour cette ordonnance';
+
+/** Une recherche ouverte, listée avec sa zone et sa date. */
+export function availabilityExistingLine(
+  zone: string,
+  sentAt: string,
+  responses: number,
+): string {
+  const answered =
+    responses === 0
+      ? 'aucune réponse pour l’instant'
+      : responses === 1
+        ? '1 réponse'
+        : `${responses} réponses`;
+  return `${zone}, envoyée le ${formatDate(sentAt)} — ${answered}`;
+}
+
+/**
+ * La zone choisie est DÉJÀ couverte par une recherche ouverte : le serveur
+ * refusera (« le double-clic ne diffuse pas deux fois », ADR 0022). On le dit
+ * avant, sans griser le bouton — c'est le serveur qui tranche, pas nous.
+ */
+export const AVAILABILITY_DUPLICATE_ZONE_WARNING =
+  'Une recherche est déjà en cours pour cette ordonnance dans cette zone. Ouvrez-la pour voir les réponses, ou choisissez une autre commune — un second envoi sera refusé.';
+
+/* ── le fil des recherches, côté centre ── */
+
+export const AVAILABILITY_FEED_TITLE = 'Recherches en pharmacie';
+export const AVAILABILITY_FEED_SUBTITLE =
+  'Les listes de médicaments envoyées au réseau, et ce que les officines ont répondu.';
+
+export const AVAILABILITY_FEED_EMPTY_TITLE = 'Aucune recherche lancée';
+export const AVAILABILITY_FEED_EMPTY_MESSAGE =
+  'Depuis une ordonnance, vous pouvez demander aux pharmacies d’une commune si elles ont les médicaments. Les réponses reviennent ici.';
+
+export const AVAILABILITY_FEED_FILTER_EMPTY_TITLE = 'Aucune recherche ne correspond';
+export const AVAILABILITY_FEED_FILTER_EMPTY_MESSAGE =
+  'Essayez un autre état, ou effacez le filtre.';
+
+export const AVAILABILITY_COL_ZONE = 'Zone';
+export const AVAILABILITY_COL_ITEMS = 'Médicaments';
+export const AVAILABILITY_COL_RESPONSES = 'Réponses';
+export const AVAILABILITY_COL_SENT = 'Envoyée';
+export const AVAILABILITY_OPEN_SR = 'Ouvrir la recherche';
+
+export const AVAILABILITY_DETAIL_TITLE = 'Recherche en pharmacie';
+
+/** Réponses reçues sur destinataires — un compteur qui dit l'attente. */
+export function availabilityResponsesLabel(responses: number, recipients: number): string {
+  if (recipients === 0) return 'Aucun destinataire';
+  return `${responses} réponse${responses > 1 ? 's' : ''} sur ${recipients} pharmacie${recipients > 1 ? 's' : ''}`;
+}
+
+export function availabilityItemsLabel(count: number): string {
+  return `${count} médicament${count > 1 ? 's' : ''}`;
+}
+
+/** La zone, en une chaîne : « Moroni (Ngazidja) » ou « Toute l'île de Mwali ». */
+export function availabilityZoneLabel(island: Island, city: string): string {
+  return city ? `${city} (${ISLAND_LABELS[island]})` : `Toute l’île — ${ISLAND_LABELS[island]}`;
+}
+
+/** L'attente, dite honnêtement : une recherche périmée n'est pas un échec. */
+export const AVAILABILITY_EXPIRES_HINT =
+  'Une recherche reste ouverte 48 h. Passé ce délai, elle se termine toute seule et vous pouvez en relancer une.';
+
+export const AVAILABILITY_CLOSE_ACTION = 'Terminer la recherche';
+export const AVAILABILITY_CLOSE_TITLE = 'Terminer cette recherche ?';
+export const AVAILABILITY_CLOSE_MESSAGE =
+  'Les pharmacies ne pourront plus répondre. Les réponses déjà reçues restent lisibles, ici et dans le carnet du patient. Vous pourrez relancer une recherche plus tard si besoin.';
+export const AVAILABILITY_CLOSE_CONFIRM = 'Terminer la recherche';
+export const AVAILABILITY_CLOSED_FLASH = 'Recherche terminée. Les réponses restent lisibles.';
+
+export const AVAILABILITY_NO_RESPONSE_TITLE = 'Aucune réponse pour le moment';
+export const AVAILABILITY_NO_RESPONSE_MESSAGE =
+  'Les officines répondent depuis leur téléphone, au comptoir. Laissez-leur un peu de temps.';
+
+/**
+ * Plusieurs réponses d'une même officine sont NORMALES (le stock bouge). Le
+ * dire, sinon une correction se lit comme une contradiction — et on appelle
+ * la pharmacie pour rien.
+ */
+export const AVAILABILITY_MULTIPLE_RESPONSES_HINT =
+  'Une pharmacie peut répondre plusieurs fois : son stock change. La réponse la plus récente est la bonne, les précédentes sont signalées.';
+
+/**
+ * Marque les réponses DÉPASSÉES d'une même officine.
+ *
+ * Sans elle, deux cartes de la même enseigne se contredisent et il faut
+ * comparer deux horodatages pour savoir laquelle croire — appeler sur une
+ * réponse périmée coûte un déplacement au patient. Ton neutre : se corriger
+ * n'est pas se tromper.
+ */
+export const AVAILABILITY_RESPONSE_SUPERSEDED = 'Réponse précédente';
+
+export const AVAILABILITY_COMMENT_LABEL = 'Message de la pharmacie';
+
+/** Le mot des lignes de réponse — jamais « positif »/« négatif ». */
+export const AVAILABILITY_LINE_AVAILABLE = 'Disponible';
+export const AVAILABILITY_LINE_UNAVAILABLE = 'Pas disponible';
+
+/* ── le comptoir du pharmacien (dette C.1) ── */
+
+export const COUNTER_TITLE = 'Ordonnances';
+export const COUNTER_SUBTITLE =
+  'Les ordonnances du centre : celles qui restent à remettre, et celles déjà remises.';
+
+export const COUNTER_TAB_PRESCRIPTIONS = 'Ordonnances';
+export const COUNTER_TAB_SEARCHES = 'Recherches en pharmacie';
+
+export const COUNTER_FILTER_ALL = 'Toutes';
+export const COUNTER_FILTER_DATE_LABEL = 'Date d’émission';
+export const COUNTER_FILTER_CLEAR = 'Effacer les filtres';
+
+/**
+ * L'état vide du filtre PAR DÉFAUT du comptoir (« À remettre »).
+ *
+ * Distinct de l'état vide global, et la distinction coûte un écran si on la
+ * rate (leçon S8) : un centre dont toutes les ordonnances ont été délivrées
+ * verrait « Les ordonnances de ce centre apparaissent ici » et conclurait que
+ * rien n'a jamais été prescrit. Le filtre par défaut est un filtre SERVEUR —
+ * il explique le vide, et le message donne le geste qui l'ouvre.
+ */
+export const COUNTER_PENDING_EMPTY_TITLE = 'Aucune ordonnance à remettre';
+export const COUNTER_PENDING_EMPTY_MESSAGE =
+  'Tout a été remis. Choisissez « Toutes » pour revoir les ordonnances déjà délivrées.';
+
+export const COUNTER_EMPTY_TITLE = 'Aucune ordonnance';
+export const COUNTER_EMPTY_MESSAGE =
+  'Les ordonnances émises pendant les consultations de ce centre apparaissent ici.';
+export const COUNTER_FILTER_EMPTY_TITLE = 'Aucune ordonnance ne correspond';
+export const COUNTER_FILTER_EMPTY_MESSAGE =
+  'Essayez un autre état ou une autre date, ou effacez les filtres.';
+
+export const COUNTER_COL_PRESCRIPTION = 'Ordonnance';
+export const COUNTER_COL_MEDICATIONS = 'Médicaments';
+export const COUNTER_COL_STATUS = 'État';
+
+/**
+ * La délivrance, geste DÉFINITIF. La modale le dit avant, et il n'existe
+ * nulle part de bouton « annuler la délivrance » — aucune route ne la défait.
+ */
+export const COUNTER_DELIVER_ACTION = 'Marquer comme remise';
+export const COUNTER_DELIVER_TITLE = 'Confirmer la remise des médicaments ?';
+export const COUNTER_DELIVER_MESSAGE =
+  'Vous confirmez avoir remis ces médicaments au patient. Ce geste est définitif : il n’existe aucun moyen de l’annuler ensuite. En cas d’erreur, notez-le dans le carnet du patient.';
+export const COUNTER_DELIVER_CONFIRM = 'Confirmer la remise';
+
+export function counterDelivered(prescriptionId: number): string {
+  return `Ordonnance n° ${prescriptionId} marquée comme remise.`;
+}
+
+export function counterDeliveredOn(iso: string): string {
+  return `Remise le ${formatDate(iso)}`;
+}
+
+/** Sur une ordonnance délivrée, à la place du bouton de recherche. */
+export const COUNTER_SEARCH_DISABLED_HINT =
+  'Médicaments déjà remis : il n’y a plus rien à chercher en pharmacie.';
+
+/* ── l'annuaire des pharmacies, côté centre ── */
+
+export const DIRECTORY_TITLE = 'Pharmacies';
+export const DIRECTORY_SUBTITLE =
+  'Les officines du réseau Chioni, par île et par commune. Le numéro sert à appeler directement.';
+
+export const DIRECTORY_EMPTY_TITLE = 'Aucune pharmacie enregistrée';
+export const DIRECTORY_EMPTY_MESSAGE =
+  'Le réseau se construit officine par officine. Dès qu’une pharmacie de votre zone rejoint Chioni et qu’elle est validée, elle apparaît ici.';
+
+export const DIRECTORY_FILTER_EMPTY_TITLE = 'Aucune pharmacie ne correspond';
+export const DIRECTORY_FILTER_EMPTY_MESSAGE =
+  'Essayez une autre île, une autre commune, ou effacez les filtres.';
+
+export const DIRECTORY_SEARCH_LABEL = 'Rechercher';
+export const DIRECTORY_SEARCH_PLACEHOLDER = 'Nom ou commune…';
+export const DIRECTORY_FILTER_ALL_ISLANDS = 'Toutes les îles';
+export const DIRECTORY_COL_NAME = 'Officine';
+export const DIRECTORY_COL_ZONE = 'Commune';
+export const DIRECTORY_COL_PHONE = 'Téléphone';
+export const DIRECTORY_NO_PHONE = 'Numéro non renseigné';
+export const DIRECTORY_NO_ADDRESS = 'Adresse non renseignée';
+
+/** L'annuaire ne rend QUE des officines validées : le dire évite « il en manque ». */
+export const DIRECTORY_VALIDATED_ONLY_HINT =
+  'Seules les officines vérifiées par Chioni apparaissent ici — ce sont les seules qui reçoivent les recherches.';
+
+/* ── espace patient : « où trouver mes médicaments » ── */
+
+export const PATIENT_AVAILABILITY_ACTION = 'Où trouver mes médicaments ?';
+export const PATIENT_AVAILABILITY_TITLE = 'Où trouver ces médicaments';
+
+/**
+ * Pourquoi il n'y a rien : le centre n'a pas (encore) demandé. Surtout pas un
+ * bouton « chercher » — le patient ne lance pas de recherche (arbitrage PO).
+ */
+export const PATIENT_AVAILABILITY_EMPTY =
+  'Votre centre de santé n’a pas encore demandé aux pharmacies si elles ont ces médicaments. Vous pouvez lui en parler lors de votre prochaine visite.';
+
+export const PATIENT_AVAILABILITY_CLOSED =
+  'Cette recherche est terminée. Les réponses restent affichées ci-dessous.';
+
+export const PATIENT_AVAILABILITY_NO_ANSWER =
+  'Aucune pharmacie n’a encore répondu. Revenez un peu plus tard.';
+
+export const PATIENT_AVAILABILITY_CALL = 'Appeler';
+
+/**
+ * Une officine qui n'a AUCUN des médicaments : on ne lui met pas un gros
+ * bouton d'appel en avant (ce serait envoyer quelqu'un téléphoner pour rien),
+ * mais on garde le numéro accessible — le stock a pu bouger depuis.
+ */
+export const PATIENT_AVAILABILITY_NONE_HERE =
+  'Cette pharmacie n’avait aucun de vos médicaments lors de sa réponse.';
+
+export const PATIENT_AVAILABILITY_LOADING = 'Recherche en cours…';
+
+/** Ce que le patient lit sur une ligne — les mots les plus simples possibles. */
+export const PATIENT_AVAILABILITY_HAS = 'A ce médicament';
+export const PATIENT_AVAILABILITY_HAS_NOT = 'N’a pas ce médicament';
+
+export function patientAvailabilityAnswered(iso: string): string {
+  return `Réponse du ${formatDate(iso)}`;
+}
+
+export function patientDeliveredOn(iso: string): string {
+  return `Vos médicaments vous ont été remis le ${formatDate(iso)}.`;
+}
+
+/* ── le 5ᵉ espace : l'officine ── */
+
+export const PHARMACY_SPACE_NAME = 'Mon officine';
+
+export const PHARMACY_INBOX_TITLE = 'Demandes reçues';
+export const PHARMACY_INBOX_SUBTITLE =
+  'Des centres de santé cherchent des médicaments près de chez vous. Ouvrez une demande et répondez « oui » ou « non » pour chaque médicament.';
+
+export const PHARMACY_INBOX_FILTER_OPEN = 'En cours';
+export const PHARMACY_INBOX_FILTER_CLOSED = 'Terminées';
+export const PHARMACY_INBOX_FILTER_ALL = 'Toutes';
+
+export const PHARMACY_INBOX_EMPTY_TITLE = 'Aucune demande pour le moment';
+export const PHARMACY_INBOX_EMPTY_MESSAGE =
+  'Quand un centre de santé cherchera des médicaments dans votre commune, la demande arrivera ici et vous recevrez un SMS.';
+
+export const PHARMACY_INBOX_FILTER_EMPTY_TITLE = 'Aucune demande ne correspond';
+export const PHARMACY_INBOX_FILTER_EMPTY_MESSAGE = 'Changez de filtre pour voir les autres demandes.';
+
+/**
+ * LA phrase qui distingue une officine « en attente » d'une panne.
+ *
+ * Une boîte de réception vide sans explication se lit « l'application ne
+ * marche pas », et on n'y revient pas. Elle est affichée AVANT la liste, pas
+ * à la place : le jour où la première demande arrive, l'écran est déjà connu.
+ */
+export const PHARMACY_PENDING_TITLE = 'Votre inscription est en cours d’examen';
+export const PHARMACY_PENDING_MESSAGE =
+  'L’équipe Chioni vérifie votre officine. Vous ne recevez pas encore de demandes de médicaments. Déposez vos pièces justificatives pour accélérer la vérification.';
+
+/**
+ * Une suspension : **ce qui continue AVANT ce qui est fermé** (patron des
+ * bandeaux S4/S5). L'ordre n'est pas cosmétique — commencer par la sanction
+ * fait fermer l'écran avant d'avoir lu comment se régulariser.
+ */
+export const PHARMACY_SUSPENDED_TITLE = 'Votre officine est suspendue';
+export const PHARMACY_SUSPENDED_MESSAGE =
+  'Vous gardez l’accès à tout votre historique et vous pouvez déposer vos pièces justificatives. Ce sont les nouvelles demandes que vous ne recevez plus, et vous ne pouvez plus répondre à celles en cours.';
+
+/** Le motif écrit par Chioni — la consigne qui permet de se régulariser. */
+export const PHARMACY_STATUS_REASON_LABEL = 'Message de l’équipe Chioni';
+
+export const PHARMACY_PENDING_INBOX_EMPTY =
+  'Les demandes des centres de santé arriveront ici dès que votre officine sera validée.';
+
+export const PHARMACY_SUSPENDED_INBOX_EMPTY =
+  'Vous ne recevez plus de nouvelles demandes pendant la suspension. Vos demandes passées restent lisibles.';
+
+/* ── répondre à une demande ── */
+
+export const PHARMACY_REQUEST_TITLE = 'Demande de disponibilité';
+export const PHARMACY_REQUEST_BACK = 'Demandes reçues';
+
+/**
+ * Ce que l'officine sait, et ce qu'elle ne saura pas — dit de son côté aussi.
+ * Un pharmacien qui ne comprend pas pourquoi l'information est si maigre
+ * suppose un bug, ou appelle pour demander « c'est pour qui ? ».
+ */
+export const PHARMACY_REQUEST_SCOPE_NOTICE =
+  'Vous recevez seulement la liste des médicaments et la commune : le nom du patient, son centre de santé et la posologie ne sont jamais transmis. C’est ce qui permet à ce service d’exister.';
+
+export const PHARMACY_ANSWER_LEGEND = 'Avez-vous ces médicaments ?';
+export const PHARMACY_ANSWER_YES = 'Oui, j’en ai';
+export const PHARMACY_ANSWER_NO = 'Non, je n’en ai pas';
+export const PHARMACY_ANSWER_COMMENT_LABEL = 'Message pour le centre (facultatif)';
+export const PHARMACY_ANSWER_COMMENT_HINT =
+  'Par exemple : « j’ai le générique » ou « réapprovisionnement jeudi ». Ce message est lu par le centre de santé, pas par le patient.';
+
+/** Toutes les lignes sont obligatoires : le dire avant le refus du serveur. */
+export const PHARMACY_ANSWER_INCOMPLETE =
+  'Répondez pour chacun des médicaments avant d’envoyer.';
+
+export const PHARMACY_ANSWER_SUBMIT_FIRST = 'Envoyer ma réponse';
+
+/**
+ * **Répondre à nouveau est normal.** Le stock bouge — le bouton ne se grise
+ * jamais après le premier envoi, et son libellé change pour le dire.
+ */
+export const PHARMACY_ANSWER_SUBMIT_AGAIN = 'Mettre à jour ma réponse';
+
+export const PHARMACY_ANSWER_AGAIN_HINT =
+  'Votre stock a changé ? Modifiez vos réponses et renvoyez : c’est la dernière qui compte.';
+
+export const PHARMACY_ANSWER_SAVED = 'Merci, votre réponse est enregistrée.';
+
+export function pharmacyAnsweredOn(iso: string): string {
+  return `Vous avez répondu ${formatAgo(iso)}`;
+}
+
+/**
+ * Une demande à laquelle on ne peut plus répondre — close par le centre OU
+ * périmée. Le mot n'accuse personne : on n'écrit pas « vous n'avez pas
+ * répondu » sur une demande qu'on ne peut plus honorer.
+ */
+export const PHARMACY_INBOX_NOT_ANSWERED = 'Vous n’avez pas encore répondu.';
+export const PHARMACY_INBOX_OVER_NOT_ANSWERED = 'Le centre n’attend plus de réponse.';
+
+export const PHARMACY_REQUEST_CLOSED_NOTICE =
+  'Cette demande est terminée : le centre n’attend plus de réponse.';
+
+/**
+ * L'expiration vue par l'HORLOGE DU TÉLÉPHONE — donc un AVIS, jamais un mur
+ * (revue guardian S9).
+ *
+ * `status: close` vient du serveur ; les 48 h, elles, se calculent avec
+ * `Date.now()`. Un téléphone d'entrée de gamme dont la date avance d'un jour
+ * — le cas ordinaire d'un appareil qui a perdu l'heure réseau — retirait
+ * l'officine du réseau en silence : le formulaire disparaissait sur des
+ * demandes parfaitement vivantes, et personne au comptoir n'avait de raison
+ * de soupçonner l'horloge. Même leçon que le plafond client de S6, qui
+ * rendait une journée d'hospitalisation infacturable sur un décalage.
+ *
+ * On avertit donc, et on laisse répondre : c'est le serveur qui compare
+ * `expires_at` à l'instant courant, sous verrou, et son refus s'affiche tel
+ * quel. Une soumission perdue coûte un aller-retour ; une réponse impossible
+ * coûte un trajet à quelqu'un qui marche.
+ */
+export const PHARMACY_REQUEST_EXPIRED_NOTICE =
+  'Cette demande semble avoir dépassé 48 h : le centre n’attend probablement plus de réponse. Vous pouvez essayer quand même — si le délai est réellement écoulé, l’envoi sera refusé et vous le saurez.';
+
+export const PHARMACY_ANSWER_BLOCKED_PENDING =
+  'Vous pourrez répondre dès que votre officine sera validée par Chioni.';
+
+export const PHARMACY_ANSWER_BLOCKED_SUSPENDED =
+  'Vous ne pouvez pas répondre pendant la suspension de votre officine.';
+
+/**
+ * L'âge d'un événement, en RELATIF — « il y a 10 minutes », « hier ».
+ *
+ * L'ADR 0022 fait de la fraîcheur « la moitié de l'utilité du service » : une
+ * officine doit savoir si la demande date de dix minutes ou de deux jours. Une
+ * date absolue (« 16 août 2026, 09:12 ») oblige à connaître l'heure qu'il est
+ * et à soustraire — au comptoir, entre deux clients, personne ne le fait. Au
+ * delà de deux jours l'information utile redevient la date : on bascule.
+ */
+export function formatAgo(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return iso;
+  const seconds = Math.round((Date.now() - date.getTime()) / 1000);
+  if (seconds < 0) return formatDateTime(iso);
+  if (seconds < 60) return 'à l’instant';
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return minutes === 1 ? 'il y a 1 minute' : `il y a ${minutes} minutes`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return hours === 1 ? 'il y a 1 heure' : `il y a ${hours} heures`;
+  if (hours < 48) return 'hier';
+  return `le ${formatDateTime(iso)}`;
+}
+
+/** La fraîcheur — la moitié de l'utilité du service (ADR 0022). */
+export function pharmacyRequestAge(iso: string): string {
+  return `Reçue ${formatAgo(iso)}`;
+}
+
+export function pharmacyRequestExpires(iso: string): string {
+  return `Le centre attend une réponse jusqu’au ${formatDateTime(iso)}`;
+}
+
+/* ── la fiche de l'officine ── */
+
+export const PHARMACY_PROFILE_TITLE = 'Ma fiche';
+export const PHARMACY_PROFILE_SUBTITLE =
+  'Les informations que les centres de santé et les patients voient de votre officine.';
+
+export const PHARMACY_NAME_LABEL = 'Nom de l’officine';
+export const PHARMACY_ISLAND_LABEL = 'Île';
+export const PHARMACY_CITY_LABEL = 'Commune';
+export const PHARMACY_ADDRESS_LABEL = 'Adresse';
+export const PHARMACY_PHONE_LABEL = 'Téléphone';
+export const PHARMACY_EMAIL_LABEL = 'E-mail';
+
+export const PHARMACY_PROFILE_EDIT = 'Modifier ma fiche';
+export const PHARMACY_PROFILE_SAVE = 'Enregistrer';
+export const PHARMACY_PROFILE_SAVED = 'Votre fiche est à jour.';
+
+export const PHARMACY_PUBLIC_HINT =
+  'Le nom, la commune, l’adresse et le téléphone sont visibles des centres de santé et des patients à qui l’on indique votre officine.';
+
+/**
+ * **Le déménagement déclaré renvoie l'officine en vérification** (arbitrage PO
+ * du 16/08/2026, confirmé). L'écran PRÉVIENT avant de valider, sinon la
+ * rétrogradation se découvre sur une boîte vide et se vit comme un bug.
+ *
+ * Trois choses dans cette phrase, dans cet ordre : ce qui arrive, ce qu'on
+ * garde, comment en sortir. On ne commence jamais par la perte.
+ */
+export const PHARMACY_RELOCATION_TITLE = 'Vous modifiez votre commune ou votre île';
+export const PHARMACY_RELOCATION_WARNING =
+  'Votre officine repassera en vérification par Chioni. Vous gardez tout : votre historique, vos pièces, votre équipe et les demandes déjà reçues. Le temps de la vérification, vous ne recevrez pas de nouvelle demande. Déposez une pièce justificative à jour pour accélérer. Cela vaut aussi pour une simple correction d’orthographe : Chioni ne peut pas la distinguer d’un déménagement.';
+export const PHARMACY_RELOCATION_CONFIRM = 'Modifier quand même';
+export const PHARMACY_RELOCATION_CANCEL = 'Garder ma commune actuelle';
+
+/**
+ * Le message qui suit l'enregistrement d'un changement de zone : la fiche est
+ * à jour ET l'officine est repassée en vérification. Le dire, plutôt que de
+ * laisser « Votre fiche est à jour. » au-dessus d'un bandeau d'alerte que la
+ * personne n'a rien fait pour mériter.
+ */
+export const PHARMACY_RELOCATION_SAVED =
+  'Votre nouvelle commune est enregistrée. Votre officine repasse en vérification par Chioni : vous ne recevrez pas de nouvelle demande d’ici là.';
+
+/** Pourquoi la commune n'est pas une ligne d'adresse comme les autres. */
+export const PHARMACY_ZONE_HINT =
+  'La commune décide quelles demandes vous recevez. Toute modification — même une correction d’orthographe — demande une nouvelle vérification par Chioni.';
+
+export const PHARMACY_STATUS_READONLY_HINT =
+  'C’est l’équipe Chioni qui valide ou suspend une officine — vous ne pouvez pas modifier cet état vous-même.';
+
+/* ── l'équipe de l'officine ── */
+
+export const PHARMACY_MEMBERS_TITLE = 'Mon équipe';
+export const PHARMACY_MEMBERS_SUBTITLE =
+  'Les personnes qui peuvent répondre aux demandes depuis cette officine.';
+
+export const PHARMACY_MEMBERS_NO_ROLE_HINT =
+  'Il n’y a pas de rôles dans une officine : toute personne active peut répondre aux demandes, déposer les pièces et inscrire un collègue.';
+
+export const PHARMACY_MEMBER_ADD = 'Inscrire un collègue';
+export const PHARMACY_MEMBER_ADD_TITLE = 'Inscrire un collègue';
+export const PHARMACY_MEMBER_ADD_SUBMIT = 'Inscrire';
+export const PHARMACY_MEMBER_PHONE_LABEL = 'Numéro de téléphone';
+export const PHARMACY_MEMBER_FIRST_NAME_LABEL = 'Prénom';
+export const PHARMACY_MEMBER_LAST_NAME_LABEL = 'Nom';
+
+/** Compte ombre : ne jamais promettre un mot de passe qui n'existe pas. */
+export const PHARMACY_MEMBER_SHADOW_NOTICE =
+  'Votre collègue recevra un code par SMS à sa première connexion. Aucun mot de passe n’est créé, et vous n’avez rien à lui transmettre.';
+
+export function pharmacyMemberAdded(name: string): string {
+  return `${name} fait maintenant partie de l’officine.`;
+}
+
+export function pharmacyMemberSince(iso: string): string {
+  return `Dans l’officine depuis le ${formatDate(iso)}`;
+}
+
+export const PHARMACY_MEMBER_REMOVE = 'Retirer';
+export const PHARMACY_MEMBER_REMOVE_TITLE = 'Retirer cette personne de l’officine ?';
+export const PHARMACY_MEMBER_REMOVE_CONFIRM = 'Retirer';
+
+export function pharmacyMemberRemoveMessage(name: string): string {
+  return `${name} n’aura plus accès aux demandes de cette officine. Vous pourrez l’inscrire à nouveau plus tard si besoin.`;
+}
+
+export function pharmacyMemberRemoved(name: string): string {
+  return `${name} ne fait plus partie de l’officine.`;
+}
+
+export const PHARMACY_MEMBER_INACTIVE = 'Retiré';
+
+export const PHARMACY_MEMBERS_LAST_HINT =
+  'Vous êtes seul actif dans cette officine : inscrivez un collègue avant de vous retirer, sinon plus personne ne pourra relever les demandes.';
+
+/* ── les pièces justificatives de l'officine ── */
+
+export const PHARMACY_DOCS_TITLE = 'Mes pièces justificatives';
+export const PHARMACY_DOCS_SUBTITLE =
+  'Vos documents d’officine, lus par l’équipe Chioni pour vérifier votre pharmacie.';
+
+export const PHARMACY_DOCS_PRIVACY =
+  'Ces pièces sont lues par l’équipe Chioni pour vérifier votre officine. Elles sont stockées de façon privée : aucun centre de santé et aucun patient n’y a accès.';
+
+export const PHARMACY_DOCS_EMPTY_TITLE = 'Aucune pièce déposée';
+export const PHARMACY_DOCS_EMPTY_MESSAGE =
+  'Photographiez votre licence d’officine et votre registre du commerce : c’est ce qui permet à l’équipe Chioni de valider votre pharmacie.';
+
+export const PHARMACY_DOC_UPLOAD = 'Déposer une pièce';
+export const PHARMACY_DOC_UPLOAD_SUBMIT = 'Déposer la pièce';
+export const PHARMACY_DOC_TYPE_LABEL = 'Type de pièce';
+export const PHARMACY_DOC_DOWNLOAD = 'Télécharger';
+export const PHARMACY_DOC_ARCHIVE = 'Archiver';
+export const PHARMACY_DOC_ARCHIVE_TITLE = 'Archiver cette pièce ?';
+export const PHARMACY_DOC_ARCHIVE_KEEP = 'Garder la pièce';
+export const PHARMACY_DOC_ARCHIVED = 'Archivée';
+
+export function pharmacyDocArchiveMessage(label: string): string {
+  return `« ${label} » sera signalée comme archivée. La pièce n’est pas supprimée : une décision de vérification doit rester vérifiable. Ce geste est définitif — en cas d’erreur, déposez ensuite la bonne pièce.`;
+}
+
+export function pharmacyDocDeposited(iso: string): string {
+  return `Déposée le ${formatDate(iso)}`;
+}
+
+export const PHARMACY_DOC_DEPOSITED_FLASH =
+  'Pièce déposée. L’équipe Chioni la lira lors de la vérification.';
+export const PHARMACY_DOC_DOWNLOADING = 'Téléchargement…';
+export const PHARMACY_DOC_DROPZONE = 'Photo de la pièce — appuyez ou déposez ici';
+export const PHARMACY_DOC_DROPZONE_ACTIVE = 'Déposez la photo ici';
+export const PHARMACY_DOC_DROPZONE_REPLACE = 'appuyez pour remplacer';
+export const PHARMACY_DOC_DROPZONE_SR = 'Choisir la photo de la pièce';
+
+/* ── libellés d'action partagés par le 5ᵉ espace ──
+   Le chantier i18n reprendra les autres espaces ; les écrans neufs de S9 ne
+   posent en tout cas plus de nouvelle chaîne en dur. */
+export const ACTION_CANCEL = 'Annuler';
+export const ACTION_SAVING = 'Enregistrement…';
+export const ACTION_LOADING = 'Chargement…';
+
+/* ── le back-office du réseau ── */
+
+export const PLATFORM_PHARMACIES_TITLE = 'Pharmacies';
+export const PLATFORM_PHARMACIES_SUBTITLE =
+  'Le réseau des officines. La validation est le seul levier : elle ouvre la réception des demandes.';
+
+export const PLATFORM_PHARMACY_CREATE = 'Enregistrer une officine';
+export const PLATFORM_PHARMACY_CREATE_SUBMIT = 'Enregistrer l’officine';
+
+export const PLATFORM_PHARMACIES_EMPTY_TITLE = 'Aucune officine enregistrée';
+export const PLATFORM_PHARMACIES_EMPTY_MESSAGE =
+  'Une pharmacie entre dans le réseau par la plateforme, comme un centre de santé : le self-service n’existe pas.';
+
+export const PLATFORM_PHARMACIES_FILTER_EMPTY_TITLE = 'Aucune officine ne correspond';
+export const PLATFORM_PHARMACIES_FILTER_EMPTY_MESSAGE =
+  'Essayez un autre état, une autre île, ou effacez les filtres.';
+
+export const PLATFORM_PHARMACY_COL_NAME = 'Officine';
+export const PLATFORM_PHARMACY_COL_ZONE = 'Zone';
+export const PLATFORM_PHARMACY_COL_MEMBERS = 'Équipe';
+export const PLATFORM_PHARMACY_COL_DOCS = 'Pièces';
+export const PLATFORM_PHARMACY_COL_STATUS = 'État';
+export const PLATFORM_PHARMACY_OPEN_SR = 'Ouvrir la fiche de l’officine';
+
+export const PLATFORM_PHARMACY_MEMBERS_LABEL = 'Personnes actives';
+export const PLATFORM_PHARMACY_DOCS_LABEL = 'Pièces déposées';
+export const PLATFORM_PHARMACY_REQUESTS_LABEL = 'Demandes reçues';
+
+/** Un compteur qui n'ouvre sur rien — et le dire évite qu'on le cherche. */
+export const PLATFORM_PHARMACY_REQUESTS_HINT =
+  'Un compteur, et rien de plus : le contenu des demandes — les médicaments — n’est pas lisible depuis la plateforme.';
+
+export const PLATFORM_PHARMACY_NO_MEMBER_TITLE = 'Cette officine n’a plus personne';
+export const PLATFORM_PHARMACY_NO_MEMBER_MESSAGE =
+  'Sa boîte de réception n’est plus relevée et personne ne peut s’y inscrire. Amorcez une personne pour lui rendre son espace.';
+
+export const PLATFORM_PHARMACY_MEMBER_ADD = 'Amorcer une personne';
+export const PLATFORM_PHARMACY_MEMBER_ADD_MORE = 'Ajouter une personne';
+
+/** Les pièces AVANT le bouton : valider une officine sans licence est du théâtre. */
+export const PLATFORM_PHARMACY_DOCS_TITLE = 'Pièces justificatives';
+export const PLATFORM_PHARMACY_DOCS_SUBTITLE =
+  'Déposées par l’officine — archivées comprises. À lire avant de décider.';
+export const PLATFORM_PHARMACY_DOCS_EMPTY_TITLE = 'Aucune pièce déposée';
+export const PLATFORM_PHARMACY_DOCS_EMPTY_MESSAGE =
+  'L’officine dépose ses pièces depuis son espace. Tant qu’elle n’a rien déposé, il n’y a rien à vérifier ici.';
+
+export const PLATFORM_PHARMACY_DECISION_TITLE = 'Vérification de l’officine';
+export const PLATFORM_PHARMACY_DECISION_SUBTITLE =
+  'Le seul levier de la plateforme sur cette officine : il ouvre ou ferme la réception des demandes.';
+
+export const PLATFORM_PHARMACY_VALIDATE = 'Valider l’officine';
+export const PLATFORM_PHARMACY_SUSPEND = 'Suspendre l’officine';
+export const PLATFORM_PHARMACY_REVIEW = 'Remettre en examen';
+
+export const PLATFORM_PHARMACY_VALIDATE_NOTICE =
+  'L’officine entrera dans l’annuaire et recevra les recherches de médicaments de sa commune. Vérifiez ses pièces justificatives avant de valider.';
+
+/** Ce qu'une suspension ferme, et RIEN de plus. */
+export const PLATFORM_PHARMACY_SUSPEND_WARNING =
+  'L’officine gardera l’accès à son historique et pourra continuer à déposer ses pièces. Ce qui s’arrête : elle ne recevra plus de nouvelle demande, et ne pourra plus répondre à celles en cours.';
+
+export const PLATFORM_PHARMACY_REVIEW_NOTICE =
+  'L’officine repassera en attente de validation : elle ne recevra plus de nouvelle demande jusqu’à votre confirmation. Ce n’est pas une sanction — utile après un déménagement ou un doute sur une pièce.';
+
+export const PLATFORM_PHARMACY_REASON_HELP =
+  'Ce motif est lu par l’officine elle-même, dans son espace. Écrivez ce qu’elle doit corriger.';
+
+export const PLATFORM_PHARMACY_SIMILAR_TITLE = 'Officines déjà enregistrées';
+export const PLATFORM_PHARMACY_SIMILAR_HINT =
+  'Rien ne vous empêche d’enregistrer celle-ci : deux officines peuvent porter le même nom. Vérifiez simplement que ce n’est pas un doublon.';
+
+export const PLATFORM_PHARMACY_MEMBER_PHONE_LABEL = 'Téléphone de la première personne';
+
+/** Séparation des pouvoirs : celui qui valide ne valide pas la sienne. */
+export const PLATFORM_PHARMACY_SEPARATION_HINT =
+  'Un membre de l’équipe Chioni ne peut pas être inscrit dans une officine : celui qui valide le réseau n’y a pas de pharmacie.';
+
+export function platformPharmacyCreated(name: string): string {
+  return `« ${name} » est enregistrée. Elle est en attente de validation et ne reçoit pas encore de demandes.`;
+}
+
+export function platformPharmacyStatusChanged(status: PharmacyStatus): string {
+  return `L’officine est maintenant « ${PHARMACY_STATUS_LABELS[status]} ».`;
+}
+
+export function platformPharmacyMemberAdded(name: string): string {
+  return `${name} peut maintenant relever les demandes de cette officine.`;
+}

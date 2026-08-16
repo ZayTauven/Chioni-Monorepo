@@ -27,6 +27,12 @@ urlpatterns = [
     # Chioni elle-même (la 4ᵉ casquette se gère par API auditée depuis que
     # l'admin Django est refermé).
     path("platform/", include("apps.support.platform_urls")),
+    # S9 (ADR 0022) — enregistrement et validation des officines du réseau.
+    path("platform/", include("apps.pharmacy.platform_urls")),
+    # S9 — LE 5ᵉ ESPACE : la pharmacie elle-même, acteur HORS tenant. Chaque
+    # route de ce préfixe DOIT déclarer IsPharmacyMember (garde-fou
+    # structurel testé, patron des rails `/guardian/` et `/platform/`).
+    path("pharmacy/", include("apps.pharmacy.space_urls")),
     path("", include("apps.patients.urls")),
     path("", include("apps.medical.urls")),
     path("", include("apps.scheduling.urls")),
@@ -48,4 +54,10 @@ urlpatterns = [
     path("", include("apps.billing.urls")),
     # S5 lot 3 — `centers/{c}/support/tickets/` (tout staff actif).
     path("", include("apps.support.urls")),
+    # S9 (ADR 0022) — le réseau des pharmacies côté CENTRE (annuaire, envoi
+    # d'une recherche depuis une ordonnance) et côté PATIENT (les réponses,
+    # dans son carnet). Aucune route `guardian/` : la disponibilité d'un
+    # traitement est une information clinique, et le verrou tuteur de S3
+    # tient tel quel.
+    path("", include("apps.pharmacy.urls")),
 ]

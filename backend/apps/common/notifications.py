@@ -141,6 +141,21 @@ SMS_SUBSCRIPTION_INVOICE_OVERDUE = (
     "contactez-nous."
 )
 
+#: Événement 10 — une demande de disponibilité arrive dans une officine
+#: (S9, ADR 0022 décision 9). Le destinataire n'est pas un patient, mais la
+#: donnée, elle, parle de lui : **aucun médicament n'entre dans ce texte**,
+#: et pas davantage le nombre de lignes (« 6 médicaments » dit déjà quelque
+#: chose d'une ordonnance). Un SMS atterrit sur un téléphone partagé, prêté
+#: ou perdu — la règle de contenu de l'ADR 0012 vaut ici sans exception.
+#:
+#: Le centre demandeur n'y est pas non plus, pour la même raison qu'il n'est
+#: pas dans l'application : l'annuaire des pharmacies est public, l'activité
+#: d'un centre ne l'est pas (ADR 0022 décision 2).
+SMS_PHARMACY_AVAILABILITY_REQUEST = (
+    "Chioni : vous avez une nouvelle demande de disponibilité. "
+    "Ouvrez Chioni pour y répondre."
+)
+
 
 # ---------------------------------------------------------------------------
 # Plumbing
@@ -374,3 +389,22 @@ def notify_subscription_invoice_reminder(invoice, *, balance_kmf, first):
     )
     for phone in center_director_phones(invoice.center_id):
         _schedule("relance_abonnement", phone, message)
+
+
+def notify_pharmacy_of_availability_request(pharmacy):
+    """Événement 10 — une demande arrive dans une officine (S9, ADR 0022).
+
+    Appelé par ``apps.pharmacy.services.create_availability_request`` DANS
+    la transaction qui pose la ligne de diffusion : le ``on_commit`` de
+    :func:`_schedule` garantit qu'aucun SMS ne part si l'envoi est annulé.
+
+    Destinataire : le numéro DÉCLARÉ DE L'OFFICINE, pas les téléphones
+    personnels de ses membres. C'est le numéro professionnel, celui qui est
+    déjà public dans l'annuaire du réseau, et un seul SMS par pharmacie
+    plutôt qu'un par personne — moins intrusif et moins coûteux. Une
+    officine sans téléphone est ignorée en silence : elle verra la demande
+    en ouvrant l'application (contrat de :func:`_schedule`).
+    """
+    _schedule(
+        "demande_disponibilite", pharmacy.phone, SMS_PHARMACY_AVAILABILITY_REQUEST
+    )

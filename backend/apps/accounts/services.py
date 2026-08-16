@@ -625,9 +625,12 @@ def anonymize_user(*, actor, user):
        **in both directions** (as a guardian AND, when they own a patient
        profile, as a protégé): ``GuardianLink.revoke()`` cascades on the
        active consents (ADR 0004), so no scope survives the account ;
-    2. deactivates their active staff memberships (the tenant must not
-       keep a phantom member it can no longer even call) and their
-       platform-operator row ;
+    2. deactivates EVERY hat the person wears — staff memberships (the
+       tenant must not keep a phantom member it can no longer even call),
+       the platform-operator row, and the pharmacy memberships of the
+       network (revue adversariale S9: the fifth hat was the one that
+       stayed open, and a ghost « active member » made an officine look
+       staffed while nobody could ever read its inbox again) ;
     3. anonymises the patient profile (identity + the six extended S3
        fields) and its insurance lines, and the guardian profile ;
     4. purges the OTP codes of the old phone — that table stores the
@@ -704,6 +707,27 @@ def anonymize_user(*, actor, user):
     if operator is not None:
         operator.is_active = False
         operator.save(update_fields=["is_active", "updated_at"])
+    # 2 bis — la CINQUIÈME casquette (S9, ADR 0022), oubliée par S9 et
+    # ajoutée par la revue adversariale. Deux raisons, dans cet ordre :
+    #
+    # 1. le compteur ``member_active_count`` que Chioni surveille pour
+    #    savoir si une boîte de réception est encore relevée comptait un
+    #    fantôme : la garde « jamais la dernière personne » se satisfaisait
+    #    de lui, si bien que le DERNIER membre réel pouvait se retirer sans
+    #    rien casser et laisser l'officine muette 48 h par demande, avec un
+    #    back-office affichant « 1 membre actif » ;
+    # 2. la promesse du service — « the hats close » — était vraie de
+    #    quatre casquettes sur cinq.
+    #
+    # Écriture DIRECTE et non ``deactivate_pharmacy_member`` : ce service
+    # porte la garde « jamais la dernière personne », qui ferait ÉCHOUER
+    # l'effacement d'une pharmacienne seule dans son officine. Leçon S7 —
+    # aucune contrainte d'un module métier ne doit pouvoir mettre en échec
+    # un droit RGPD (l'officine se réamorce par
+    # ``POST /platform/pharmacies/{pk}/members/``, chemin de secours prévu).
+    pharmacy_memberships_deactivated = user.pharmacy_memberships.filter(
+        is_active=True
+    ).update(is_active=False, updated_at=timezone.now())
 
     # 3 — the profiles. The carnet itself is NOT touched (ADR 0007).
     insurances_anonymized = 0
@@ -779,6 +803,7 @@ def anonymize_user(*, actor, user):
         links_revoked=links_revoked,
         memberships_deactivated=memberships_deactivated,
         insurances_anonymized=insurances_anonymized,
+        pharmacy_memberships_deactivated=pharmacy_memberships_deactivated,
         otp_codes_purged=otp_purged,
         leave_documents_purged=leave_documents_purged,
         replay=already_anonymized,
@@ -808,6 +833,20 @@ DIRECTOR_AS_OPERATOR_MESSAGE = (
     "tenant. Utilisez un compte distinct pour l'équipe Chioni."
 )
 
+#: Le MÊME refus, côté réseau des pharmacies (revue adversariale S9). S9
+#: n'avait posé que la porte d'entrée
+#: (``pharmacy.services._refuse_platform_operator_as_pharmacy_member``) :
+#: la sortie — inscrire d'abord la personne dans une officine, lui donner
+#: la 4ᵉ casquette ensuite — laissait atteindre exactement l'état que
+#: l'ADR 0022 décision 9 existe pour interdire, *celui qui valide les
+#: pharmacies ne doit pas valider la sienne*.
+PHARMACY_MEMBER_AS_OPERATOR_MESSAGE = (
+    "Ce numéro est celui d'un membre d'une pharmacie du réseau : une "
+    "casquette d'exploitant Chioni ne s'ajoute pas à une casquette "
+    "d'officine — c'est l'exploitant qui valide les pharmacies. Utilisez "
+    "un compte distinct pour l'équipe Chioni."
+)
+
 LAST_PLATFORM_ADMIN_MESSAGE = (
     "Refusé : ce compte est le dernier administrateur actif de la "
     "plateforme Chioni. Nommez un autre administrateur avant de le "
@@ -817,7 +856,7 @@ LAST_PLATFORM_ADMIN_MESSAGE = (
 
 
 def _refuse_center_staff_as_operator(user):
-    """Separation of duties, the MIRROR of the S4 guard (revue guardian).
+    """Separation of duties, the MIRROR of the S4/S9 guards (revue guardian).
 
     ``centers.services._refuse_platform_operator_as_director`` closes the
     escalation « exploitant → directeur ». Without this one, the exact same
@@ -843,10 +882,26 @@ def _refuse_center_staff_as_operator(user):
     serialisation point: it is the pivot both doors resolve the person by,
     and it is already the OUTERMOST level of the product's lock hierarchy
     (utilisateur → intent → demande → facture → centre, correctif S4).
+
+    **S9 (revue adversariale) — la garde regarde DEUX tables, pas une.**
+    Le réseau des pharmacies a introduit une 5ᵉ casquette et sa propre
+    garde de séparation des pouvoirs, mais dans un seul sens : elle refuse
+    d'inscrire un exploitant ACTIF dans une officine. La sortie restait
+    ouverte, et c'est la faille de S5 rejouée à l'identique — inscrire la
+    personne dans l'officine d'abord, lui donner la 4ᵉ casquette ensuite,
+    et elle valide sa propre pharmacie, suspend celle d'en face et lit les
+    pièces de tout le réseau. Une garde qui ne tient que dans un sens n'est
+    pas une garde ; celle-ci en tient maintenant deux, sous le MÊME verrou
+    de ligne ``User`` (le pivot par lequel les trois portes résolvent la
+    personne).
     """
+    from apps.pharmacy.models import PharmacyMembership
+
     get_user_model().objects.select_for_update().get(pk=user.pk)
     if StaffMembership.objects.filter(user=user, is_active=True).exists():
         raise ValidationError(DIRECTOR_AS_OPERATOR_MESSAGE)
+    if PharmacyMembership.objects.filter(user=user, is_active=True).exists():
+        raise ValidationError(PHARMACY_MEMBER_AS_OPERATOR_MESSAGE)
 
 
 @transaction.atomic

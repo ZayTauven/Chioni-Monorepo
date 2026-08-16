@@ -122,6 +122,50 @@ export function useAsync<T>(fn: () => Promise<T>, deps: readonly unknown[]): Asy
   const fnRef = useRef(fn);
   fnRef.current = fn;
 
+  /*
+   * ── La fenêtre d'affichage, fermée à la RACINE (revue guardian S9) ──
+   *
+   * `data` décrit ce que les DEPS demandaient : le centre actif, l'officine
+   * active, l'id de la route, la date. Quand une dep change, la donnée en
+   * mémoire ne décrit plus ce que l'écran affiche — mais l'effet ci-dessous
+   * ne s'exécute qu'APRÈS la peinture, et il ne remplace `data` qu'au retour
+   * du réseau. Entre les deux, tout écran qui garde sa donnée pendant un
+   * rechargement (`loading && !data ? squelette : …`, patron des écrans de
+   * détail) peint l'objet PRÉCÉDENT sous le nouveau nom — pendant des
+   * centaines de millisecondes sur une connexion comorienne.
+   *
+   * C'est le défaut relevé aux revues S5, S6, S7 puis S9, corrigé jusqu'ici
+   * écran par écran. Il est fermé ici pour toutes : dès le rendu où les deps
+   * changent, `data` et `error` tombent et `loading` remonte — l'écran montre
+   * son squelette, jamais la donnée d'un autre centre, d'une autre officine
+   * ou d'une autre date.
+   *
+   * `tick` (`reload()`) est délibérément HORS de la comparaison : recharger
+   * après une écriture doit garder la liste à l'écran, sans clignotement.
+   *
+   * Patron React documenté (« ajuster l'état quand les props changent ») :
+   * un `setState` pendant le rendu du MÊME composant, garanti conditionnel,
+   * que React traite par un re-rendu immédiat avant de peindre les enfants.
+   * La comparaison est faite ÉLÉMENT PAR ÉLÉMENT (le tableau littéral est
+   * recréé à chaque rendu) : elle converge donc au rendu suivant.
+   *
+   * **Contrainte d'appel, inchangée mais désormais sanctionnée deux fois** :
+   * les deps doivent être des valeurs STABLES (primitives, ou références qui
+   * ne changent qu'à l'arrivée d'une donnée). Un objet littéral en dep
+   * bouclait déjà en refetch infini via l'effet ; il bouclerait maintenant en
+   * rendu — la faute est la même, elle se voit simplement plus tôt.
+   */
+  const [seenDeps, setSeenDeps] = useState<readonly unknown[]>(deps);
+  if (
+    seenDeps.length !== deps.length ||
+    deps.some((dep, index) => !Object.is(dep, seenDeps[index]))
+  ) {
+    setSeenDeps(deps);
+    setData(null);
+    setError(null);
+    setLoading(true);
+  }
+
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
@@ -156,6 +200,34 @@ export function useDebounced<T>(value: T, delayMs = 400): T {
     return () => window.clearTimeout(id);
   }, [value, delayMs]);
   return debounced;
+}
+
+/**
+ * Un état OPTIMISTE qui meurt avec la portée qui l'a produit (guardian S9).
+ *
+ * `useAsync` ferme désormais la fenêtre pour la donnée VENUE DU SERVEUR ;
+ * restait l'autre moitié du problème, celle que les revues S5/S6/S7 ont
+ * corrigée écran par écran : la ligne fraîche gardée après une écriture
+ * (`patched`) et le message de succès (`flash`). Ils ne décrivent QUE le
+ * couple (tenant actif, id de route) sous lequel ils ont été obtenus — et le
+ * sélecteur de centre ou d'officine, lui, ne quitte pas la page.
+ *
+ * La portée est vérifiée **au rendu**, pas dans un effet : un effet laisserait
+ * une frame où l'objet précédent s'affiche sous le nouveau nom, et sur le
+ * chemin d'une écriture cette frame suffit à cliquer.
+ *
+ * `scope` : toute chaîne qui identifie la portée, p. ex. `` `${centerId}:${id}` ``.
+ */
+export function useScopedState<T>(
+  scope: string,
+): [T | null, (value: T | null) => void] {
+  const [held, setHeld] = useState<{ scope: string; value: T } | null>(null);
+  const value = held !== null && held.scope === scope ? held.value : null;
+  const set = useCallback(
+    (next: T | null) => setHeld(next === null ? null : { scope, value: next }),
+    [scope],
+  );
+  return [value, set];
 }
 
 /* ── patient-name cache (staff serializers carry patient ids only) ── */
