@@ -10,6 +10,7 @@ import type {
   Paginated,
   PatientAppointment,
   PatientCashReceipt,
+  PatientContactPreferences,
   PatientDocumentMine,
   PatientInsurance,
   PatientMe,
@@ -53,6 +54,32 @@ export function createPatientMe(payload: PatientMePayload): Promise<PatientMe> {
 
 export function updatePatientMe(payload: Partial<PatientMePayload>): Promise<PatientMe> {
   return apiFetch('/patients/me/', { method: 'PATCH', body: payload });
+}
+
+/* ── S10 — mes SMS (ADR 0023 décision 1) ── */
+
+/**
+ * Ce que j'accepte de recevoir. Forme **complète et constante** : le backend
+ * rend toujours les deux clés (défauts `true`) même si aucune ligne n'existe
+ * — ne jamais traiter l'absence comme une erreur ni afficher « non
+ * configuré ».
+ *
+ * Ce que ce réglage ne coupe JAMAIS, et que l'écran doit dire : le code de
+ * connexion, « un proche demande à pouvoir payer vos soins » (porte de
+ * confirmation du titulaire) et « votre soin a été payé ».
+ */
+export function getMyContactPreferences(): Promise<PatientContactPreferences> {
+  return apiFetch('/patients/me/contact-preferences/');
+}
+
+/** PATCH partiel : un seul canal à la fois, comme l'interrupteur qu'on bascule. */
+export function updateMyContactPreferences(
+  preferences: Partial<Omit<PatientContactPreferences, 'updated_at'>>,
+): Promise<PatientContactPreferences> {
+  return apiFetch('/patients/me/contact-preferences/', {
+    method: 'PATCH',
+    body: preferences,
+  });
 }
 
 /* ── guardianship (the ethical core) ── */

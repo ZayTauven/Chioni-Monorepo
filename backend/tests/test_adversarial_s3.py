@@ -198,6 +198,8 @@ class TestGuardianLockS3:
         qu'accidentel : marqueurs ``equipment``/``equipments`` et module
         ``equipment`` ajoutés ici.
         """
+        from apps.accounting import urls as accounting_urls
+        from apps.crm import urls as crm_urls
         from apps.equipment import urls as equipment_urls
         from apps.hrm import urls as hrm_urls
         from apps.inpatient import urls as inpatient_urls
@@ -210,6 +212,8 @@ class TestGuardianLockS3:
             + [str(u.pattern) for u in inpatient_urls.urlpatterns]
             + [str(u.pattern) for u in hrm_urls.urlpatterns]
             + [str(u.pattern) for u in equipment_urls.urlpatterns]
+            + [str(u.pattern) for u in crm_urls.urlpatterns]
+            + [str(u.pattern) for u in accounting_urls.urlpatterns]
         )
         clinical_markers = (
             "medical-file", "vital-signs", "documents", "insurances",
@@ -220,6 +224,13 @@ class TestGuardianLockS3:
             "departments", "job-titles", "holidays",
             # S8 — équipements
             "equipment", "equipments",
+            # S10 — relances et export comptable. Ni clinique ni tuteur :
+            # une file de travail dit QUI RAPPELER et une pièce comptable
+            # dit ce qui est entré en caisse. Le tuteur reçoit son SMS de
+            # relance ; il ne lit jamais la file d'un centre, et encore
+            # moins ses mouvements de caisse.
+            "crm", "contacts", "unpaid-followups", "missed-appointments",
+            "accounting", "exports",
         )
         for route in all_routes:
             if route.startswith("guardian/"):
@@ -227,7 +238,9 @@ class TestGuardianLockS3:
         # Et les trois modules de sprint n'exposent AUCUNE route tuteur, quel
         # que soit son nom : l'absence est vérifiée de front, pas seulement
         # par l'absence de marqueur.
-        for module in (inpatient_urls, hrm_urls, equipment_urls):
+        for module in (
+            inpatient_urls, hrm_urls, equipment_urls, crm_urls, accounting_urls
+        ):
             assert not [
                 str(u.pattern)
                 for u in module.urlpatterns
@@ -237,7 +250,7 @@ class TestGuardianLockS3:
         # back-office plateforme. Le dossier RH d'une personne existe DANS
         # un centre, jamais au-dessus (ADR 0020, invariants 1 et 5).
         # S8 : même clôture pour le parc — il appartient au centre.
-        for module in (hrm_urls, equipment_urls):
+        for module in (hrm_urls, equipment_urls, crm_urls, accounting_urls):
             for pattern in module.urlpatterns:
                 route = str(pattern.pattern)
                 assert route.startswith("centers/"), route

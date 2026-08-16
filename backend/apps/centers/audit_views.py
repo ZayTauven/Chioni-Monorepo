@@ -168,6 +168,22 @@ DIRECTOR_JOURNAL_ACTIONS = frozenset(
         AuditAction.PAYMENT_RECORDED,
         AuditAction.CASH_PAYMENT_RECORDED,
         AuditAction.CASH_PAYMENT_REVERSED,
+        # …et la sortie de cette monnaie hors de l'application (S10 lot 3,
+        # ADR 0023 décisions transverses). Ajout CONSCIENT : un export
+        # comptable est l'argent de SON centre qui part sur une clé USB —
+        # le directeur doit savoir qui l'a sorti, quand, et sur quelle
+        # période. Le payload ne porte que des références, la période et le
+        # NUMÉRO de la pièce : **jamais une ligne, jamais un montant** (les
+        # recopier ferait du journal immuable un second registre financier,
+        # non réconcilié).
+        #
+        # Les actions CRM (S10 lot 2) n'y entrent PAS, et c'est le pendant
+        # exact : un journal qui listerait « le centre a relancé le patient
+        # #42 » serait un registre de comportement de paiement — même
+        # famille que l'exclusion des actions cliniques et de
+        # ``availability.*`` (S9). Elles ne portent d'ailleurs aucune
+        # entrée d'audit du tout : ``ContactLog`` EST leur trace.
+        AuditAction.ACCOUNTING_EXPORT_GENERATED,
         # Disagreements about money.
         AuditAction.DISPUTE_OPENED,
         AuditAction.DISPUTE_RESOLVED,
@@ -249,6 +265,12 @@ DIRECTOR_JOURNAL_EXCLUDED = frozenset(
         AuditAction.PATIENT_UPDATED,
         AuditAction.PATIENT_INSURANCE_CREATED,
         AuditAction.PATIENT_INSURANCE_UPDATED,
+        # Préférences de contact (S10 lot 1) — même famille que
+        # ``patient_profile.updated``, et une raison de plus : un journal
+        # daté « telle personne a coupé ses rappels » est un signal sur
+        # elle, pas sur l'exploitation du centre. Le guichet lit le réglage
+        # lui-même sur la fiche du patient, qui est sa propre porte.
+        AuditAction.PATIENT_CONTACT_PREFERENCES_UPDATED,
         # Réseau des pharmacies (S9, ADR 0022) — sphère CLINIQUE, malgré des
         # payloads qui ne portent que des compteurs. Une demande de
         # disponibilité naît d'une ordonnance : « le dossier de ce patient a

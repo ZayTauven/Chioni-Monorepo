@@ -75,6 +75,21 @@ const PATHS: Record<string, string> = {
   // l'annuaire rend est une ADRESSE (île, commune, téléphone) et jamais une
   // position : il n'y a ni carte, ni coordonnée, ni distance dans ce produit
   // (ADR 0022 décision 4). Le repère dit « où », la croix aurait promis un plan.
+  // S10 (ADR 0023) — deux transcriptions Tabler outline, même contrat de trait.
+  //
+  // `phone-call` : le téléphone, et c'est LA décision de l'icône. Le module
+  // s'appelle « relances » mais Chioni n'envoie jamais de message de dette à
+  // un patient : la file existe pour qu'un humain décroche. Une enveloppe ou
+  // une bulle de message aurait promis un envoi qui n'existe pas et qui
+  // n'existera pas (ADR 0023 décision 3).
+  'phone-call':
+    '<path d="M5 4h4l2 5l-2.5 1.5a11 11 0 0 0 5 5l1.5 -2.5l5 2v4a2 2 0 0 1 -2 2a16 16 0 0 1 -15 -15a2 2 0 0 1 2 -2"/><path d="M15 7a2 2 0 0 1 2 2"/><path d="M15 3a6 6 0 0 1 6 6"/>',
+  // `calculator` : la comptabilité telle qu'un directeur comorien la
+  // reconnaît. Une flèche d'export aurait dit « télécharger » — or le geste
+  // premier de l'écran est de GÉNÉRER une pièce datée, le téléchargement
+  // n'en est que la suite.
+  calculator:
+    '<path d="M4 3m0 2a2 2 0 0 1 2 -2h12a2 2 0 0 1 2 2v14a2 2 0 0 1 -2 2h-12a2 2 0 0 1 -2 -2z"/><path d="M8 7m0 1a1 1 0 0 1 1 -1h6a1 1 0 0 1 1 1v1a1 1 0 0 1 -1 1h-6a1 1 0 0 1 -1 -1z"/><path d="M8 14l0 .01"/><path d="M12 14l0 .01"/><path d="M16 14l0 .01"/><path d="M8 17l0 .01"/><path d="M12 17l0 .01"/><path d="M16 17l0 .01"/>',
   'map-pin-pharmacy':
     '<path d="M9 11a3 3 0 1 0 6 0a3 3 0 0 0 -6 0"/><path d="M17.657 16.657l-4.243 4.243a2 2 0 0 1 -2.827 0l-4.244 -4.243a8 8 0 1 1 11.314 0z"/>',
 };

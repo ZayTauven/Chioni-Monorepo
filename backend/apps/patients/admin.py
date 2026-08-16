@@ -23,7 +23,32 @@ from django.contrib import admin
 
 from apps.common.admin import ReadOnlyAdminMixin
 
-from .models import GuardianLink, GuardianProfile, PatientInsurance, PatientProfile
+from .models import (
+    GuardianLink,
+    GuardianProfile,
+    PatientContactPreference,
+    PatientInsurance,
+    PatientProfile,
+)
+
+
+@admin.register(PatientContactPreference)
+class PatientContactPreferenceAdmin(ReadOnlyAdminMixin, admin.ModelAdmin):
+    """Ce que la personne accepte de recevoir — read-only (S10, ADR 0023).
+
+    C'est un REFUS : le modifier ici rouvrirait un canal que quelqu'un a
+    fermé, sans audit et sans que personne ne le lui dise. La porte du
+    produit est le réglage de son espace (ou le guichet pour un profil non
+    revendiqué), et elle est auditée.
+    """
+
+    list_display = (
+        "patient", "appointment_reminders", "missed_appointment_followup",
+        "updated_at",
+    )
+    list_filter = ("appointment_reminders", "missed_appointment_followup")
+    search_fields = ("patient__last_name", "patient__first_name")
+    autocomplete_fields = ("patient", "updated_by")
 
 
 @admin.register(PatientInsurance)

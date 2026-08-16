@@ -229,7 +229,16 @@ export type AuditAction =
   | 'support_ticket.opened'
   | 'support_ticket.status_changed'
   | 'support_ticket.message_posted'
-  | 'support_ticket.attachment_uploaded';
+  | 'support_ticket.attachment_uploaded'
+  /* S10 (ADR 0023 décisions transverses) — SEULE action du sprint dans le
+     journal : un export comptable est l'argent de SON centre qui sort de
+     l'application, le directeur doit savoir qui l'a sorti, quand, et sur
+     quelle période. Le payload porte la période, le numéro et un compte de
+     lignes — jamais une ligne, jamais un montant. Les actions CRM en sont
+     exclues : « le centre a relancé le patient #42 » serait un registre de
+     comportement de paiement, même famille que l'exclusion de
+     `availability.*` (S9). */
+  | 'accounting.export_generated';
 
 /* ── /auth/me/ — router of the 3 spaces ── */
 
@@ -260,6 +269,15 @@ export interface GuardianProfile {
   id: number;
   country_of_residence: string;
   preferred_currency: Currency;
+  /**
+   * S10 (ADR 0023 décision 1) — la porte de sortie du tuteur, et elle ne
+   * couvre QUE les relances d'une facture impayée. La notification INITIALE
+   * d'une demande de paiement et le reçu restent inconditionnels : le tuteur
+   * est venu chercher ce service, ce n'est pas une sollicitation. L'écran
+   * doit le dire, sinon couper les relances se lit « on ne me préviendra
+   * plus de rien ».
+   */
+  payment_reminders: boolean;
   created_at?: string;
 }
 
@@ -2059,4 +2077,191 @@ export interface PlatformPharmacy {
 /** La création rend l'officine ET sa première personne, en un appel. */
 export interface PlatformPharmacyCreated extends PlatformPharmacy {
   member: PharmacyMember;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   S10 (ADR 0023) — CRM santé & comptabilité
+   ═══════════════════════════════════════════════════════════════════════════
+
+   Deux objets qui n'ont rien à voir l'un avec l'autre, et une porte de sortie
+   qui les précède tous les deux (décision 1 : l'opt-out est construit AVANT
+   les canaux).
+
+   Ce qu'on ne trouvera PAS dans ces types, et ce sont des décisions :
+   aucun champ de texte libre (une note d'appel finit par contenir du
+   clinique, et ce module n'est gardé par aucun rôle clinique — décision 3),
+   aucun téléphone de tuteur (un booléen dit qu'un proche recevra la relance,
+   la file de travail n'est pas un annuaire moissonnable), aucun nom ni
+   identifiant de patient dans une pièce comptable.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/** Les deux SEULS motifs de contact, fermés côté backend. */
+export type ContactKind = 'relance_impaye' | 'reprise_contact';
+
+/**
+ * Par où le contact est passé. `sms` est le canal de l'AUTOMATE : il est lu
+ * (une trace existante peut le porter) mais jamais écrit — aucun écran de
+ * Chioni ne compose de message, et le backend refuse `sms` en 400.
+ */
+export type ContactChannel = 'sms' | 'appel' | 'guichet';
+
+/** Les canaux qu'un humain journalise — la liste que l'UI propose. */
+export type HumanContactChannel = Exclude<ContactChannel, 'sms'>;
+
+/** La FAMILLE du destinataire, jamais son identité. */
+export type ContactRecipient = 'patient' | 'tuteur';
+
+/** Issues fermées d'un contact humain — la parade au texte libre. */
+export type ContactOutcome =
+  | 'joint'
+  | 'sans_reponse'
+  | 'promesse_de_reglement'
+  | 'a_rappeler';
+
+/** Tri serveur de la file « à relancer ». Valeur inconnue → 400 par champ. */
+export type UnpaidFollowupOrdering = '-age' | 'age' | '-balance' | 'balance';
+
+/**
+ * Une ligne de la file « à relancer » (rôles BILLING).
+ *
+ * `guardian_reachable` est un BOOLÉEN honnête par construction : `false`
+ * quand aucun proche n'a de partage vivant, mais aussi quand la demande est
+ * en brouillon (jamais envoyée) ou en litige (revue guardian S10). Il ne dit
+ * pas l'espoir, il dit ce qui partira — et un `false` n'est pas une alerte :
+ * c'est un dossier que le guichet traitera au téléphone.
+ */
+export interface UnpaidFollowup {
+  id: number;
+  patient: number;
+  patient_name: string;
+  /** Masqué PAR LE BACKEND (« +269 ••• ••11 ») — affiché tel quel. */
+  patient_phone_masked: string;
+  total_kmf: string;
+  paid_kmf: string;
+  balance_kmf: string;
+  age_days: number;
+  created_at: string;
+  /** Relances automatiques déjà parties vers un proche, pour CETTE facture. */
+  reminders_sent: number;
+  /** La cadence est épuisée : plus AUCUN message ne partira tout seul. */
+  reminders_exhausted: boolean;
+  last_contact_at: string | null;
+  last_outcome: ContactOutcome | '';
+  guardian_reachable: boolean;
+}
+
+/** Une ligne de la file « à recontacter » (tout staff actif). */
+export interface MissedAppointmentFollowup {
+  id: number;
+  patient: number;
+  patient_name: string;
+  patient_phone_masked: string;
+  scheduled_at: string;
+  contacted_at: string | null;
+  last_outcome: ContactOutcome | '';
+  /** La personne a DÉJÀ repris rendez-vous : il n'y a plus rien à faire. */
+  rebooked: boolean;
+}
+
+/** Une trace de contact rendue au staff — références et codes fermés. */
+export interface ContactLogEntry {
+  id: number;
+  patient: number;
+  kind: ContactKind;
+  channel: ContactChannel;
+  recipient: ContactRecipient;
+  invoice: number | null;
+  appointment: number | null;
+  outcome: ContactOutcome | null;
+  /** Id nu ; `null` se lit « l'automate ». */
+  created_by: number | null;
+  created_at: string;
+}
+
+/* ── export comptable (décisions 6 et 7) ── */
+
+/** Un mouvement, jamais un solde. */
+export type AccountingMovementType = 'encaissement' | 'contre_passation';
+
+/**
+ * Une ligne du snapshot FIGÉ.
+ *
+ * `montant_kmf` d'une `contre_passation` est NÉGATIF : la ligne porte son
+ * signe pour qu'un tableur retrouve le net en sommant la colonne. Ne jamais
+ * la réafficher en valeur absolue, ni la peindre en rouge d'erreur — c'est
+ * une correction, pas un incident.
+ *
+ * Une contre-passation apparaît à SA date, avec la référence et la date de
+ * l'encaissement d'origine : elle n'est jamais soustraite en silence d'un
+ * jour antérieur (décision 7 — ce qui rend la pièce stable là où
+ * `stats/finances` reste une photo avec recul).
+ */
+export interface AccountingExportLine {
+  date: string;
+  type: AccountingMovementType;
+  reference: string;
+  montant_kmf: string;
+  methode: CashMethod;
+  operateur: MobileMoneyOperator | '';
+  facture: number | null;
+  recu: string;
+  reference_origine: string;
+  date_origine: string;
+}
+
+/** L'en-tête d'une pièce — sans le snapshot (volumétrie). */
+export interface AccountingExport {
+  id: number;
+  /** Série « E- » par centre : « E-000004 ». */
+  number: string;
+  sequence_number: number;
+  period_start: string;
+  period_end: string;
+  total_collected_kmf: string;
+  /** POSITIF (le montant contre-passé) — `net = collected − reversed`. */
+  total_reversed_kmf: string;
+  net_kmf: string;
+  line_count: number;
+  /** Id nu : la résolution du nom est la porte du directeur, pas celle-ci. */
+  generated_by: number | null;
+  created_at: string;
+}
+
+export interface AccountingExportDetail extends AccountingExport {
+  lines: AccountingExportLine[];
+}
+
+/**
+ * L'annonce d'un export antérieur recouvrant la période demandée.
+ *
+ * **Ce n'est pas une erreur** : rien ne se ferme derrière un export (arbitrage
+ * PO n° 3), un mois peut être exporté deux fois. L'annoncer calmement évite
+ * seulement qu'un comptable saisisse deux fois les mêmes mouvements.
+ */
+export interface PreviousExport {
+  id: number;
+  number: string;
+  period_start: string;
+  period_end: string;
+  created_at: string;
+}
+
+export interface AccountingExportCreated extends AccountingExportDetail {
+  previous_export: PreviousExport | null;
+}
+
+/* ── préférences de contact (décision 1) ── */
+
+/**
+ * Ce que la personne accepte de recevoir — forme COMPLÈTE et CONSTANTE.
+ *
+ * Le backend rend toujours les deux clés, même si aucune ligne n'existe
+ * (défauts `true`) : ne jamais traiter l'absence comme une erreur, ni
+ * afficher un état « non configuré ». `updated_at` vaut `null` tant que rien
+ * n'a été exprimé — c'est la seule différence, et elle est honnête.
+ */
+export interface PatientContactPreferences {
+  appointment_reminders: boolean;
+  missed_appointment_followup: boolean;
+  updated_at: string | null;
 }

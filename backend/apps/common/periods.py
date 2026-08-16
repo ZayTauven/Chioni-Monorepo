@@ -62,13 +62,31 @@ def parse_period(request):
             from_day = to_day - timedelta(days=DEFAULT_PERIOD_DAYS - 1)
         except OverflowError:
             raise DrfValidationError({"to": ["Date hors limites."]})
+    start, end = day_bounds(from_day, to_day)
+    return from_day, to_day, start, end
+
+
+def day_bounds(from_day, to_day, *, from_field="from", to_field="to"):
+    """``(start, end)`` — les bornes aware d'une période de jours locaux.
+
+    Extrait de :func:`parse_period` en S10 (ADR 0023 lot 3) : l'export
+    comptable reçoit ses bornes dans le CORPS d'un POST, pas en query
+    params, mais il doit obéir **exactement** au même contrat — ordre des
+    dates, longueur maximale, bornes en heure des Comores, et les mêmes
+    refus. Une seconde implémentation aurait divergé au premier correctif
+    (leçon C.5.2 : un groupe monte au commun dès qu'il a deux
+    consommateurs).
+
+    ``from_field``/``to_field`` laissent l'appelant nommer ses champs dans
+    le 400 — le corps de l'export parle de ``period_start``/``period_end``.
+    """
     if from_day > to_day:
         raise DrfValidationError(
-            {"from": ["La date de début doit précéder la date de fin."]}
+            {from_field: ["La date de début doit précéder la date de fin."]}
         )
     if (to_day - from_day).days + 1 > MAX_PERIOD_DAYS:
         raise DrfValidationError(
-            {"from": [f"Période trop longue : {MAX_PERIOD_DAYS} jours maximum."]}
+            {from_field: [f"Période trop longue : {MAX_PERIOD_DAYS} jours maximum."]}
         )
     try:
         start = timezone.make_aware(datetime.combine(from_day, time.min))
@@ -76,5 +94,5 @@ def parse_period(request):
             days=1
         )
     except OverflowError:
-        raise DrfValidationError({"to": ["Date hors limites."]})
-    return from_day, to_day, start, end
+        raise DrfValidationError({to_field: ["Date hors limites."]})
+    return start, end

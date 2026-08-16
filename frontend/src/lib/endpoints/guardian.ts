@@ -23,6 +23,13 @@ import type {
 export interface GuardianProfilePayload {
   country_of_residence?: string;
   preferred_currency?: 'EUR' | 'KMF';
+  /**
+   * S10 (ADR 0023 décision 1) — refuser les RELANCES d'une facture impayée.
+   * Ne couvre jamais la notification initiale d'une demande de paiement, ni
+   * le reçu : l'écran doit le dire, sinon le tuteur croit qu'il ne sera plus
+   * prévenu du tout.
+   */
+  payment_reminders?: boolean;
 }
 
 /** GET without a profile → 404. */

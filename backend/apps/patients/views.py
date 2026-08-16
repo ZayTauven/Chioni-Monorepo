@@ -41,6 +41,8 @@ from apps.patients.serializers import (
     GuardianLinkStaffRoutingSerializer,
     GuardianProfileSerializer,
     MergeRequestSerializer,
+    PatientContactPreferenceSerializer,
+    PatientContactPreferenceWriteSerializer,
     PatientInsuranceSerializer,
     PatientInsuranceWriteSerializer,
     PatientSelfSerializer,
@@ -63,11 +65,14 @@ from apps.patients.services import (
     grant_clinical_consent_at_center,
     invite_guardian,
     merge_profiles,
+    patient_contact_preferences,
+    require_unclaimed_for_desk_preferences,
     resolve_desk_consent_link,
     revoke_clinical_consent,
     revoke_clinical_consent_at_center,
     revoke_link,
     update_guardian_profile,
+    update_patient_contact_preferences,
     update_patient_insurance,
     update_patient_profile,
 )
@@ -422,6 +427,64 @@ class CenterPatientClinicalConsentView(CenterScopedViewMixin, APIView):
         return Response(CenterClinicalConsentReceiptSerializer(consent).data)
 
 
+class CenterPatientContactPreferencesView(CenterScopedViewMixin, APIView):
+    """GET/PUT /centers/{c}/patients/{pk}/contact-preferences/ — S10 lot 1.
+
+    Le guichet règle ce que le patient a dit de vive voix — et
+    **uniquement pour un profil NON revendiqué**, exactement comme le
+    consentement clinique porte C (S2) : dès que la personne a revendiqué
+    son profil, elle gère elle-même, et le centre reçoit un 400 explicite
+    qui le dit. Même règle, même famille de message.
+
+    Rôles : **tout membre actif**. Enregistrer « cette personne ne veut pas
+    de SMS » est un geste de guichet de la même nature que l'inscription
+    elle-même (ouverte à tout le staff depuis la porte C) — le réserver aux
+    rôles BILLING signifierait qu'une infirmière qui recueille le refus ne
+    peut pas l'enregistrer, et un refus qu'on ne peut pas noter est un
+    refus qui n'existe pas. Aucune donnée clinique ni financière ne transite
+    ici. Arbitrage RÉVERSIBLE, consigné dans l'addendum de l'ADR 0023.
+
+    PUT et non PATCH : le guichet remplit le formulaire en entier (les deux
+    valeurs), pour qu'aucune préférence ne reste silencieusement à sa
+    valeur d'avant sans que l'agent l'ait vue.
+    """
+
+    permission_classes = [IsStaffOfCenter()]
+    serializer_class = PatientContactPreferenceSerializer
+
+    def _resolve_patient(self, pk):
+        return get_object_or_404(center_patients_qs(self.center), pk=pk)
+
+    @extend_schema(responses=PatientContactPreferenceSerializer)
+    def get(self, request, center_pk, pk):
+        # La LECTURE reste ouverte sur un profil revendiqué : le guichet
+        # doit pouvoir répondre « non, on ne vous enverra pas de rappel »
+        # sans avoir à modifier quoi que ce soit. Seule l'ÉCRITURE est
+        # fermée — la personne est la seule à décider pour elle-même.
+        patient = self._resolve_patient(pk)
+        return Response(
+            PatientContactPreferenceSerializer(
+                patient_contact_preferences(patient)
+            ).data
+        )
+
+    @extend_schema(
+        request=PatientContactPreferenceWriteSerializer,
+        responses=PatientContactPreferenceSerializer,
+    )
+    def put(self, request, center_pk, pk):
+        patient = require_unclaimed_for_desk_preferences(self._resolve_patient(pk))
+        serializer = PatientContactPreferenceWriteSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        preferences = update_patient_contact_preferences(
+            actor=request.user,
+            patient=patient,
+            center=self.center,
+            **serializer.validated_data,
+        )
+        return Response(PatientContactPreferenceSerializer(preferences).data)
+
+
 class CenterPatientMergeView(CenterScopedViewMixin, APIView):
     """POST /centers/{center_pk}/patients/merge/ — absorb a duplicate.
 
@@ -499,6 +562,48 @@ class MyPatientProfileView(APIView):
             actor=request.user, profile=profile, **serializer.validated_data
         )
         return Response(PatientSelfSerializer(profile).data)
+
+
+class MyContactPreferencesView(APIView):
+    """GET/PATCH /patients/me/contact-preferences/ — S10 lot 1 (ADR 0023 §1).
+
+    La porte de sortie de la personne, dans SON espace. Forme complète et
+    constante en lecture (aucune ligne n'est créée par un GET) ; PATCH
+    partiel, et seuls les canaux refusables de
+    ``CONTACT_PREFERENCE_FIELDS`` sont acceptés.
+
+    Ce que ce réglage NE COUPE JAMAIS, et c'est un invariant testé : OTP,
+    « un proche demande à pouvoir payer vos soins », « votre soin a été
+    payé », invitation de tutelle. Se taire là-dessus ne protégerait
+    personne.
+    """
+
+    permission_classes = [IsPatientSelf]
+    serializer_class = PatientContactPreferenceSerializer
+
+    @extend_schema(responses=PatientContactPreferenceSerializer)
+    def get(self, request):
+        profile = claimed_patient_profile(request.user)
+        return Response(
+            PatientContactPreferenceSerializer(
+                patient_contact_preferences(profile)
+            ).data
+        )
+
+    @extend_schema(
+        request=PatientContactPreferenceWriteSerializer,
+        responses=PatientContactPreferenceSerializer,
+    )
+    def patch(self, request):
+        profile = claimed_patient_profile(request.user)
+        serializer = PatientContactPreferenceWriteSerializer(
+            data=request.data, partial=True
+        )
+        serializer.is_valid(raise_exception=True)
+        preferences = update_patient_contact_preferences(
+            actor=request.user, patient=profile, **serializer.validated_data
+        )
+        return Response(PatientContactPreferenceSerializer(preferences).data)
 
 
 class MyInsurancesView(generics.ListAPIView):

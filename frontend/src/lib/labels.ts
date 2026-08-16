@@ -7,6 +7,8 @@
  */
 
 import type {
+  AccountingExportLine,
+  AccountingMovementType,
   AppointmentStatus,
   AttendanceStatus,
   AuditAction,
@@ -17,6 +19,10 @@ import type {
   ClaimStatus,
   ConsentCollectedVia,
   ConsentScope,
+  ContactChannel,
+  ContactKind,
+  ContactOutcome,
+  ContactRecipient,
   Currency,
   DisputeStatus,
   EncounterStatus,
@@ -26,6 +32,7 @@ import type {
   ErasureStatus,
   GenericCategory,
   GuardianLinkStatus,
+  HumanContactChannel,
   IncidentCode,
   InitiatedBy,
   InvoiceStatus,
@@ -53,6 +60,7 @@ import type {
   SupportCategory,
   SupportPriority,
   SupportTicketStatus,
+  UnpaidFollowupOrdering,
   UnpaidOrdering,
   VitalSignsMeasures,
 } from './types';
@@ -976,6 +984,9 @@ export const AUDIT_ACTION_LABELS: Record<AuditAction, string> = {
   'support_ticket.status_changed': 'État d’une demande d’aide modifié',
   'support_ticket.message_posted': 'Message sur une demande d’aide',
   'support_ticket.attachment_uploaded': 'Pièce jointe déposée sur une demande d’aide',
+  /* S10 (ADR 0023) — la sortie de la caisse hors de l'application. Le libellé
+     dit le GESTE, pas son contenu : ni total, ni ligne, ni patient. */
+  'accounting.export_generated': 'Export comptable généré',
 };
 
 /** Familles du sélecteur — l'ordre et le regroupement de la liste blanche. */
@@ -1031,7 +1042,14 @@ export const AUDIT_ACTION_GROUPS: Array<{ label: string; actions: AuditAction[] 
       'payment.webhook_refused',
     ],
   },
-  { label: 'Caisse', actions: ['cash_payment.recorded', 'cash_payment.reversed'] },
+  {
+    label: 'Caisse',
+    actions: [
+      'cash_payment.recorded',
+      'cash_payment.reversed',
+      'accounting.export_generated',
+    ],
+  },
   { label: 'Litiges', actions: ['dispute.opened', 'dispute.resolved'] },
   { label: 'Dossiers patients', actions: ['patient_profile.merged'] },
   {
@@ -1146,6 +1164,12 @@ export const AUDIT_PAYLOAD_LABELS: Record<string, string> = {
   to_status: 'Nouvel état',
   report_id: 'Signalement',
   equipment_status: 'État de l’équipement au moment du constat',
+  /* S10 — export comptable. `center_id`, `line_count`, `number`,
+     `period_start` et `period_end` sont déjà déclarés (bloc abonnement) :
+     une clé = un libellé, et `number` a été rendu neutre pour couvrir les
+     deux pièces. Aucune clé de MONTANT ici, et c'est voulu : les totaux
+     d'un export ne sont pas recopiés dans le journal immuable. */
+  export_id: 'Export comptable',
   /* factures et actes */
   invoice_id: 'Facture',
   encounter_id: 'Consultation',
@@ -1213,7 +1237,10 @@ export const AUDIT_PAYLOAD_LABELS: Record<string, string> = {
   subscription_invoice_id: 'Facture d’abonnement',
   subscription_payment_id: 'Règlement d’abonnement',
   subscription_status_after: 'État de l’abonnement après',
-  number: 'N° de facture',
+  /* `number` est PARTAGÉE depuis S10 (facture d'abonnement « A- » et export
+     comptable « E- ») : le libellé est neutre plutôt que dupliqué, une clé
+     de payload n'ayant qu'une seule vérité dans cette table. */
+  number: 'N° de pièce',
   period_start: 'Début de période',
   period_end: 'Fin de période',
   due_date: 'Échéance',
@@ -3710,3 +3737,370 @@ export function platformPharmacyStatusChanged(status: PharmacyStatus): string {
 export function platformPharmacyMemberAdded(name: string): string {
   return `${name} peut maintenant relever les demandes de cette officine.`;
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   S10 (ADR 0023) — relances, comptabilité, préférences de SMS
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── les deux files de travail ────────────────────────────────────────────
+   La règle qui gouverne les deux écrans : Chioni n'envoie JAMAIS de SMS de
+   dette à un patient (arbitrage PO n° 1). La file existe pour qu'un humain
+   décroche son téléphone — et il n'y a, volontairement, aucune route pour
+   « relancer par SMS » depuis un écran. Le vocabulaire suit : on ne dit pas
+   « absent » ni « manqué » à quelqu'un qui n'a pas eu le transport ou
+   l'argent, on dit « n'a pas pu venir ». Aucune de ces lignes n'est rouge.
+   ───────────────────────────────────────────────────────────────────────── */
+
+export const FOLLOWUPS_TITLE = 'Relances';
+export const FOLLOWUPS_SUBTITLE =
+  'Les personnes à rappeler — celles dont une facture reste due, et celles qui n’ont pas pu venir.';
+
+/** Dit une fois en tête d'écran, pour qu'on ne cherche pas un bouton d'envoi. */
+export const FOLLOWUPS_NO_SMS_NOTICE =
+  'Chioni n’envoie jamais de message de dette à un patient. Cette liste est faite pour que quelqu’un du centre appelle lui-même — et ce que vous notez ici sert seulement à savoir qui a déjà été appelé.';
+
+export const CONTACT_KIND_LABELS: Record<ContactKind, string> = {
+  relance_impaye: 'Suivi d’un impayé',
+  reprise_contact: 'Reprise de contact',
+};
+
+/**
+ * `sms` est LU (une trace de l'automate le porte) et jamais PROPOSÉ : le
+ * backend le refuse en 400, et personne ne compose de message dans Chioni.
+ */
+export const CONTACT_CHANNEL_LABELS: Record<ContactChannel, string> = {
+  sms: 'Message automatique',
+  appel: 'Par téléphone',
+  guichet: 'Au guichet',
+};
+
+/** Les seuls canaux proposés à l'écran — l'ordre est celui du formulaire. */
+export const HUMAN_CONTACT_CHANNELS: HumanContactChannel[] = ['appel', 'guichet'];
+
+export const CONTACT_RECIPIENT_LABELS: Record<ContactRecipient, string> = {
+  patient: 'Le patient lui-même',
+  tuteur: 'Un proche',
+};
+
+export const CONTACT_RECIPIENTS: ContactRecipient[] = ['patient', 'tuteur'];
+
+/**
+ * Les issues FERMÉES d'un appel. C'est la parade au texte libre (décision 3) :
+ * une note d'appel dans un dossier patient finit par contenir du clinique, et
+ * ce module n'est gardé par aucun rôle clinique. Ces quatre valeurs disent le
+ * nécessaire pour organiser un rappel, et rien de plus.
+ */
+export const CONTACT_OUTCOME_LABELS: Record<ContactOutcome, string> = {
+  joint: 'Personne jointe',
+  sans_reponse: 'Pas de réponse',
+  promesse_de_reglement: 'A dit qu’elle réglerait',
+  a_rappeler: 'À rappeler plus tard',
+};
+
+export const CONTACT_OUTCOMES: ContactOutcome[] = [
+  'joint',
+  'sans_reponse',
+  'promesse_de_reglement',
+  'a_rappeler',
+];
+
+/**
+ * Les issues PROPOSÉES, par motif d'appel.
+ *
+ * Le backend accepte les quatre pour les deux motifs ; l'écran, lui, ne
+ * propose que ce qui peut être vrai. « A dit qu'elle réglerait » n'a aucun
+ * sens quand on appelle quelqu'un pour lui proposer une nouvelle date : une
+ * liste fermée dont un choix est hors sujet apprend à lire la liste de
+ * travers, et c'est la seule chose que ce carnet ait à dire juste.
+ *
+ * Réserve consignée pour le backend : il manque à la liste fermée l'issue
+ * naturelle d'un appel de reprise de contact — « un nouveau rendez-vous a
+ * été fixé ». Faute de mieux, elle se note aujourd'hui « Personne jointe ».
+ */
+export const CONTACT_OUTCOMES_BY_KIND: Record<ContactKind, ContactOutcome[]> = {
+  relance_impaye: CONTACT_OUTCOMES,
+  reprise_contact: ['joint', 'sans_reponse', 'a_rappeler'],
+};
+
+/** Rendu sous le champ quand on valide sans avoir choisi — jamais un bouton mort. */
+export const LOG_CONTACT_OUTCOME_REQUIRED =
+  'Choisissez d’abord ce qui s’est passé pendant l’appel.';
+
+export const UNPAID_FOLLOWUP_ORDERING_LABELS: Record<UnpaidFollowupOrdering, string> = {
+  '-age': 'Les plus anciennes d’abord',
+  age: 'Les plus récentes d’abord',
+  '-balance': 'Solde le plus élevé d’abord',
+  balance: 'Solde le plus faible d’abord',
+};
+
+/**
+ * Ce que l'automate a fait, ou ne fera plus.
+ *
+ * `reminders_exhausted` est L'information qui déclenche l'appel humain :
+ * sans elle, le silence de l'automate se lit comme une panne.
+ */
+export const REMINDERS_EXHAUSTED_LABEL = 'Chioni n’enverra plus de message';
+
+export function remindersSentLabel(sent: number): string {
+  if (sent === 0) return 'Aucun message envoyé';
+  return sent > 1 ? `${sent} messages envoyés` : '1 message envoyé';
+}
+
+/**
+ * Pourquoi `reminders_sent` peut rester en retard sur l'ancienneté d'un
+ * dossier : un même proche ne reçoit pas deux relances à moins de sept jours,
+ * même si le patient a trois factures impayées (revue guardian S10). Ce n'est
+ * pas une anomalie, et aucune route ne permet de « forcer » l'envoi.
+ */
+export const REMINDERS_PACING_HINT =
+  'Un proche ne reçoit pas deux messages à quelques jours d’intervalle, même pour plusieurs factures : les envois s’espacent d’eux-mêmes.';
+
+export const GUARDIAN_REACHABLE_YES = 'Un proche recevra la relance';
+export const GUARDIAN_REACHABLE_NO = 'Personne ne sera prévenu automatiquement';
+export const GUARDIAN_REACHABLE_NO_HINT =
+  'Aucun proche ne recevra de message pour cette facture : soit il n’y en a pas, soit la demande de paiement ne lui a jamais été envoyée, soit elle est contestée. C’est un dossier à traiter au téléphone.';
+
+/**
+ * Le dernier contact — et **jamais** un appel qui n'a pas eu lieu.
+ *
+ * `last_contact_at` agrège les contacts de TOUTE nature : le SMS de
+ * l'automate y compte autant qu'un appel de la secrétaire. Écrire « Appelé
+ * le 30 juillet » sur une ligne où seul un SMS est parti fait sauter la
+ * ligne à quelqu'un qui n'a jamais été joint — c'est-à-dire exactement la
+ * personne pour qui la file existe, puisque le produit a décidé qu'un
+ * humain devait décrocher.
+ *
+ * Le tri se fait sur l'issue : le formulaire de saisie l'exige de tout
+ * geste humain (`outcome` obligatoire), l'automate n'en pose aucune. Une
+ * issue vide se lit donc « c'était le robot », de façon sûre.
+ *
+ * Réserve consignée pour le backend : quand une issue existe, la DATE
+ * rendue reste celle du dernier contact toutes natures confondues, qui
+ * peut être un SMS postérieur à l'appel. Le verbe est neutre pour cette
+ * raison ; une annotation `last_human_contact_at` permettrait de dire
+ * « Appelé le … » sans réserve.
+ */
+export function lastContactLabel(at: string | null, outcome: ContactOutcome | ''): string {
+  if (!at) return 'Personne n’a encore appelé';
+  if (!outcome) return `Message automatique le ${formatDate(at)}`;
+  return `Dernier contact le ${formatDate(at)} — ${CONTACT_OUTCOME_LABELS[outcome]}`;
+}
+
+/** « N'a pas pu venir » — jamais « absent », jamais « manqué ». */
+export function missedAppointmentLabel(scheduledAt: string): string {
+  return `N’a pas pu venir le ${formatWeekdayDateTime(scheduledAt)}`;
+}
+
+export const MISSED_REBOOKED_LABEL = 'A déjà repris rendez-vous';
+
+/**
+ * Le « rien à faire » n'est vrai que si toute la période tient sur l'écran.
+ * `rebooked` est calculé par PAGE : sur la page 2 d'une liste paginée, dire
+ * « rien à faire sur cette période » serait faux, et l'équipe cesserait de
+ * regarder les pages suivantes.
+ */
+export const MISSED_NOTHING_TO_DO =
+  'Rien à faire sur cette période : toutes les personnes concernées ont déjà repris rendez-vous.';
+export const MISSED_NOTHING_TO_DO_THIS_PAGE =
+  'Sur cette page, tout le monde a déjà repris rendez-vous. Les autres pages peuvent encore contenir des personnes à rappeler.';
+export const MISSED_REBOOKED_HINT =
+  'Cette personne a déjà pris un nouveau rendez-vous : il n’y a rien à faire. Rappeler quelqu’un qui a déjà fait le geste est le meilleur moyen de lui apprendre à ignorer nos appels.';
+
+export const LOG_CONTACT_LABEL = 'J’ai appelé';
+export const LOG_CONTACT_TITLE = 'Noter un appel';
+export const LOG_CONTACT_NO_NOTE_HINT =
+  'Il n’y a pas de champ de commentaire, et il n’y en aura pas : ce carnet est lu par tout le personnel administratif. Choisissez seulement ce qui s’est passé.';
+
+export function contactLoggedNotice(name: string): string {
+  return `L’appel à ${name} est noté. Aucun message n’a été envoyé.`;
+}
+
+/* ── export comptable (décisions 6 et 7) ─────────────────────────────────── */
+
+export const ACCOUNTING_TITLE = 'Comptabilité';
+export const ACCOUNTING_SUBTITLE =
+  'Les relevés de caisse figés — la matière que votre comptable reprend telle quelle.';
+
+/** La propriété qui rend la pièce utilisable : elle ne bouge plus. */
+export const ACCOUNTING_FROZEN_NOTICE =
+  'Un relevé est une photo datée : il garde ce qu’il disait le jour où il a été généré, même si la caisse a bougé depuis. Rien ne se ferme derrière lui — une correction reste possible, et une même période peut être relevée deux fois.';
+
+export const MOVEMENT_TYPE_LABELS: Record<AccountingMovementType, string> = {
+  encaissement: 'Encaissement',
+  contre_passation: 'Contre-passation',
+};
+
+/**
+ * Décision 7, dite à l'écran : une contre-passation est écrite à SA date,
+ * avec la référence de l'encaissement qu'elle corrige — jamais soustraite en
+ * silence d'un jour antérieur. C'est ce qui distingue cette pièce du tableau
+ * de pilotage, où la recette du 3 août change si on corrige le 12.
+ */
+export const ACCOUNTING_MOVEMENTS_NOTICE =
+  'Chaque ligne est un mouvement, à sa propre date. Une correction apparaît le jour où elle a été faite, avec la référence de l’encaissement qu’elle corrige — la journée d’origine, elle, ne change pas.';
+
+export const ACCOUNTING_GENERATE_LABEL = 'Générer un relevé';
+export const ACCOUNTING_GENERATE_TITLE = 'Générer un relevé de caisse';
+
+/** Le geste est audité et remonte au journal du directeur : le dire avant. */
+export const ACCOUNTING_GENERATE_NOTICE =
+  'Ce relevé fige les encaissements et les corrections de la période choisie. Il sera conservé tel quel, et le journal du centre gardera la trace de qui l’a généré.';
+
+export const ACCOUNTING_DOWNLOAD_LABEL = 'Télécharger le tableur (CSV)';
+export const ACCOUNTING_DOWNLOAD_HINT =
+  'Fichier CSV, à ouvrir dans un tableur. Les colonnes ne changent jamais d’ordre : une formule construite dessus continuera de fonctionner.';
+
+/** « du 1 août 2026 au 31 août 2026 », ou la date seule si un jour. */
+export function accountingPeriodLabel(start: string, end: string): string {
+  if (start === end) return `le ${formatDate(start)}`;
+  return `du ${formatDate(start)} au ${formatDate(end)}`;
+}
+
+/**
+ * L'annonce d'un relevé antérieur — calme, jamais bloquante ni alarmante.
+ * Une période peut être relevée deux fois : la seule chose à éviter est
+ * qu'un comptable saisisse deux fois les mêmes mouvements sans le savoir.
+ */
+export function previousExportNotice(
+  number: string,
+  createdAt: string,
+  periodStart: string,
+  periodEnd: string,
+): string {
+  return `Cette période avait déjà été relevée le ${formatDate(createdAt)}, sous le n° ${number} (${accountingPeriodLabel(periodStart, periodEnd)}). Ce n’est pas un problème — vérifiez simplement lequel des deux vous transmettez.`;
+}
+
+export function exportGeneratedNotice(number: string, lineCount: number): string {
+  const movements = lineCount > 1 ? `${lineCount} mouvements` : `${lineCount} mouvement`;
+  return `Relevé ${number} généré — ${movements} figés.`;
+}
+
+/** Nom de repli si le serveur n'expose pas son `Content-Disposition`. */
+export function exportFallbackFilename(number: string): string {
+  return `releve-${number}`;
+}
+
+/* Le papier (DocumentPaper, émetteur = le centre). */
+
+export const DOC_KIND_STATEMENT = 'Relevé de caisse';
+export const ACCOUNTING_ISSUER_QUALIFIER = 'Centre de santé';
+export const ACCOUNTING_RECIPIENT_NAME = 'Comptabilité du centre';
+export const ACCOUNTING_RECIPIENT_QUALIFIER = 'Usage interne — pièce non nominative';
+export const ACCOUNTING_MOVEMENT_HEADER = 'Mouvement';
+
+export const ACCOUNTING_COLLECTED_LABEL = 'Encaissé sur la période';
+export const ACCOUNTING_REVERSED_LABEL = 'Contre-passé sur la période';
+export const ACCOUNTING_NET_LABEL = 'Net de la période';
+
+/** Dit une fois, pour que le total ne se lise pas comme une erreur de caisse. */
+export const ACCOUNTING_REVERSED_HINT = 'déjà déduit du net';
+
+/**
+ * La ligne de contexte d'un mouvement, sous son libellé.
+ *
+ * Une contre-passation dit d'où elle vient : référence ET date de
+ * l'encaissement d'origine, même quand celui-ci précède la période. C'est
+ * exactement le cas qui compte — le comptable voit d'où sort la correction.
+ */
+export function movementSubLine(line: AccountingExportLine): string {
+  const parts: string[] = [formatDate(line.date)];
+  const method = CASH_METHOD_LABELS[line.methode];
+  parts.push(line.operateur ? `${method} (${MOBILE_OPERATOR_LABELS[line.operateur]})` : method);
+  if (line.facture) parts.push(`Facture n° ${line.facture}`);
+  if (line.recu) parts.push(`Reçu ${line.recu}`);
+  if (line.reference_origine) {
+    parts.push(
+      line.date_origine
+        ? `corrige ${line.reference_origine} du ${formatDate(line.date_origine)}`
+        : `corrige ${line.reference_origine}`,
+    );
+  }
+  return parts.join(' · ');
+}
+
+/* ── préférences de SMS (décision 1) ─────────────────────────────────────── */
+
+/**
+ * LA phrase obligatoire (contrat d'API S10, encadré « ce que l'écran DOIT
+ * dire »). Sans elle, couper les rappels se lit « Chioni ne m'écrira plus » —
+ * ce qui est faux, et dangereux : c'est par ce canal que passent le code de
+ * connexion et la porte de confirmation du titulaire, invariant éthique du
+ * produit. Se taire là-dessus ne protégerait personne.
+ */
+export const CONTACT_PREFERENCES_SAFETY_NOTICE =
+  'Ces réglages ne coupent que les rappels. Vous recevrez toujours les messages importants : votre code de connexion, « un proche demande à pouvoir payer vos soins », et « votre soin a été payé ».';
+
+export const CONTACT_PREFERENCES_TITLE = 'Mes messages';
+export const CONTACT_PREFERENCES_SUBTITLE =
+  'Choisissez les SMS que vous voulez recevoir. Vous pouvez changer d’avis à tout moment.';
+
+/** Les deux canaux refusables — la clé est celle du payload. */
+export type ContactPreferenceKey = 'appointment_reminders' | 'missed_appointment_followup';
+
+export const CONTACT_PREFERENCE_KEYS: ContactPreferenceKey[] = [
+  'appointment_reminders',
+  'missed_appointment_followup',
+];
+
+export const CONTACT_PREFERENCE_LABELS: Record<ContactPreferenceKey, string> = {
+  appointment_reminders: 'Recevoir un SMS la veille de mes rendez-vous',
+  missed_appointment_followup: 'Recevoir un SMS si je n’ai pas pu venir',
+};
+
+export const CONTACT_PREFERENCE_HINTS: Record<ContactPreferenceKey, string> = {
+  appointment_reminders: 'Un rappel court, la veille au soir.',
+  missed_appointment_followup:
+    'Un message pour vous proposer de reprendre rendez-vous. Il ne dit ni pourquoi vous veniez, ni où.',
+};
+
+export const CONTACT_PREFERENCES_SAVED = 'Vos choix ont été enregistrés.';
+
+/**
+ * Dit pendant l'aller-retour. Sur une connexion lente, deux interrupteurs
+ * qui se figent sans un mot se lisent « l'écran est cassé » — et on retape.
+ */
+export const CONTACT_PREFERENCES_SAVING = 'Enregistrement en cours…';
+
+/* La même carte, au guichet du centre. */
+
+export const DESK_PREFERENCES_TITLE = 'Messages SMS';
+export const DESK_PREFERENCES_SUBTITLE = 'Ce que le patient accepte de recevoir';
+
+export const DESK_PREFERENCE_LABELS: Record<ContactPreferenceKey, string> = {
+  appointment_reminders: 'Rappel la veille d’un rendez-vous',
+  missed_appointment_followup: 'Message après un rendez-vous non honoré',
+};
+
+/**
+ * Le refus expliqué AVANT le geste, jamais après : un profil revendiqué ne
+ * s'édite pas au guichet (même règle que le consentement clinique porte C).
+ * Un formulaire qui échoue apprend au personnel à se méfier de l'écran.
+ */
+export const DESK_PREFERENCES_CLAIMED_REASON =
+  'Ce patient a activé son compte : il règle lui-même ses messages, depuis son espace. Vous voyez ses choix, vous ne pouvez pas les modifier.';
+
+export const DESK_PREFERENCES_SAFETY_NOTICE =
+  'Ces réglages ne coupent que les rappels. Le code de connexion, la demande d’un proche et la confirmation d’un paiement partent toujours.';
+
+export const DESK_PREFERENCES_NEVER_SET = 'Aucun choix exprimé — tout est activé par défaut.';
+
+export function deskPreferencesUpdatedAt(iso: string): string {
+  return `Dernière modification le ${formatDate(iso)}.`;
+}
+
+export const DESK_PREFERENCES_SAVED = 'Les choix du patient sont enregistrés.';
+
+/* Le tuteur — sa porte de sortie, et ce qu'elle NE coupe pas. */
+
+export const GUARDIAN_REMINDERS_LABEL = 'Recevoir un rappel si une facture reste impayée';
+
+/**
+ * L'honnêteté exigée par le contrat : `payment_reminders` coupe LES RELANCES,
+ * jamais la notification initiale d'une demande de paiement — celle-là est le
+ * service qu'il est venu chercher, pas une sollicitation.
+ */
+export const GUARDIAN_REMINDERS_HINT =
+  'Vous serez toujours prévenu quand un proche vous adresse une demande de paiement, et quand votre reçu est prêt. Ce réglage ne concerne que les rappels envoyés ensuite, si la facture reste impayée.';
+
+export const GUARDIAN_REMINDERS_ON = 'Rappels activés';
+export const GUARDIAN_REMINDERS_OFF = 'Rappels désactivés';

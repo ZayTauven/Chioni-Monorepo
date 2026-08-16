@@ -48,6 +48,15 @@ urlpatterns = [
     # `platform/` — un tuteur, un patient et un exploitant Chioni n'ont
     # rien à voir avec le matériel d'un établissement.
     path("", include("apps.equipment.urls")),
+    # S10 (ADR 0023) — `centers/{c}/crm/…` SEULEMENT : une file de travail
+    # appartient au centre qui la traite. Aucune route `patients/me/`,
+    # `guardian/`, `platform/` ni `pharmacy/` — le tuteur reçoit son SMS de
+    # relance, il ne lit jamais la file de travail d'un centre.
+    path("", include("apps.crm.urls")),
+    # S10 (ADR 0023) — `centers/{c}/accounting/…` SEULEMENT : l'export est
+    # la donnée du centre, lue par ses rôles de facturation. L'exploitant
+    # Chioni a sa réconciliation PSP (S4), qui est un autre objet.
+    path("", include("apps.accounting.urls")),
     path("", include("apps.trustbridge.urls")),
     # S5 — `centers/{c}/subscription/` (directeur seul) : l'app porte
     # l'objet, l'URL dit quelle casquette le lit.

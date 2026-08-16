@@ -134,6 +134,20 @@ SENSITIVE_MODELS = {
     "patients.GuardianProfile",
     "patients.GuardianLink",
     "patients.PatientInsurance",
+    # …et ce que la personne accepte de recevoir (S10 lot 1, ADR 0023).
+    # C'est un REFUS : un formulaire d'admin rouvrirait un canal que
+    # quelqu'un a fermé, sans audit et sans le lui dire.
+    "patients.PatientContactPreference",
+    # Relances (S10 lot 2) — append-only, et ce que la table protège est
+    # LA CADENCE : supprimer une ligne rendrait une facture re-relançable
+    # indéfiniment, en ajouter une ferait taire l'automate sans qu'aucun
+    # message ne soit parti.
+    "crm.ContactLog",
+    # Export comptable (S10 lot 3) — une PIÈCE remise à un comptable. La
+    # retoucher réécrirait un document déjà sorti de l'application ; la
+    # base le refuse (append-only), et un écran qui propose le geste est
+    # déjà un mensonge.
+    "accounting.AccountingExport",
     # Tenant configuration that is money-adjacent or evidence
     "centers.TariffItem",
     "centers.KycDocument",

@@ -84,6 +84,22 @@ INSTALLED_APPS = [
     # donc aucune route de centre ne peut leur répondre — le cloisonnement
     # est structurel, pas déclaratif.
     "apps.pharmacy",
+    # S10 (ADR 0023) — les deux apps qui achèvent le SaaS socle, et elles
+    # n'ont rien à voir l'une avec l'autre.
+    #
+    # `crm` : les relances. Une seule table (`ContactLog`, append-only) qui
+    # sert d'anti-doublon, de « dernier contact » et de mémoire d'équipe.
+    # App à part de `trustbridge` : relancer n'est pas encaisser, et ce
+    # module n'écrit pas un franc — il lit un solde et il envoie un SMS.
+    # AUCUN texte libre, AUCUN critère de ciblage : c'est ce qui le rend
+    # acceptable dans un produit de santé (décision 3).
+    "apps.crm",
+    # `accounting` : l'export comptable figé. App à part de `trustbridge`
+    # pour la même raison que `billing` en S5 — le ledger est append-only
+    # à trois niveaux et patient-centré, l'export est une PIÈCE datée qui
+    # sort de l'application et n'écrit rien dans le ledger. Elle porte des
+    # MOUVEMENTS, jamais des soldes (décision 7).
+    "apps.accounting",
     "apps.audit",
 ]
 
@@ -260,6 +276,18 @@ REST_FRAMEWORK = {
         # a son propre budget, distinct de celui des lectures. Généreux pour
         # une journée de consultations, serré pour une boucle.
         "availability": env("THROTTLE_AVAILABILITY", default="60/hour"),
+        # S10 lot 3 (ADR 0023) — génération d'un export comptable :
+        # agrégats sur toute une période + snapshot complet en base. Un
+        # geste rare et lourd, qui a son propre budget plutôt que d'user
+        # celui des lectures. Généreux pour une clôture de mois qu'on
+        # recommence (l'export n'est pas bloquant, on peut vouloir le
+        # refaire), serré pour une boucle.
+        #
+        # Le scope n'a de valeur que branché : la vue retourne un
+        # ``ScopedRateThrottle`` depuis ``get_throttles()`` — un
+        # ``throttle_scope`` posé seul est INERTE (faille élevée n° 2 de
+        # S9), et une sonde le vérifie désormais pour tout le produit.
+        "accounting_export": env("THROTTLE_ACCOUNTING_EXPORT", default="30/hour"),
     },
 }
 
@@ -532,6 +560,34 @@ CELERY_BEAT_SCHEDULE = {
     "close-stale-availability-requests": {
         "task": "pharmacy.close_stale_availability_requests",
         "schedule": timedelta(hours=1),
+    },
+    # --- Relances (S10 lot 2, ADR 0023 décisions 2 et 5). Les deux tâches
+    # vivent dans apps/crm/tasks.py et ne font que déléguer à leur service
+    # (verrou de ligne, ContactLog comme anti-doublon, envoi par on_commit).
+    # Référencées PAR NOM : les settings n'importent jamais de code
+    # applicatif.
+    #
+    # 09h00 HEURE DES COMORES pour les deux (crontab est évalué dans
+    # CELERY_TIMEZONE, qui suit TIME_ZONE = Indian/Comoro) : **jamais la
+    # nuit**. Un SMS de dette ou d'absence qui réveille quelqu'un à 6 h
+    # n'est pas un service — et c'est le premier geste sortant automatique
+    # de Chioni vers un patient.
+    #
+    # Impayés : AU TUTEUR SEUL, d'une demande déjà partagée dont le lien
+    # est encore actif ; montant = solde restant ; cadence bornée à trois
+    # vagues, puis silence définitif. Aucun SMS de dette ne part jamais
+    # vers un patient (arbitrage PO n° 1) : son impayé vit dans la file du
+    # guichet, et c'est un humain qui appelle.
+    "send-unpaid-invoice-reminders": {
+        "task": "crm.send_unpaid_invoice_reminders",
+        "schedule": crontab(hour=9, minute=0),
+    },
+    # Rendez-vous manqué : UN message neutre, jamais répété, muet sur le
+    # manquement — et rien ne part si la personne a déjà repris rendez-vous
+    # dans le même centre. Un rendez-vous manqué n'est pas une faute.
+    "send-missed-appointment-followups": {
+        "task": "crm.send_missed_appointment_followups",
+        "schedule": crontab(hour=9, minute=0),
     },
 }
 

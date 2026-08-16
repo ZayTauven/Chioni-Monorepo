@@ -30,6 +30,21 @@ CONTENT CONTRACT (revue guardian — non négociable) :
   verrouillé.
 - Textes français simples, préfixés « Chioni : », < 160 caractères visés.
 
+OPT-OUT CONTRACT (S10 lot 1 — ADR 0023 décision 1) :
+
+- Les événements **refusables** consultent la préférence de la personne
+  AVANT d'appeler :func:`_schedule` — ce sont, et ce sont les seuls :
+  le rappel J-1 (:func:`notify_appointment_reminder`), la reprise de
+  contact (:func:`notify_missed_appointment_followup`) et la relance
+  d'impayé (:func:`notify_unpaid_invoice_reminder`, côté tuteur).
+- Les autres ne le consultent JAMAIS, et c'est un invariant testé : OTP,
+  invitation de tutelle, « un proche demande à pouvoir payer vos soins »,
+  « votre soin a été payé », reçu émis. Ce sont des messages de
+  **sécurité et de consentement** : se taire n'y protégerait personne, ça
+  retirerait à la personne l'information dont elle a besoin pour décider.
+- La règle générale du projet tient telle quelle : **le contenu d'un SMS
+  suit la visibilité dans l'app, jamais l'inverse.**
+
 DELIVERY CONTRACT :
 
 - Tout envoi passe par ``transaction.on_commit`` : une opération métier
@@ -51,7 +66,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from apps.accounts.tasks import send_sms
-from apps.patients.models import GuardianLink
+from apps.patients.models import GuardianLink, patient_accepts
 
 logger = logging.getLogger("chioni.notifications")
 
@@ -154,6 +169,57 @@ SMS_SUBSCRIPTION_INVOICE_OVERDUE = (
 SMS_PHARMACY_AVAILABILITY_REQUEST = (
     "Chioni : vous avez une nouvelle demande de disponibilité. "
     "Ouvrez Chioni pour y répondre."
+)
+
+#: Événement 11 — relance d'une facture de soins impayée (S10, ADR 0023
+#: décision 2). Destinataire : **le tuteur SEUL**, et seulement celui d'une
+#: demande de paiement DÉJÀ PARTAGÉE avec lui, dont le lien est encore
+#: ACTIF au moment de l'envoi (règle de l'événement 4, inchangée).
+#:
+#: Le montant et le nom du centre sont admis ici pour la même raison qu'à
+#: l'événement 4 : le destinataire les lit déjà dans l'application, et une
+#: relance qui tairait le montant obligerait la personne à ouvrir l'app
+#: pour savoir de quoi on lui parle — ce qui n'est pas de la protection,
+#: c'est de l'obscurité. Le montant est le **SOLDE RESTANT** (leçon S5,
+#: même remède) : relancer sur une somme à moitié réglée serait faux et
+#: vexant. Aucun libellé d'acte, aucune catégorie générique — comme partout.
+#:
+#: **Aucune relance de dette ne part jamais vers un patient** (arbitrage PO
+#: n° 1) : son impayé vit dans la file du guichet, et c'est un humain qui
+#: appelle.
+#:
+#: **Formulation revue par l'UX care S10**, sur deux points. Le double
+#: « : » se lisait mal sur un écran de téléphone (le nom du centre est
+#: désormais détaché par un tiret). Et « à régler » est une INJONCTION là
+#: où le cadrage demande un fait : on énonce ce qui reste, on ne somme
+#: personne de payer — le ton d'un rappel de dette est la moitié de la
+#: différence entre un service et une pression.
+SMS_UNPAID_INVOICE_REMINDER = (
+    "Chioni — {center} : il reste {amount_kmf} KMF sur les soins de "
+    "{patient_first_name}. Détail et paiement sur Chioni."
+)
+
+#: Événement 12 — reprise de contact après un rendez-vous manqué (S10,
+#: ADR 0023 décision 5). Destinataire : le patient. **UN SEUL message,
+#: jamais répété.**
+#:
+#: Contenu MINIMAL, mêmes règles que le rappel J-1 (événement 7) et pour la
+#: même raison : ni motif, ni praticien, ni nom de centre — le téléphone
+#: d'un profil non revendiqué est déclaratif et circule dans le foyer.
+#:
+#: Et surtout : **aucun reproche**. On manque un rendez-vous parce qu'on
+#: n'a pas le transport, pas l'argent, ou parce qu'on avait honte. Le texte
+#: ne dit pas « vous ne vous êtes pas présenté », il dit que la porte reste
+#: ouverte — la formulation est la moitié du travail de ce sprint.
+#:
+#: **Formulation revue par l'UX care S10** : « Ouvrez Chioni ou appelez le
+#: centre » s'adressait en priorité à un profil NON revendiqué — c'est-à-dire
+#: à quelqu'un qui n'a pas l'application, et pour qui la moitié de la
+#: consigne était inapplicable. Le message n'ordonne plus rien : il dit que
+#: la porte reste ouverte, et laisse la personne choisir son chemin.
+SMS_MISSED_APPOINTMENT_FOLLOWUP = (
+    "Chioni : votre rendez-vous n'a pas eu lieu. Vous pouvez en fixer un "
+    "nouveau quand vous voulez."
 )
 
 
@@ -344,6 +410,22 @@ def notify_receipt_issued(receipt, paying_guardian):
     )
 
 
+def _patient_refused(profile, preference, event) -> bool:
+    """Porte de sortie (S10 lot 1) — le patient a-t-il refusé ce canal ?
+
+    Appelée par les SEULS événements refusables, juste avant
+    :func:`_schedule`. Le refus est journalisé en DEBUG uniquement : un log
+    INFO « telle personne refuse les rappels » serait, lui aussi, une
+    donnée de comportement.
+    """
+    if patient_accepts(profile, preference):
+        return False
+    logger.debug(
+        "Notification SMS «%s» ignorée : la personne a refusé ce canal.", event
+    )
+    return True
+
+
 def notify_appointment_reminder(appointment):
     """Événement 7 — rappel J-1 d'un rendez-vous : SMS au patient.
 
@@ -352,12 +434,73 @@ def notify_appointment_reminder(appointment):
     ``_schedule`` garantit que le SMS ne part que si l'anti-doublon est
     commité. L'heure est rendue en heure LOCALE (Indian/Comoro), format
     « 09h30 » — rien d'autre n'est interpolé (contrat de contenu en tête
-    de module et sur la constante)."""
+    de module et sur la constante).
+
+    **Refusable depuis S10** (ADR 0023 décision 1) : ce rappel ne l'était
+    pas, ce qui était le vrai trou du contrat SMS — un canal automatique
+    sans porte de sortie. La préférence est relue ICI en plus du filtre de
+    l'appelant : un futur appelant ne peut pas la contourner en oubliant.
+    """
+    if _patient_refused(
+        appointment.patient, "appointment_reminders", "rappel_rdv"
+    ):
+        return
     local = timezone.localtime(appointment.scheduled_at)
     _schedule(
         "rappel_rdv",
         _patient_phone(appointment.patient),
         SMS_APPOINTMENT_REMINDER.format(time=f"{local:%Hh%M}"),
+    )
+
+
+def notify_missed_appointment_followup(appointment):
+    """Événement 12 — reprise de contact après un rendez-vous manqué (S10).
+
+    Appelé par ``apps.crm.services.send_missed_appointment_followups`` DANS
+    la transaction qui écrit la ligne de ``ContactLog`` : le ``on_commit``
+    de :func:`_schedule` garantit qu'aucun message ne part si l'anti-doublon
+    n'est pas commité (patron du rappel J-1 et de la relance d'abonnement).
+
+    Refusable (``missed_appointment_followup``). Texte constant : rien de
+    l'``appointment`` n'est interpolé — ni l'heure, ni le motif, ni le
+    praticien, ni le centre. Le paramètre ne sert qu'à résoudre le
+    destinataire et sa préférence.
+    """
+    if _patient_refused(
+        appointment.patient, "missed_appointment_followup", "reprise_contact"
+    ):
+        return
+    _schedule(
+        "reprise_contact",
+        _patient_phone(appointment.patient),
+        SMS_MISSED_APPOINTMENT_FOLLOWUP,
+    )
+
+
+def notify_unpaid_invoice_reminder(*, guardian_link, invoice, balance_kmf):
+    """Événement 11 — relance d'un impayé, AU TUTEUR (S10, ADR 0023 §2).
+
+    Appelé par ``apps.crm.services.send_unpaid_invoice_reminders`` DANS la
+    transaction qui écrit la ligne de ``ContactLog`` (l'anti-doublon), donc
+    sous le même contrat ``on_commit`` que les deux autres relances du
+    produit.
+
+    L'appelant a déjà vérifié, sous verrou : la demande de paiement est
+    PARTAGÉE avec ce lien, le lien est ACTIF, le tuteur n'a pas refusé les
+    relances, et ``balance_kmf`` est le solde relu à cet instant. Ces
+    vérifications ne sont pas refaites ici — elles ont besoin du verrou de
+    la facture, qui est la responsabilité du service.
+
+    ``balance_kmf`` est le SOLDE RESTANT, jamais ``invoice.total_kmf``.
+    """
+    _schedule(
+        "relance_impaye",
+        _guardian_phone(guardian_link.guardian),
+        SMS_UNPAID_INVOICE_REMINDER.format(
+            center=invoice.center.name,
+            amount_kmf=format_kmf(balance_kmf),
+            patient_first_name=invoice.patient.first_name,
+        ),
     )
 
 

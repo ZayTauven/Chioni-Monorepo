@@ -87,6 +87,23 @@ const NAV_ROLE_GATES: Record<string, StaffRole[]> = {
   //   n'est pas une information clinique. C'est le même arbitrage que
   //   « Équipe du jour » ouverte vs « Registre du personnel » directeur seul.
   'centre.ordonnances': PRESCRIPTION_READ_ROLES,
+  // S10 (ADR 0023) — deux entrées neuves, deux traitements OPPOSÉS, et
+  // l'écart est aussi délibéré que les précédents :
+  //
+  // - « Comptabilité » (`centre.comptabilite`) est la caisse du centre qui
+  //   sort de l'application : rôles BILLING, comme « Caisse du jour » et
+  //   « Impayés ». Les rôles cliniques reçoivent 403 côté API — l'entrée n'a
+  //   aucune raison de leur apparaître ;
+  // - « Relances » (`centre.relances`) n'est volontairement PAS gaté, parce
+  //   que l'écran porte DEUX files aux audiences différentes : « à relancer »
+  //   est BILLING (vue d'argent), « à recontacter » est ouvert à tout membre
+  //   actif — c'est de l'exploitation, comme la file du jour, et c'est
+  //   souvent l'infirmière ou la sage-femme qui rappelle quelqu'un qui n'a pas
+  //   pu venir. Gater l'entrée sur BILLING supprimerait de leur sidebar la
+  //   seule file qui leur est destinée ; l'écran s'auto-garde donc À
+  //   L'INTÉRIEUR (l'onglet « À relancer » n'est même pas rendu pour elles).
+  //   Même arbitrage que « Équipe du jour » vs « Registre du personnel ».
+  'centre.comptabilite': BILLING_ROLES,
 };
 
 /** Shared with the command palette — one source of truth for nav visibility.

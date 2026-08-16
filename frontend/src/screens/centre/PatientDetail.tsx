@@ -31,6 +31,7 @@ import {
   formatDateTime,
 } from '@/lib/labels';
 import type { Patient, Sex } from '@/lib/types';
+import { ContactPreferencesCard } from './PatientContactPreferences';
 import { DeskConsentsCard } from './DeskConsents';
 import { DocumentsCard } from './PatientDocuments';
 import { InsurancesCard } from './PatientInsurances';
@@ -619,6 +620,13 @@ export function PatientDetail({ patientId }: { patientId: number }) {
         {/* Consentement clinique recueilli au guichet (S2) — endpoints BILLING
             seuls : la carte n'est jamais montée pour les autres rôles. */}
         {billing && <DeskConsentsCard patient={patient} />}
+
+        {/* S10 — les SMS que la personne accepte de recevoir. Lecture pour
+            TOUT membre actif (le guichet doit pouvoir répondre au comptoir),
+            écriture sur un profil non revendiqué seulement — la carte le dit
+            elle-même, avec la raison, plutôt que de proposer un formulaire
+            qui prendrait un 400. */}
+        <ContactPreferencesCard patient={patient} />
       </div>
 
       {mergeOpen && (

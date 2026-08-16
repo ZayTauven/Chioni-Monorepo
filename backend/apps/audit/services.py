@@ -154,6 +154,27 @@ class AuditAction:
     PLATFORM_STAFF_CREATED = "platform_staff.created"
     PLATFORM_STAFF_UPDATED = "platform_staff.updated"
 
+    # Préférences de contact (S10 lot 1, ADR 0023 décision 1). Payload :
+    # des ids et les CODES des préférences touchées — jamais leur valeur
+    # n'a besoin d'être devinée par un tiers, et surtout **jamais qui les a
+    # LUES** (une lecture n'est pas une action sensible ; un journal des
+    # consultations de la fiche d'un patient serait un objet de
+    # surveillance). L'action référence un patient : elle reste HORS du
+    # journal du directeur, comme ``patient_profile.updated``.
+    PATIENT_CONTACT_PREFERENCES_UPDATED = "patient.contact_preferences_updated"
+
+    # Export comptable (S10 lot 3, ADR 0023 décision 6). Payload :
+    # références, période et NUMÉRO de la pièce — **jamais une ligne,
+    # jamais un montant**. Un export est une photo de la caisse : recopier
+    # ses totaux dans un journal immuable en ferait un second registre
+    # financier, non réconcilié, que personne n'a demandé.
+    #
+    # Elle porte son ``center`` et entre dans la liste blanche du journal
+    # du directeur : c'est l'argent de SON centre qui sort de
+    # l'application, il doit savoir qui l'a sorti et quand (même famille
+    # que ``cash_payment.recorded``).
+    ACCOUNTING_EXPORT_GENERATED = "accounting.export_generated"
+
     # Patient administrative-financial data (S3, ADR 0016) — payloads:
     # ids and comma-joined FIELD NAMES only, never an insurer name or a
     # member number.

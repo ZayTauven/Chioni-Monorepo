@@ -3173,6 +3173,17 @@
     background: var(--ax-fill-hover);
     cursor: not-allowed;
   }
+  /* Un interrupteur DÉSACTIVÉ mais ACTIVÉ garde sa couleur, en sourdine.
+     Sans cette règle `:disabled` écrase `:checked` (même spécificité,
+     déclarée après) : un réglage activé se peint en gris et se lit
+     « désactivé », la position du bouton restant le seul indice. Le cas
+     apparaît dès qu'un écran rend un réglage en LECTURE SEULE — les
+     préférences de SMS d'un patient qui a activé son compte (S10) — et
+     pendant chaque enregistrement. Couleur dérivée de l'accent du thème
+     plutôt que d'une teinte figée : lisible en clair comme en sombre. */
+  .ax-switch:disabled:checked {
+    background: rgba(var(--ax-accent-rgb), 0.45);
+  }
   .ax-switch--sm {
     width: 30px;
     height: 16px;

@@ -19,8 +19,10 @@ from apps.common import notifications
 from apps.common.phones import normalize_phone
 from apps.medical.models import Consent, Encounter, HealthRecordEntry
 from apps.patients.models import (
+    CONTACT_PREFERENCE_FIELDS,
     GuardianLink,
     GuardianProfile,
+    PatientContactPreference,
     PatientInsurance,
     PatientProfile,
 )
@@ -415,6 +417,99 @@ def update_guardian_profile(*, profile, **fields):
     return profile
 
 
+# ---------------------------------------------------------------------------
+# S10 lot 1 (ADR 0023 décision 1) — préférences de contact du patient
+# ---------------------------------------------------------------------------
+
+#: Le guichet ne règle les préférences que d'un profil NON revendiqué —
+#: mot pour mot la règle et le message du consentement clinique porte C
+#: (S2) : dès que la personne a revendiqué son profil, elle gère elle-même.
+_DESK_CLAIMED_PREFERENCES_REFUSAL = (
+    "Ce patient gère lui-même ses préférences de contact depuis son espace."
+)
+
+
+def patient_contact_preferences(patient):
+    """La ligne du patient, ou une instance NON SAUVEGARDÉE aux défauts.
+
+    LE point de lecture unique (patron ``PatientMedicalFile``, S3) : la
+    forme rendue est constante, ligne ou pas, et les défauts sont ``True``
+    — c'est-à-dire le comportement historique du produit avant S10. Rien
+    n'est créé par une lecture ; la ligne naît au premier write.
+    """
+    return (
+        PatientContactPreference.objects.filter(patient=patient).first()
+        or PatientContactPreference(patient=patient)
+    )
+
+
+@transaction.atomic
+def update_patient_contact_preferences(*, actor, patient, center=None, **fields):
+    """Écrire les préférences de contact — SEUL chemin d'écriture.
+
+    ``center`` est renseigné quand le geste vient du guichet (porte C), nul
+    quand la personne le fait depuis son espace. Il ne sert pas qu'à situer
+    l'entrée d'audit : **il désigne le geste de guichet**, et c'est ce
+    geste-là qui est réservé aux profils NON revendiqués.
+
+    La garde vit ICI, sur une relecture ``select_for_update`` du patient
+    (revue guardian S10 — patron exact de
+    :func:`grant_clinical_consent_at_center`, S2). Deux défauts qu'elle
+    ferme, et ce sont deux patrons déjà rencontrés sur ce dépôt :
+
+    1. *une garde qui vit dans l'appelant n'est pas une garde* (leçon S4,
+       ``anonymize_user``) — le service était appelable directement, et
+       écrivait alors les préférences d'un profil revendiqué ;
+    2. *une garde qui lit l'objet en mémoire n'en est pas une* (leçon S8) —
+       la vue résout le patient AVANT la transaction, si bien qu'une
+       revendication OTP commitée dans l'intervalle laissait le guichet
+       régler les canaux de quelqu'un qui gère désormais lui-même.
+
+    Audit ``patient.contact_preferences_updated`` : ids et **codes des
+    préférences touchées**. Pas de valeur, pas de nom — et rien du tout sur
+    les LECTURES (ADR 0023 : « jamais qui a lu »).
+    """
+    unknown = sorted(set(fields) - set(CONTACT_PREFERENCE_FIELDS))
+    if unknown:
+        raise ValidationError(
+            f"Préférence de contact inconnue : {', '.join(unknown)}."
+        )
+    patient = PatientProfile.objects.select_for_update().get(pk=patient.pk)
+    if center is not None and patient.is_claimed:
+        raise ValidationError(_DESK_CLAIMED_PREFERENCES_REFUSAL)
+    preferences, _created = PatientContactPreference.objects.get_or_create(
+        patient=patient, defaults={"updated_by": actor}
+    )
+    for name, value in fields.items():
+        setattr(preferences, name, bool(value))
+    preferences.updated_by = actor
+    preferences.save()
+    audit(
+        actor=actor,
+        action=AuditAction.PATIENT_CONTACT_PREFERENCES_UPDATED,
+        target=preferences,
+        center=center,
+        patient_id=patient.pk,
+        center_id=center.pk if center is not None else None,
+        fields=",".join(sorted(fields)),
+    )
+    return preferences
+
+
+def require_unclaimed_for_desk_preferences(patient):
+    """Refus PRÉCOCE du guichet sur un profil revendiqué.
+
+    Confort d'API seulement : le message part avant qu'on ne construise
+    quoi que ce soit. **La garde qui fait foi est celle du service**, sur
+    une relecture verrouillée du patient (revue guardian S10) — celle-ci
+    lit l'instance résolue par la vue, et une revendication commitée entre
+    les deux la rendrait obsolète. Les deux rendent le MÊME message.
+    """
+    if patient.is_claimed:
+        raise ValidationError(_DESK_CLAIMED_PREFERENCES_REFUSAL)
+    return patient
+
+
 @transaction.atomic
 def invite_guardian(*, actor, patient, phone, relationship, initiated_by,
                     center=None):
@@ -780,6 +875,10 @@ def merge_profiles(*, source, target, actor, center):
       encounters they pivot on (the order satisfies ``Stay.save()``'s
       same-patient invariant); rooms, beds and bed assignments stay put —
       they belong to the CENTER, and they hang off the stay.
+    - **Contact preferences (S10, ADR 0023)** → combinées par **ET** : un
+      refus exprimé d'un côté ou de l'autre survit à la fusion (voir le
+      commentaire de l'étape 2 quinquies — un SMS parti ne se rattrape
+      pas, un réglage rouvert depuis l'espace du patient, si).
     - **Appointments** → re-anchored on the target too (revue adversariale
       vague 1) : un RDV laissé sur le tombstone enverrait le rappel J-1 au
       téléphone déclaratif du doublon (potentiellement celui d'un tiers) et
@@ -927,6 +1026,42 @@ def merge_profiles(*, source, target, actor, center):
         source_file.save(update_fields=["patient", "updated_at"])
         medical_file_moved = True
 
+    # 2 quinquies (S10, ADR 0023 décision 1) — les PRÉFÉRENCES DE CONTACT.
+    # Elles ne se déplacent pas comme le reste : elles se **combinent par
+    # ET**. Un refus exprimé sur l'un des deux dossiers survit à la fusion,
+    # quel que soit le sens de celle-ci — le contraire ferait repartir des
+    # SMS vers quelqu'un qui les avait refusés, sans qu'aucun humain ne
+    # l'ait décidé, et le doublon est justement le dossier dont plus
+    # personne ne relira les réglages. Le prix est assumé et documenté :
+    # une préférence peut se retrouver plus restrictive qu'aucun des deux
+    # dossiers pris isolément ; la personne la rouvre depuis son espace,
+    # ce qui est un geste réversible, là où un SMS parti ne l'est pas.
+    preferences_tightened = False
+    source_preferences = PatientContactPreference.objects.filter(
+        patient=source
+    ).first()
+    if source_preferences is not None:
+        refused = {
+            name: False
+            for name in CONTACT_PREFERENCE_FIELDS
+            if not getattr(source_preferences, name)
+        }
+        target_preferences = PatientContactPreference.objects.filter(
+            patient=target
+        ).first()
+        if target_preferences is None:
+            # Rien sur la cible : la ligne du doublon la rejoint telle
+            # quelle (la OneToOne est libre, et les valeurs sont déjà le
+            # résultat du ET avec les défauts ``True`` de la cible).
+            source_preferences.patient = target
+            source_preferences.save(update_fields=["patient", "updated_at"])
+            preferences_tightened = bool(refused)
+        elif refused:
+            for name, value in refused.items():
+                setattr(target_preferences, name, value)
+            target_preferences.save()
+            preferences_tightened = True
+
     # 2 bis. Appointments — same reunification as the carnet (whatever the
     # center: encounters above move regardless of center too). Local import
     # mirroring apps.medical.services: scheduling stays a leaf dependency.
@@ -983,6 +1118,7 @@ def merge_profiles(*, source, target, actor, center):
         appointments_moved=appointments_moved, stays_moved=stays_moved,
         documents_moved=documents_moved, insurances_moved=insurances_moved,
         medical_file_moved=medical_file_moved,
+        preferences_tightened=preferences_tightened,
         user_transferred=user_transferred,
     )
     if suspended_links:

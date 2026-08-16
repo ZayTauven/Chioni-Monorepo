@@ -11,6 +11,7 @@ from django.urls import path
 from apps.patients.views import (
     AcceptInvitationView,
     CenterPatientClinicalConsentView,
+    CenterPatientContactPreferencesView,
     CenterPatientDetailView,
     CenterPatientGuardianLinksView,
     CenterPatientInsuranceDetailView,
@@ -24,6 +25,7 @@ from apps.patients.views import (
     GuardianLinkListView,
     GuardianRevokeLinkView,
     InviteGuardianView,
+    MyContactPreferencesView,
     MyGuardianLinksView,
     MyGuardianProfileView,
     MyInsurancesView,
@@ -78,8 +80,21 @@ urlpatterns = [
         CenterPatientClinicalConsentView.as_view(),
         name="center-patient-clinical-consent",
     ),
+    # S10 lot 1 (ADR 0023 décision 1) — le guichet règle les préférences
+    # de contact d'un profil NON revendiqué (écriture) ; la lecture reste
+    # ouverte pour pouvoir répondre à la personne au comptoir.
+    path(
+        "centers/<int:center_pk>/patients/<int:pk>/contact-preferences/",
+        CenterPatientContactPreferencesView.as_view(),
+        name="center-patient-contact-preferences",
+    ),
     # Audience: the patient (porte B)
     path("patients/me/", MyPatientProfileView.as_view(), name="my-profile"),
+    path(
+        "patients/me/contact-preferences/",
+        MyContactPreferencesView.as_view(),
+        name="my-contact-preferences",
+    ),
     path(
         "patients/me/insurances/",
         MyInsurancesView.as_view(),

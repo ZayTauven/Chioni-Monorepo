@@ -28,6 +28,10 @@ import {
 } from '@/lib/endpoints/guardian';
 import {
   CURRENCY_LABELS,
+  GUARDIAN_REMINDERS_HINT,
+  GUARDIAN_REMINDERS_LABEL,
+  GUARDIAN_REMINDERS_OFF,
+  GUARDIAN_REMINDERS_ON,
   RELATIONSHIP_LABELS,
   RESIDENCE_COUNTRY_CODES,
   countryName,
@@ -70,6 +74,8 @@ function ProfileCard({ phone, profile }: { phone: string; profile: GuardianProfi
   const [editing, setEditing] = useState(false);
   const [country, setCountry] = useState(profile.country_of_residence);
   const [currency, setCurrency] = useState<Currency>(profile.preferred_currency);
+  /* S10 (ADR 0023 décision 1) — la porte de sortie du tuteur. */
+  const [reminders, setReminders] = useState(profile.payment_reminders);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<ApiError | null>(null);
   const [saved, setSaved] = useState(false);
@@ -85,7 +91,11 @@ function ProfileCard({ phone, profile }: { phone: string; profile: GuardianProfi
     setBusy(true);
     setError(null);
     try {
-      await updateGuardianProfile({ country_of_residence: country, preferred_currency: currency });
+      await updateGuardianProfile({
+        country_of_residence: country,
+        preferred_currency: currency,
+        payment_reminders: reminders,
+      });
       // guardian_profile vit dans /auth/me/ — resynchroniser l'app entière.
       await refreshMe();
       setEditing(false);
@@ -153,6 +163,60 @@ function ProfileCard({ phone, profile }: { phone: string; profile: GuardianProfi
                 </p>
               )}
             </div>
+            {/* S10 — l'opt-out des RELANCES, et l'honnêteté sur ce qu'il ne
+                coupe pas : sans le second paragraphe, désactiver se lit
+                « je ne serai plus prévenu du tout », ce qui est faux. La
+                rangée entière est la cible tactile (≥ 44 px). */}
+            <div className="ax-field">
+              <label
+                htmlFor="tuteur-relances"
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: 'var(--ax-space-4)',
+                  minHeight: 56,
+                  cursor: 'pointer',
+                }}
+              >
+                <span
+                  style={{
+                    fontSize: 'var(--ax-text-base)',
+                    color: 'var(--ax-text-strong)',
+                    lineHeight: 1.5,
+                  }}
+                >
+                  {GUARDIAN_REMINDERS_LABEL}
+                </span>
+                <input
+                  id="tuteur-relances"
+                  type="checkbox"
+                  className="ax-switch ax-switch--lg"
+                  checked={reminders}
+                  onChange={(e) => setReminders(e.target.checked)}
+                />
+              </label>
+              {/* Couleur POSÉE ici plutôt qu'héritée d'`ax-field__hint` :
+                  cette classe peint en `--ax-text-subtle`, seul token du
+                  design system encore sous AA (4,32:1). C'est la phrase qui
+                  dit au tuteur qu'il sera TOUJOURS prévenu d'une demande de
+                  paiement — la dernière du produit à mériter d'être pâle. */}
+              <p
+                style={{
+                  margin: 0,
+                  fontSize: 'var(--ax-text-xs)',
+                  color: 'var(--ax-text-muted)',
+                  lineHeight: 1.6,
+                }}
+              >
+                {GUARDIAN_REMINDERS_HINT}
+              </p>
+              {fieldErrors.payment_reminders && (
+                <p className="ax-field__message ax-field__message--error">
+                  {fieldErrors.payment_reminders[0]}
+                </p>
+              )}
+            </div>
             {error && error.messages.length > 0 && <ErrorAlert error={error} />}
             <button type="submit" className="ax-btn ax-btn--primary ax-btn--lg ax-btn--block" disabled={busy}>
               <span className="ax-btn__label">{busy ? 'Enregistrement…' : 'Enregistrer'}</span>
@@ -164,6 +228,7 @@ function ProfileCard({ phone, profile }: { phone: string; profile: GuardianProfi
               onClick={() => {
                 setCountry(profile.country_of_residence);
                 setCurrency(profile.preferred_currency);
+                setReminders(profile.payment_reminders);
                 setError(null);
                 setEditing(false);
               }}
@@ -185,6 +250,24 @@ function ProfileCard({ phone, profile }: { phone: string; profile: GuardianProfi
               <span className="tuteur-money-row__label">Devise préférée</span>
               <span className="tuteur-money-row__value">{CURRENCY_LABELS[profile.preferred_currency]}</span>
             </div>
+            <div className="tuteur-money-row">
+              <span className="tuteur-money-row__label">Rappels d&rsquo;impayé</span>
+              <span className="tuteur-money-row__value">
+                {profile.payment_reminders ? GUARDIAN_REMINDERS_ON : GUARDIAN_REMINDERS_OFF}
+              </span>
+            </div>
+            {/* Dit aussi en LECTURE : c'est là que le tuteur se demande s'il
+                sera prévenu, pas seulement au moment de basculer. */}
+            <p
+              style={{
+                margin: 0,
+                fontSize: 'var(--ax-text-xs)',
+                color: 'var(--ax-text-muted)',
+                lineHeight: 1.6,
+              }}
+            >
+              {GUARDIAN_REMINDERS_HINT}
+            </p>
             <button
               type="button"
               className="ax-btn ax-btn--secondary ax-btn--block"
@@ -193,6 +276,7 @@ function ProfileCard({ phone, profile }: { phone: string; profile: GuardianProfi
                 setSaved(false);
                 setCountry(profile.country_of_residence);
                 setCurrency(profile.preferred_currency);
+                setReminders(profile.payment_reminders);
                 setEditing(true);
               }}
             >

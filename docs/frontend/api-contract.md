@@ -134,6 +134,10 @@
   - **Payload volontairement petit** : **pas de lit, pas de priorité, pas de motif d'annulation, pas de motif d'admission ni de diagnostic**. Un numéro de lit et une priorité de triage sont des données de gestion de service, écrites par le personnel pour le personnel — ne pas prévoir d'emplacement. L'histoire clinique de l'épisode se lit **entièrement** dans `GET /patients/me/encounters/` : la clé `encounter` fait le lien (motif, diagnostic, actes), et `GET /patients/me/vital-signs/?encounter=<id>` rend la feuille de surveillance.
   - Vocabulaire d'écran attendu (littératie faible) : `en_cours` → « Vous êtes hospitalisé(e) », `sortie` → « Séjour terminé », `annule` → « Séjour annulé » (jamais en rouge : c'est presque toujours une correction de saisie du centre, pas un échec du patient).
 
+- **`GET|PATCH /patients/me/contact-preferences/` (S10, ADR 0023 décision 1)** — mes SMS. `{appointment_reminders: bool, missed_appointment_followup: bool}` — **forme complète et constante**, même si aucune ligne n'existe encore en base (défauts `true`) : ne jamais traiter l'absence comme une erreur, ni afficher un état « non configuré ». PATCH partiel accepté.
+  - **Ce que l'écran DOIT dire** : ces réglages coupent les **rappels**, jamais les messages de sécurité et de consentement (code de connexion, « un proche demande à pouvoir payer vos soins », « votre soin a été payé »). Sans cette phrase, couper les rappels se lit « Chioni ne m'écrira plus », ce qui est faux et dangereux — c'est par ce canal que passe la porte de confirmation du titulaire.
+  - Ton attendu : « Recevoir un SMS la veille de mes rendez-vous », « Recevoir un SMS si je n'ai pas pu venir » — jamais le vocabulaire technique (« relance », « notification »).
+
 ### Argent côté patient
 - `GET /patients/me/payment-requests/` (+`/{pk}/`) → `{id, center_name, total_kmf, status, lines[{id,label,generic_category,amount_kmf}], shared_with_links[ids], paid_at, patient_acknowledged_at, created_at}` — `paid_at` : ISO-8601 nullable, posé par le webhook d'encaissement (« payée par un proche le … »).
 - `POST .../{pk}/share/` `{"guardian_link": <id>}` → 201 — **S1** : lien qui n'est pas au patient → **400 explicite** `"Ce lien de tutelle n'est pas l'un des vôtres : partage refusé."` (plus 404 — ref de corps).
@@ -144,7 +148,7 @@
 
 ## Espace tuteur
 
-- `GET|POST|PATCH /guardian/profile/` — `{id, country_of_residence(ISO-2, déf. FR), preferred_currency(EUR|KMF, déf. EUR), created_at}`. GET/PATCH sans profil → 404. **S2 — PATCH** : `country_of_residence` et `preferred_currency` modifiables (la devise est un préférence d'AFFICHAGE — les devis restent structurellement EUR→KMF) ; pays normalisé en majuscules, format ISO-2 sinon 400 par champ. Identité (prénom/nom) → `PATCH /auth/me/`.
+- `GET|POST|PATCH /guardian/profile/` — `{id, country_of_residence(ISO-2, déf. FR), preferred_currency(EUR|KMF, déf. EUR), payment_reminders(bool, déf. true), created_at}`. GET/PATCH sans profil → 404. **S10 — `payment_reminders`** : coupe les **relances** d'une facture impayée, jamais la notification initiale d'une demande de paiement (celle-là est le service, pas une sollicitation) — le dire à l'écran, sinon le tuteur croit qu'il ne sera plus prévenu du tout. **S2 — PATCH** : `country_of_residence` et `preferred_currency` modifiables (la devise est un préférence d'AFFICHAGE — les devis restent structurellement EUR→KMF) ; pays normalisé en majuscules, format ISO-2 sinon 400 par champ. Identité (prénom/nom) → `PATCH /auth/me/`.
 - **S2 — `GET /guardian/links/`** — l'HISTORIQUE de mes liens, **tous statuts**, paginé, tri `-created_at`. Item : `{id, protege_display_name, status(invitation_envoyee|attente_confirmation_titulaire|actif|revoque), created_at, revoked_at(nullable)}` — rien d'autre (ni téléphone, ni scopes, ni relationship). **La valeur ajoutée : `attente_confirmation_titulaire`** — le protégé qui « disparaissait » de `/proteges/` pendant la porte de confirmation est ici, l'UI dit « en attente de confirmation de votre proche » (ne PAS présenter comme une erreur ni pousser à relancer). Tuteur sans lien → 200 vide. Les listes `proteges`/`invitations` sont inchangées.
 - `GET /guardian/proteges/` — liens `actif` avec scope `paiements` UNIQUEMENT. Item : `{id, patient{id,first_name,last_name,claim_status}, relationship, status, initiated_by, accepted_at}`. Patient = identité administrative STRICTE.
 - `POST /guardian/proteges/` `{first_name*, last_name*, relationship*, birth_date?, sex?, phone?, city?}` → 201, lien direct `actif` (porte A).
@@ -467,6 +471,50 @@ Le journal du directeur (`?action=`) accepte sept actions de plus : `subscriptio
 - **La délivrance est DÉFINITIVE** : aucune route ne la défait (400 « Cette ordonnance a déjà été délivrée. » au second appel). Confirmer avant, comme une contre-passation — et ne jamais afficher de bouton « annuler la délivrance ».
 - Une ordonnance délivrée **ne se recherche plus** dans le réseau : masquer (ou désactiver avec la raison) le bouton de recherche de disponibilité sur ces lignes.
 - Le staff **administratif** (secrétaire, caissier, directeur) reçoit 403 : ne pas monter l'écran hors des rôles cliniques + pharmacien.
+
+### Relances — les deux files de travail (S10, ADR 0023)
+
+`GET /centers/{c}/crm/unpaid-followups/?ordering=` (**rôles BILLING**) · `GET /centers/{c}/crm/missed-appointments/?from=&to=` (**tout staff actif**) · `POST /centers/{c}/crm/contacts/` (tout staff actif).
+
+- **La règle qui gouverne ces deux écrans** : Chioni **n'envoie jamais de SMS de dette à un patient** (arbitrage PO). La file est faite pour qu'un humain décroche son téléphone. Ne construire aucun bouton « relancer par SMS » : il n'existe aucune route pour ça, et c'est voulu.
+- **File « à relancer »** : `{id, patient, patient_name, patient_phone_masked, total_kmf, paid_kmf, balance_kmf, age_days, created_at, reminders_sent, reminders_exhausted, last_contact_at, last_outcome, guardian_reachable}`. Tri `?ordering=` ∈ `-age|age|-balance|balance` (défaut `-age`), valeur inconnue → 400 par champ.
+  - `guardian_reachable` est un **booléen**, jamais un téléphone ni un nom de tuteur — il dit seulement « un proche recevra la relance automatique ». Un `false` n'est pas une alerte : c'est simplement un dossier que le guichet traitera au téléphone.
+  - **Revue guardian S10** : `guardian_reachable` vaut `false` quand la demande est en **brouillon** (jamais envoyée — le premier message reçu par un proche ne peut pas être la relance d'une sollicitation qu'il n'a jamais eue) ou en **litige** (on ne réclame pas 7 500 KMF à qui vient d'écrire que le soin n'a pas eu lieu). Le champ ne ment donc jamais au caissier : s'il est `false`, personne ne recevra rien, et c'est à lui de décrocher.
+  - **Plafond PAR PERSONNE** (revue guardian S10) : un même proche ne reçoit pas deux relances à moins de 7 jours d'écart, même si le patient a trois factures impayées — trois SMS identiques le même matin, ce n'est plus un service. Conséquence pour l'écran : `reminders_sent` peut rester en retard sur l'ancienneté d'un dossier sans que rien ne soit cassé. Ne pas présenter ça comme une anomalie ni inviter à « forcer » l'envoi (aucune route ne le permet).
+  - `reminders_exhausted: true` = les trois relances automatiques sont passées, **plus rien ne partira**. Le dire à l'écran (« Chioni n'enverra plus de message ») : c'est l'information qui déclenche l'appel humain, et sans elle le silence se lit comme une panne.
+  - `patient_phone_masked` arrive masqué du backend — l'afficher tel quel, ne jamais chercher à le compléter.
+- **File « à recontacter »** : `{id, patient, patient_name, patient_phone_masked, scheduled_at, contacted_at, last_outcome, rebooked}`, fenêtre `?from=&to=` (contrat commun : jours locaux inclusifs, 30 j par défaut, 366 max).
+  - **`rebooked: true` = la personne a déjà repris rendez-vous** : la sortir de la file de travail (ou la présenter comme réglée). Rappeler quelqu'un qui a déjà fait le geste est le meilleur moyen de lui apprendre à ignorer nos appels.
+  - Vocabulaire : « n'a pas pu venir », jamais « absent » ni « manqué » à la deuxième personne. **Aucun rouge** sur ces lignes — on manque un rendez-vous faute de transport ou d'argent, ce n'est pas une faute.
+- **`POST .../crm/contacts/`** `{kind*(relance_impaye|reprise_contact), channel*(appel|guichet), recipient*(patient|tuteur), outcome*(joint|sans_reponse|promesse_de_reglement|a_rappeler), invoice?, appointment?}` → 201 `{id, patient, kind, channel, recipient, invoice, appointment, outcome, created_by, created_at}`.
+  - **Ne pas envoyer de `patient`** : il est **déduit** de la facture ou du rendez-vous cité. C'est une garde, pas une économie — on ne peut pas apparier une personne à la facture de quelqu'un d'autre.
+  - **`outcome` est OBLIGATOIRE** : on ne journalise pas un appel sans dire ce qu'il a donné, sinon la file ne sait plus quoi proposer ensuite.
+  - **Appariement motif ↔ objet, strict** : `relance_impaye` exige `invoice` et refuse `appointment` ; `reprise_contact` exige `appointment` et refuse `invoice`. Les deux refus sont des **400 par champ** — l'UI dérive donc l'objet du contexte de la ligne, elle ne le fait pas choisir.
+  - **`channel: "sms"` est REFUSÉ en 400** : un SMS n'est pas un geste qu'on journalise, c'est un envoi, et le seul émetteur est l'automate. Ne pas proposer l'option.
+  - **Aucun champ de texte libre, et il n'y en aura pas** (ADR 0023 décision 3) : ne pas ajouter de « note d'appel » — une note d'appel dans un dossier patient finit par contenir du clinique, et ce module n'est gardé par aucun rôle clinique. Les issues fermées suffisent à organiser un rappel.
+  - Référence étrangère au centre dans le CORPS → **400 explicite** (norme S1), jamais 404.
+
+### Export comptable (S10, ADR 0023 décisions 6 et 7)
+
+`GET|POST /centers/{c}/accounting/exports/` · `GET .../{pk}/` · `GET .../{pk}/download/` — **rôles BILLING**.
+
+- **POST** `{period_start*, period_end*}` (jours locaux inclusifs) → 201 : la pièce **plus** `previous_export` = `{id, number, period_start, period_end, created_at}` ou `null`.
+  - **`previous_export` non nul n'est PAS une erreur** : une période peut être exportée deux fois (l'export est une photo, pas une clôture — rien ne se ferme derrière lui). L'annoncer calmement : « cette période a déjà été exportée le … sous le n° E-000003 », sans bloquer ni faire peur.
+- Item : `{id, number("E-000004"), sequence_number, period_start, period_end, total_collected_kmf, total_reversed_kmf, net_kmf, line_count, generated_by, created_at}` ; le DÉTAIL ajoute `lines[]`.
+- **`lines[]` porte des MOUVEMENTS, pas des soldes** — c'est le cœur du lot : `{date, type(encaissement|contre_passation), reference, montant_kmf, methode, operateur, facture, recu, reference_origine, date_origine}`. Une contre-passation apparaît **à sa propre date** avec la référence et la date de l'encaissement d'origine ; elle n'est **jamais** soustraite en silence d'un jour antérieur. C'est ce qui rend une pièce comptable stable, là où `stats/finances` reste une photo avec recul.
+  - `montant_kmf` d'une `contre_passation` est **négatif** : ne pas le réafficher en valeur absolue, et ne pas colorer en rouge d'erreur — c'est une correction, pas un incident.
+  - `total_reversed_kmf` est **positif** (le montant contre-passé), `net_kmf = total_collected_kmf − total_reversed_kmf`. Afficher les trois : ne jamais montrer le net seul.
+- **`GET .../{pk}/`** rend le snapshot **tel qu'il a été figé** — si la caisse a bougé depuis, la pièce ne bouge pas. Le dire une fois à l'écran ; c'est la propriété qui la rend utilisable par un comptable.
+- **Téléchargement** : `GET .../{pk}/download/` → CSV binaire, `attachment; filename="export-E-000004-<du>-<au>.csv"`, `nosniff`. Passer par `apiDownload` (blob), **jamais** un `<a href>` direct — mêmes règles que les documents patients.
+  - Colonnes du CSV **stables et ordonnées** (`date, type, reference, montant_kmf, methode, operateur, facture, recu, reference_origine, date_origine`) : un comptable construit ses formules dessus. On peut en ajouter à la fin, jamais en retirer ni en réordonner.
+- Le geste est **audité** et remonte dans le journal du directeur (`accounting.export_generated`) : c'est l'argent de son centre qui sort de l'application. Confirmer avant d'émettre, comme pour une facture d'abonnement.
+
+### Préférences de contact au guichet (S10, ADR 0023 décision 1)
+
+`GET|PUT /centers/{c}/patients/{pk}/contact-preferences/` — tout staff actif en lecture, **écriture sur un profil NON revendiqué seulement**.
+
+- Même forme que côté patient : `{appointment_reminders, missed_appointment_followup}`, complète et constante.
+- **Profil revendiqué → 400 explicite** « la personne gère elle-même ses préférences » (règle identique au consentement clinique porte C). L'écran doit le dire avant le geste, pas après : afficher le réglage en lecture seule avec la raison, plutôt qu'un formulaire qui échoue.
 
 ## Espace plateforme — back-office Chioni (`/platform/…`, S4 ADR 0017 + S5 ADR 0018)
 

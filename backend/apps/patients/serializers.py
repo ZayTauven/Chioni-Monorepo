@@ -18,8 +18,10 @@ from rest_framework import serializers
 
 from apps.medical.models import Consent
 from apps.patients.models import (
+    CONTACT_PREFERENCE_FIELDS,
     GuardianLink,
     GuardianProfile,
+    PatientContactPreference,
     PatientInsurance,
     PatientProfile,
 )
@@ -285,7 +287,15 @@ class GuardianProfileSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = GuardianProfile
-        fields = ["id", "country_of_residence", "preferred_currency", "created_at"]
+        fields = [
+            "id", "country_of_residence", "preferred_currency",
+            # S10 lot 1 (ADR 0023 décision 1) — la porte de sortie du
+            # tuteur. Elle ne couvre QUE les relances : la notification
+            # initiale d'une demande de paiement et le reçu restent
+            # inconditionnels (verrouillé par test).
+            "payment_reminders",
+            "created_at",
+        ]
         read_only_fields = ["id", "created_at"]
 
     def validate_country_of_residence(self, value):
@@ -295,6 +305,57 @@ class GuardianProfileSerializer(serializers.ModelSerializer):
                 "Code pays invalide : format ISO à 2 lettres (ex. FR)."
             )
         return value
+
+
+class PatientContactPreferenceSerializer(serializers.ModelSerializer):
+    """Les préférences de contact — forme COMPLÈTE et CONSTANTE (S10 lot 1).
+
+    Sérialise indifféremment une ligne en base ou l'instance non
+    sauvegardée rendue par ``services.patient_contact_preferences`` : la
+    réponse a toujours les mêmes clés et les mêmes défauts (``True``).
+    ``updated_at`` vaut ``null`` tant que rien n'a été exprimé — c'est la
+    SEULE différence, et elle est honnête : « personne n'a encore réglé
+    ceci » n'est pas la même chose que « la personne a accepté ».
+
+    Le même payload sert le patient et le guichet : il ne contient aucune
+    donnée d'identité, aucun contenu, et surtout pas ``updated_by`` — qui
+    a réglé la préférence de quelqu'un d'autre n'est pas une information
+    que ce module doit rendre.
+    """
+
+    updated_at = serializers.SerializerMethodField()
+
+    class Meta:
+        model = PatientContactPreference
+        fields = [*CONTACT_PREFERENCE_FIELDS, "updated_at"]
+        read_only_fields = fields
+
+    def get_updated_at(self, preferences):
+        return preferences.updated_at if preferences.pk else None
+
+
+class PatientContactPreferenceWriteSerializer(serializers.Serializer):
+    """Écriture des préférences — les booléens refusables, et EUX SEULS.
+
+    ``Serializer`` nu plutôt que ``ModelSerializer`` : la liste des champs
+    acceptés est ainsi la liste de l'ADR, jamais « tout ce que le modèle
+    porte ». Un champ ajouté au modèle demain (un canal de sécurité, par
+    exemple) n'entre pas dans l'API par accident.
+
+    PATCH (le patient) est partiel ; PUT (le guichet) exige les deux
+    valeurs — un formulaire de guichet se remplit en entier, et un PUT
+    partiel laisserait croire qu'on a réglé ce qu'on n'a pas touché.
+    """
+
+    appointment_reminders = serializers.BooleanField()
+    missed_appointment_followup = serializers.BooleanField()
+
+    def validate(self, attrs):
+        if not attrs:
+            raise serializers.ValidationError(
+                "Indiquez au moins une préférence à modifier."
+            )
+        return attrs
 
 
 class PatientGuardianSerializer(serializers.ModelSerializer):

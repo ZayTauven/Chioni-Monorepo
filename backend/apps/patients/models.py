@@ -198,6 +198,21 @@ class GuardianProfile(TimeStampedModel):
         choices=Currency.choices,
         default=Currency.EUR,
     )
+    # S10 lot 1 (ADR 0023 décision 1) — la porte de sortie du tuteur, posée
+    # AVANT le canal qu'elle refuse. Elle ne couvre QUE la relance : la
+    # notification initiale d'une demande de paiement est le service qu'il
+    # est venu chercher, pas une sollicitation (et le SMS « reçu émis » est
+    # la preuve de ce qu'il a payé). Art. 21 RGPD — les tuteurs sont
+    # résidents UE.
+    payment_reminders = models.BooleanField(
+        "relances de paiement",
+        default=True,
+        help_text=(
+            "Relances SMS des factures impayées de ses protégés. La "
+            "notification INITIALE d'une demande de paiement et le reçu ne "
+            "sont jamais couverts par ce refus."
+        ),
+    )
 
     class Meta:
         verbose_name = "profil tuteur"
@@ -205,6 +220,105 @@ class GuardianProfile(TimeStampedModel):
 
     def __str__(self) -> str:
         return f"Tuteur {self.user}"
+
+
+class PatientContactPreference(TimeStampedModel):
+    """Ce que la personne accepte de recevoir — S10 lot 1 (ADR 0023 §1).
+
+    **La porte de sortie est construite AVANT les canaux.** Trois relances
+    neuves livrées sans possibilité de refus seraient exactement la dérive
+    que le sprint est censé éviter.
+
+    OneToOne sur le PATIENT et non sur un couple (patient, centre) : la
+    préférence appartient à la **personne**, elle est transversale comme le
+    carnet (ADR 0002). Quelqu'un qui ne veut pas de SMS n'en veut pas de la
+    clinique d'à côté non plus.
+
+    Créée paresseusement au premier write (``get_or_create`` dans le
+    service) et rendue en **forme complète constante** en lecture, ligne ou
+    pas — patron exact de ``medical.PatientMedicalFile`` (S3) : un GET ne
+    doit jamais laisser deviner qu'une préférence n'a « pas encore » été
+    exprimée, et le défaut ``True`` est le comportement historique.
+
+    **Ce que ces booléens ne couvrent JAMAIS** (ADR 0023 §1, verrouillé par
+    test) : les messages de **sécurité et de consentement** — OTP de
+    connexion, « un proche demande à pouvoir payer vos soins » (porte de
+    confirmation du titulaire, invariant éthique du produit), « votre soin
+    a été payé », invitation de tutelle. Se taire sur ceux-là ne
+    protégerait personne : ça retirerait à la personne l'information dont
+    elle a besoin pour décider. Un futur champ doit donc être un choix
+    écrit, jamais un glissement.
+    """
+
+    patient = models.OneToOneField(
+        PatientProfile,
+        verbose_name="patient",
+        on_delete=models.PROTECT,
+        related_name="contact_preference",
+    )
+    appointment_reminders = models.BooleanField(
+        "rappels de rendez-vous",
+        default=True,
+        help_text="Rappel J-1 (ADR 0013) — refusable depuis S10.",
+    )
+    missed_appointment_followup = models.BooleanField(
+        "reprise de contact après un rendez-vous manqué",
+        default=True,
+        help_text="Message unique et neutre du lendemain (ADR 0023 décision 5).",
+    )
+    updated_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        verbose_name="mis à jour par",
+        on_delete=models.PROTECT,
+        related_name="patient_contact_preferences_updated",
+        help_text="La personne elle-même, ou l'agent du guichet (profil non revendiqué).",
+    )
+
+    class Meta:
+        verbose_name = "préférences de contact du patient"
+        verbose_name_plural = "préférences de contact des patients"
+
+    def __str__(self) -> str:
+        return f"Préférences de contact de {self.patient}"
+
+
+#: Les canaux refusables, et EUX SEULS (ADR 0023 décision 1). La liste est
+#: lue par le service d'écriture, par le sérialiseur et par les sondes : un
+#: champ ajouté au modèle sans entrer ici ne devient pas refusable par
+#: accident, et un canal de sécurité ne peut pas s'y glisser sans qu'un
+#: humain relise ce diff.
+CONTACT_PREFERENCE_FIELDS = (
+    "appointment_reminders",
+    "missed_appointment_followup",
+)
+
+
+def patient_accepts(patient, preference) -> bool:
+    """Le patient accepte-t-il ``preference`` (code de
+    :data:`CONTACT_PREFERENCE_FIELDS`) ?
+
+    Vit ICI, à côté du modèle, et non dans ``services`` : c'est une
+    LECTURE pure, et ``apps.common.notifications`` — qui doit la consulter
+    avant chaque envoi refusable — est importé par ``patients.services``.
+    La placer dans les services créerait un cycle d'imports que seul un
+    import différé masquerait.
+
+    Absence de ligne = accord (défaut historique du produit, antérieur à
+    S10). Un code inconnu LÈVE plutôt que de rendre ``True`` par charité :
+    une faute de frappe dans un appelant enverrait un SMS à quelqu'un qui
+    l'a refusé, et le silence serait le pire des deux comportements.
+    """
+    if preference not in CONTACT_PREFERENCE_FIELDS:
+        raise ValueError(
+            f"Préférence de contact inconnue : {preference!r} — "
+            f"attendu parmi {CONTACT_PREFERENCE_FIELDS}."
+        )
+    value = (
+        PatientContactPreference.objects.filter(patient=patient)
+        .values_list(preference, flat=True)
+        .first()
+    )
+    return True if value is None else bool(value)
 
 
 class GuardianLink(TimeStampedModel):

@@ -36,6 +36,7 @@ import type {
   OccupancyRoom,
   Paginated,
   Patient,
+  PatientContactPreferences,
   PatientDocumentStaff,
   PatientDocumentType,
   PatientInsurance,
@@ -499,6 +500,44 @@ export function revokeDeskClinicalConsent(
   return apiFetch(`/centers/${centerId}/patients/${patientId}/consents/clinical/`, {
     method: 'DELETE',
     body: { guardian_link: guardianLinkId },
+  });
+}
+
+/* ── S10 — préférences de contact au guichet (ADR 0023 décision 1) ── */
+
+/**
+ * Ce que le patient accepte de recevoir, lu au comptoir.
+ *
+ * **La LECTURE est ouverte à tout membre actif, y compris sur un profil
+ * revendiqué** : le guichet doit pouvoir répondre « non, on ne vous enverra
+ * pas de rappel » sans rien modifier. Forme complète et constante — aucune
+ * ligne n'est créée par un GET, et l'absence n'est jamais une erreur.
+ */
+export function getPatientContactPreferences(
+  centerId: number,
+  patientId: number,
+): Promise<PatientContactPreferences> {
+  return apiFetch(`/centers/${centerId}/patients/${patientId}/contact-preferences/`);
+}
+
+/**
+ * Enregistrer au guichet ce que la personne a dit de vive voix — **profil NON
+ * revendiqué seulement** (400 explicite sinon : « la personne gère elle-même
+ * ses préférences », règle identique au consentement clinique porte C).
+ * L'écran doit le dire AVANT le geste, pas après.
+ *
+ * PUT et non PATCH : le formulaire de guichet se remplit en entier, pour
+ * qu'aucune préférence ne reste silencieusement à sa valeur d'avant sans que
+ * l'agent l'ait vue.
+ */
+export function updatePatientContactPreferences(
+  centerId: number,
+  patientId: number,
+  preferences: { appointment_reminders: boolean; missed_appointment_followup: boolean },
+): Promise<PatientContactPreferences> {
+  return apiFetch(`/centers/${centerId}/patients/${patientId}/contact-preferences/`, {
+    method: 'PUT',
+    body: preferences,
   });
 }
 

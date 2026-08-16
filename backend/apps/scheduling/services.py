@@ -17,9 +17,11 @@ Business guards implemented here:
 - **J-1 reminders** (Celery beat, 18:00 Comoros time): SMS content follows
   ADR 0012 strictly — never the reason, never the practitioner, never the
   center name (a patient phone may be declarative and shared in the
-  household). Anti-duplicate via ``reminder_sent_at``, reset when the
+  household). Anti-duplicate via ``reminder_sent_at``, **relu sous verrou
+  de ligne depuis S10** (dette SV.2 soldée — ADR 0023), reset when the
   appointment is MOVED so a rescheduled slot is re-notified if it lands on
-  « tomorrow » again.
+  « tomorrow » again. **Refusable depuis S10** :
+  ``PatientContactPreference.appointment_reminders``.
 """
 
 import logging
@@ -30,6 +32,7 @@ from django.db import models, transaction
 from django.utils import timezone
 
 from apps.common.notifications import _patient_phone, notify_appointment_reminder
+from apps.patients.models import patient_accepts
 from apps.scheduling.models import Appointment
 
 logger = logging.getLogger("chioni.scheduling")
@@ -299,6 +302,24 @@ def send_appointment_reminders():
     A phoneless patient is skipped silently (DEBUG log) and the flag stays
     NULL — harmless, the slot is only « tomorrow » once.
 
+    **La ligne est RELUE SOUS VERROU avant l'écriture du drapeau** (S10 —
+    dette SV.2 soldée, ADR 0023 décision 4). Le guardian S5 avait noté que
+    cette boucle avait « exactement la forme » de la faille de double-envoi
+    corrigée sur les relances d'abonnement : un anti-doublon lu hors verrou
+    n'est pas un anti-doublon. Deux exécutions qui se chevauchent — un beat
+    qui double-déclenche, une tâche rejouée après un timeout — lisaient
+    toutes deux ``reminder_sent_at IS NULL`` et faisaient partir DEUX fois
+    le même rappel. Le verrou sert aussi à relire l'ÉTAT : un rendez-vous
+    annulé ou déplacé entre la sélection et l'écriture ne doit plus être
+    rappelé (l'ancienne boucle envoyait l'heure d'un créneau qui n'existait
+    plus).
+
+    **Le rappel est refusable depuis S10** (ADR 0023 décision 1) : un
+    patient qui a coupé ``appointment_reminders`` est écarté AVANT la
+    transaction, donc son drapeau reste NULL — s'il rouvre le canal, le
+    rendez-vous redevient éligible au passage suivant. La notification
+    revérifie la préférence de son côté (défense en profondeur).
+
     Returns the number of reminders queued.
     """
     tomorrow = timezone.localdate() + timedelta(days=1)
@@ -322,9 +343,37 @@ def send_appointment_reminders():
                 appointment.pk,
             )
             continue
+        if not patient_accepts(appointment.patient, "appointment_reminders"):
+            logger.debug(
+                "Rappel J-1 ignoré (canal refusé par la personne) : RDV #%s.",
+                appointment.pk,
+            )
+            continue
         with transaction.atomic():
-            appointment.reminder_sent_at = timezone.now()
-            appointment.save(update_fields=["reminder_sent_at", "updated_at"])
-            notify_appointment_reminder(appointment)
+            locked = (
+                # ``of=("self",)`` verrouille LA LIGNE DU RENDEZ-VOUS et
+                # elle seule. Sans ce paramètre, le ``select_related`` sur
+                # ``patient__user`` (nullable — un profil non revendiqué
+                # n'a pas de compte) produit une jointure EXTERNE, et
+                # PostgreSQL refuse un ``FOR UPDATE`` posé sur le côté
+                # possiblement NULL d'une telle jointure. Verrouiller le
+                # patient et son compte n'aurait de toute façon aucun sens
+                # ici : ce qu'on sérialise, c'est le drapeau du rappel.
+                Appointment.objects.select_for_update(of=("self",))
+                .select_related("patient__user")
+                .get(pk=appointment.pk)
+            )
+            if (
+                locked.reminder_sent_at is not None
+                or locked.status != Status.SCHEDULED
+                or not (day_start <= locked.scheduled_at < day_end)
+            ):
+                # Une exécution concurrente a pris ce rappel, ou le
+                # rendez-vous a bougé/été clos entre la sélection et le
+                # verrou : on n'envoie rien et on ne brûle pas le drapeau.
+                continue
+            locked.reminder_sent_at = timezone.now()
+            locked.save(update_fields=["reminder_sent_at", "updated_at"])
+            notify_appointment_reminder(locked)
         sent += 1
     return sent
