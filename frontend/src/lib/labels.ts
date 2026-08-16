@@ -20,6 +20,8 @@ import type {
   Currency,
   DisputeStatus,
   EncounterStatus,
+  EquipmentCategory,
+  EquipmentStatus,
   ErasureBlocker,
   ErasureStatus,
   GenericCategory,
@@ -922,6 +924,14 @@ export const AUDIT_ACTION_LABELS: Record<AuditAction, string> = {
      nom de chambre peut être « Isolement tuberculose »). */
   'room.created': 'Chambre déclarée',
   'bed.created': 'Lit déclaré',
+  /* S8 — le parc de matériel. Comme pour les chambres, le libellé ne nomme
+     jamais l'appareil (« Échographe du service VIH » ferait d'une ligne de
+     parc une ligne clinique) : le backend n'en journalise que les ids et des
+     codes fermés. « Panne signalée » dit l'ÉVÉNEMENT, jamais le constat. */
+  'equipment.created': 'Équipement déclaré',
+  'equipment.updated': 'Fiche d’équipement modifiée',
+  'equipment.status_changed': 'État d’un équipement modifié',
+  'equipment.reported': 'Panne signalée',
   'invoice.created': 'Facture créée',
   'invoice.issued': 'Facture émise',
   'invoice.cancelled': 'Facture annulée',
@@ -984,6 +994,15 @@ export const AUDIT_ACTION_GROUPS: Array<{ label: string; actions: AuditAction[] 
   },
   { label: 'Tarifs', actions: ['tariff.created', 'tariff.updated'] },
   { label: 'Chambres et lits', actions: ['room.created', 'bed.created'] },
+  {
+    label: 'Équipements',
+    actions: [
+      'equipment.created',
+      'equipment.updated',
+      'equipment.status_changed',
+      'equipment.reported',
+    ],
+  },
   {
     label: 'Factures',
     actions: ['invoice.created', 'invoice.issued', 'invoice.cancelled'],
@@ -1107,6 +1126,19 @@ export const AUDIT_PAYLOAD_LABELS: Record<string, string> = {
   /* S6 — parc d'hébergement (références seules, jamais un nom de chambre). */
   room_id: 'Chambre',
   bed_id: 'Lit',
+  /* S8 — parc de matériel. Les clés couvrent les quatre actions
+     d'`apps/equipment/services.py` ; `status`, `center_id` et `fields` sont
+     déjà déclarés plus haut. `report_id` est la référence du constat — sa
+     DESCRIPTION n'est jamais journalisée, il n'y a donc aucune clé à lui
+     donner ici, et c'est voulu. */
+  equipment_id: 'Équipement',
+  /* `category` est déclaré plus bas (clé partagée avec le support) — une
+     seconde entrée serait une erreur de compilation, et surtout deux vérités
+     pour une même clé. */
+  from_status: 'État précédent',
+  to_status: 'Nouvel état',
+  report_id: 'Signalement',
+  equipment_status: 'État de l’équipement au moment du constat',
   /* factures et actes */
   invoice_id: 'Facture',
   encounter_id: 'Consultation',
@@ -1183,7 +1215,12 @@ export const AUDIT_PAYLOAD_LABELS: Record<string, string> = {
      fichier ne sont posés dans AUCUN payload par le backend, et n'ont donc
      aucune clé ici : rien à masquer, rien à rendre. */
   ticket_id: 'Demande d’aide',
-  category: 'Sujet de la demande',
+  /* `category` est une clé PARTAGÉE (support S5, équipements S8) : ce
+     dictionnaire est indexé par nom de clé, pas par action, donc son libellé
+     doit valoir pour les deux. « Sujet de la demande » était plus parlant côté
+     support, mais aurait été faux sur une ligne de parc — « Catégorie » est
+     juste des deux côtés, et la colonne « Action » lève l'ambiguïté. */
+  category: 'Catégorie',
   priority: 'Urgence déclarée',
   ticket_status: 'État de la demande',
   message_id: 'Message',
@@ -2573,3 +2610,301 @@ export const HRM_STATS_EMPTY =
 export const HRM_DIRECTOR_ONLY_TITLE = 'Écran réservé à la direction';
 export const HRM_DIRECTOR_ONLY_MESSAGE =
   'La feuille de présence, les congés et les dossiers du personnel portent des données personnelles : ils sont réservés à la direction du centre. Vous pouvez consulter le planning de l’équipe et votre propre dossier.';
+
+/* ════════════════════════════════════════════════════════════════════════════
+   S8 — ÉQUIPEMENTS (ADR 0021)
+
+   Le plus petit module du produit, et celui dont le TON compte le plus par
+   unité de texte. Deux règles gouvernent chaque phrase de cette section :
+
+   1. **Signaler ≠ décider.** Un signalement est un CONSTAT ; il ne change pas
+      l'état de l'appareil. Chaque phrase du parcours de signalement le
+      rappelle, jusqu'au message de succès qui NOMME l'état resté inchangé —
+      sans quoi l'infirmière croira avoir mis l'appareil hors service.
+   2. **Un constat est un service rendu à l'équipe, jamais une dénonciation ni
+      une réclamation.** Personne ne doit hésiter à le poser. Le vocabulaire
+      exclut donc « plainte », « responsable », « incident » et « faute » — et
+      le modèle backend n'a d'ailleurs aucun champ de responsabilité.
+
+   Rien de ce module n'est gelé par l'abonnement (décision 4) : aucune phrase
+   de gel ici, et il ne faut pas en ajouter.
+   ════════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * L'état officiel, tel que tout le staff le lit.
+ *
+ * `en_panne` n'est **jamais rendu en rouge d'alarme** (voir `EQUIPMENT_TONES`
+ * dans `screens/centre/shared.tsx`) : c'est une information de service, pas
+ * une faute — le même arbitrage que « Manqué » sur un rendez-vous.
+ */
+export const EQUIPMENT_STATUS_LABELS: Record<EquipmentStatus, string> = {
+  en_service: 'En service',
+  en_panne: 'En panne',
+  reforme: 'Réformé',
+};
+
+/** Ordre des pastilles de filtre (« Tous » est ajouté en tête par l'écran). */
+export const EQUIPMENT_STATUSES: EquipmentStatus[] = ['en_service', 'en_panne', 'reforme'];
+
+export const EQUIPMENT_CATEGORY_LABELS: Record<EquipmentCategory, string> = {
+  diagnostic: 'Diagnostic',
+  imagerie: 'Imagerie',
+  bloc_operatoire: 'Bloc opératoire',
+  laboratoire: 'Laboratoire',
+  mobilier_medical: 'Mobilier médical',
+  informatique: 'Informatique',
+  autre: 'Autre',
+};
+
+/** Les seules valeurs acceptées par `?category=` (hors liste → 400 par champ). */
+export const EQUIPMENT_CATEGORIES: EquipmentCategory[] = [
+  'diagnostic',
+  'imagerie',
+  'bloc_operatoire',
+  'laboratoire',
+  'mobilier_medical',
+  'informatique',
+  'autre',
+];
+
+/* ── en-têtes ── */
+
+export const EQUIPMENT_TITLE = 'Équipements';
+
+/** Ce que l'écran répond, en une phrase : ce qu'on a, où, et si ça marche. */
+export const EQUIPMENT_SUBTITLE = 'Le matériel du centre : où il se trouve, et s’il marche.';
+
+export const EQUIPMENT_DETAIL_BACK = 'Équipements';
+export const EQUIPMENT_SHEET_TITLE = 'Fiche de l’appareil';
+
+/* ── la distinction centrale du module, dite partout où elle peut manquer ── */
+
+/**
+ * Sur le formulaire de signalement, AVANT le champ. La phrase la plus
+ * importante du sprint : sans elle, on croit avoir mis l'appareil hors
+ * service en le signalant.
+ */
+export const EQUIPMENT_REPORT_NOT_A_STATUS =
+  'Votre signalement ne change pas l’état de l’appareil : il prévient l’équipe et la direction, qui décide de la suite.';
+
+/**
+ * Après l'envoi — et le message **nomme l'état resté inchangé**. Un
+ * « Signalement enregistré » seul laisserait exactement le doute que la phrase
+ * ci-dessus vient de lever.
+ */
+export function equipmentReportSaved(status: EquipmentStatus): string {
+  return `Signalement enregistré, merci. L’appareil reste noté « ${EQUIPMENT_STATUS_LABELS[status]} » : c’est la direction qui change l’état.`;
+}
+
+/** Le ton : un constat rendu service, pas une réclamation. */
+export const EQUIPMENT_REPORT_INVITE =
+  'Décrivez ce que vous avez constaté, avec vos mots. Un appareil signalé tôt est un appareil réparé tôt — personne n’est mis en cause.';
+
+/**
+ * L'honnêteté qui accompagne l'audience : ne JAMAIS promettre un anonymat qui
+ * n'existe pas. Le fil ne porte pas l'auteur, mais la direction, elle, le
+ * sait — le dire calmement vaut mieux qu'un silence qu'on découvrirait.
+ *
+ * La phrase **s'arrête là** (revue UX care S8) : elle finissait par « c'est
+ * elle qui décide de la suite », mot pour mot la fin de
+ * `EQUIPMENT_REPORT_NOT_A_STATUS` affichée trente mots plus haut dans la MÊME
+ * modale. Trois blocs de prose autour d'un seul champ, dont deux qui se
+ * répètent, c'est la dose au-delà de laquelle on ne lit plus rien — et ce
+ * qu'on cesse alors de lire, c'est justement la phrase du sprint.
+ */
+export const EQUIPMENT_REPORT_WHO_SEES =
+  'Votre nom n’apparaît pas dans le fil : l’équipe lit le constat, pas son auteur. La direction, elle, sait qui a signalé.';
+
+export const EQUIPMENT_REPORT_ACTION = 'Signaler une panne';
+export const EQUIPMENT_REPORT_SUBMIT = 'Envoyer le signalement';
+export const EQUIPMENT_REPORT_FIELD_LABEL = 'Ce que vous avez constaté';
+
+/** Append-only : on ne corrige pas, on ajoute. Dit au bon moment, pas en note. */
+export const EQUIPMENT_REPORT_APPEND_ONLY =
+  'Un signalement ne se modifie pas et ne s’efface pas. Pour corriger ou compléter, ajoutez-en un second — le fil garde les deux.';
+
+export const EQUIPMENT_REPORTS_TITLE = 'Signalements';
+export const EQUIPMENT_REPORTS_SUBTITLE = 'Du plus récent au plus ancien';
+
+export const EQUIPMENT_REPORTS_EMPTY_TITLE = 'Aucun signalement';
+export const EQUIPMENT_REPORTS_EMPTY_MESSAGE =
+  'Personne n’a encore rien constaté sur cet appareil. Si quelque chose ne va pas, dites-le ici : c’est utile à toute l’équipe.';
+
+/** L'appareil est sorti du parc : le formulaire est masqué, et on dit pourquoi. */
+export const EQUIPMENT_REPORT_CLOSED_REFORME =
+  'Cet appareil est réformé : il n’est plus en service, on n’y signale donc plus de panne. Les constats déjà posés restent lisibles ci-dessous.';
+
+/* ── compteurs de lecture du tableau ── */
+
+export function equipmentReportCountLabel(count: number): string {
+  if (count === 0) return 'Aucun';
+  return count === 1 ? '1 signalement' : `${count} signalements`;
+}
+
+export function equipmentLastReportLabel(iso: string): string {
+  return `dernier le ${formatDate(iso)}`;
+}
+
+/** Le résumé du parc — affiché SEULEMENT quand aucun filtre ne le fausse. */
+export function equipmentParkSummary(total: number, broken: number, retired: number): string {
+  const parts = [total === 1 ? '1 appareil' : `${total} appareils`];
+  if (broken > 0) parts.push(broken === 1 ? '1 en panne' : `${broken} en panne`);
+  if (retired > 0) parts.push(retired === 1 ? '1 réformé' : `${retired} réformés`);
+  return parts.join(' · ');
+}
+
+/* ── le geste du directeur : changer l'état ── */
+
+export const EQUIPMENT_STATUS_SECTION_TITLE = 'État de l’appareil';
+
+/** Qui décide, dit à ceux qui ne décident pas — sans les renvoyer nulle part. */
+export const EQUIPMENT_STATUS_DIRECTOR_ONLY =
+  'Seule la direction change l’état officiel d’un appareil. Vous pouvez signaler une panne à tout moment : c’est le geste qui déclenche la décision.';
+
+export const EQUIPMENT_MARK_BROKEN = 'Noter en panne';
+export const EQUIPMENT_MARK_IN_SERVICE = 'Remettre en service';
+export const EQUIPMENT_RETIRE = 'Réformer';
+
+/** `en_service ⇄ en_panne` est RÉVERSIBLE : le dire distingue ce geste-là du
+    seul geste définitif de l'écran, juste à côté. */
+export const EQUIPMENT_STATUS_REVERSIBLE =
+  '« En service » et « en panne » se corrigent l’un par l’autre : vous pourrez revenir sur ce choix.';
+
+export function equipmentStatusChanged(status: EquipmentStatus): string {
+  return `État mis à jour : l’appareil est noté « ${EQUIPMENT_STATUS_LABELS[status]} ».`;
+}
+
+/* ── réformer : le seul geste définitif du module ── */
+
+export const EQUIPMENT_RETIRE_TITLE = 'Réformer cet appareil';
+
+/**
+ * Ce que réformer fait — et, tout aussi important, ce que ça ne fait PAS.
+ * Un équipement ne se supprime jamais : le parc raconte son histoire, y
+ * compris ce qui en est sorti. Le dire évite la peur d'effacer une trace.
+ */
+export const EQUIPMENT_RETIRE_WARNING =
+  'Réformer sort définitivement l’appareil du service. C’est le seul geste de cet écran sur lequel on ne peut pas revenir : un appareil réformé ne peut plus être remis en service, et on ne peut plus y signaler de panne.';
+
+export const EQUIPMENT_RETIRE_KEEPS =
+  'L’appareil n’est pas supprimé : sa fiche et ses signalements restent lisibles dans la liste. Le parc garde la mémoire de ce qui en est sorti.';
+
+export const EQUIPMENT_RETIRE_CONFIRM = 'Réformer définitivement';
+
+/**
+ * Le constat, une fois la réforme faite, sur la fiche elle-même.
+ *
+ * `EQUIPMENT_RETIRE_KEEPS` y était réemployé (revue UX care S8) : écrite pour
+ * la modale, elle est tournée vers l'avenir et renvoie « dans la liste » — ce
+ * qui sonne faux quand on est justement EN TRAIN de lire la fiche. Même
+ * promesse, au bon temps et au bon endroit.
+ */
+export const EQUIPMENT_RETIRED_NOTE =
+  'Cet appareil est sorti du service. Sa fiche et ses signalements restent consultables.';
+
+/* ── déclarer et corriger une fiche (directeur seul) ── */
+
+export const EQUIPMENT_CREATE_ACTION = 'Déclarer un équipement';
+export const EQUIPMENT_CREATE_TITLE = 'Déclarer un équipement';
+export const EQUIPMENT_EDIT_ACTION = 'Modifier la fiche';
+export const EQUIPMENT_EDIT_TITLE = 'Modifier la fiche';
+
+export const EQUIPMENT_NAME_LABEL = 'Nom de l’appareil';
+export const EQUIPMENT_NAME_HINT =
+  'Le nom que votre équipe emploie : « Échographe salle 2 », « Tensiomètre accueil ».';
+
+export const EQUIPMENT_CATEGORY_LABEL = 'Catégorie';
+
+export const EQUIPMENT_LOCATION_LABEL = 'Emplacement';
+
+/** Texte libre ASSUMÉ (décision 2) : un échographe vit là où il vit. */
+export const EQUIPMENT_LOCATION_HINT =
+  'Écrivez-le comme vous le diriez : « bloc », « salle d’accouchement », « couloir de l’accueil ». Facultatif.';
+
+export const EQUIPMENT_SERIAL_LABEL = 'Numéro de série';
+
+/** Libre et NON unique : deux appareils identiques sans numéro sont normaux. */
+export const EQUIPMENT_SERIAL_HINT =
+  'Facultatif, et sans format imposé. Deux appareils identiques peuvent porter le même numéro, ou aucun.';
+
+export const EQUIPMENT_COMMISSIONED_LABEL = 'Mis en service le';
+export const EQUIPMENT_COMMISSIONED_HINT =
+  'Facultatif — la date à partir de laquelle l’appareil sert.';
+
+export const EQUIPMENT_NOTES_LABEL = 'Notes';
+export const EQUIPMENT_NOTES_HINT =
+  'Ce qui aide à s’en servir ou à le réparer : accessoires, contact du réparateur, particularités. Facultatif.';
+
+export const EQUIPMENT_NO_SERIAL = 'Sans numéro';
+export const EQUIPMENT_NO_LOCATION = 'Emplacement non précisé';
+export const EQUIPMENT_NO_NOTES = 'Aucune note';
+export const EQUIPMENT_NO_COMMISSIONED = 'Non précisée';
+
+/** Le parc n'a AUCUNE valeur financière, et c'est une décision (ADR 0021 §3). */
+export const EQUIPMENT_NO_MONEY_NOTICE =
+  'Cette fiche ne porte ni prix d’achat, ni valeur : le parc sert à savoir ce qui marche, pas à faire de la comptabilité.';
+
+/* ── recherche, filtres, états vides ── */
+
+export const EQUIPMENT_SEARCH_PLACEHOLDER = 'Rechercher un appareil, un emplacement, un numéro…';
+
+/**
+ * La recherche travaille sur la liste DÉJÀ chargée : le dire, sinon on doute.
+ *
+ * **Deux phrases, parce qu'une seule mentait par omission** (revue UX care
+ * S8). « La recherche porte sur la liste affichée » est exact mais inerte : il
+ * ne dit ni ce qui manque, ni quoi faire. Or le piège est réel — pastille
+ * « En panne » active, on tape « échographe », on ne trouve rien, et on en
+ * conclut que le centre n'a pas d'échographe. Sous filtre, la phrase nomme
+ * donc la cause ET le geste qui la lève.
+ */
+export const EQUIPMENT_SEARCH_LOCAL_HINT =
+  'La recherche porte sur les appareils listés ci-dessous.';
+
+export const EQUIPMENT_SEARCH_FILTERED_HINT =
+  'La recherche porte sur les appareils du filtre choisi. Effacez les filtres pour chercher dans tout le parc.';
+
+export const EQUIPMENT_SEARCH_LABEL = 'Rechercher';
+export const EQUIPMENT_FILTER_STATUS_GROUP = 'Filtrer par état';
+export const EQUIPMENT_FILTER_ALL = 'Tous';
+export const EQUIPMENT_FILTER_ALL_CATEGORIES = 'Toutes les catégories';
+export const EQUIPMENT_FILTER_CLEAR = 'Effacer les filtres';
+
+/* ── colonnes du tableau de parc ── */
+
+export const EQUIPMENT_COL_NAME = 'Appareil';
+export const EQUIPMENT_COL_STATUS = 'État';
+export const EQUIPMENT_OPEN_SR = 'Ouvrir';
+
+/** Confirmation de déclaration — elle NOMME l'appareil, elle ne dit pas « ok ». */
+export function equipmentCreated(name: string): string {
+  return `« ${name} » est déclaré dans le parc.`;
+}
+
+export function equipmentUpdated(name: string): string {
+  return `La fiche de « ${name} » est à jour.`;
+}
+
+export const EQUIPMENT_EMPTY_TITLE = 'Aucun équipement déclaré';
+
+export const EQUIPMENT_EMPTY_DIRECTOR =
+  'Commencez par le matériel que votre équipe utilise tous les jours : tensiomètre, échographe, centrifugeuse. Vous pourrez compléter au fil du temps.';
+
+export const EQUIPMENT_EMPTY_STAFF =
+  'Le parc de matériel n’est pas encore décrit. C’est la direction du centre qui déclare les appareils.';
+
+export const EQUIPMENT_FILTER_EMPTY_TITLE = 'Aucun appareil ne correspond';
+export const EQUIPMENT_FILTER_EMPTY_MESSAGE =
+  'Essayez un autre état, une autre catégorie, ou effacez les filtres.';
+
+/**
+ * L'état vide de la RECHERCHE, distinct de celui des filtres : « essayez un
+ * autre état » ne répond pas à quelqu'un qui vient de taper un nom. Cet
+ * état-là n'apparaît que lorsque la liste chargée n'est PAS vide — la seule
+ * cause possible est donc la recherche, et le message peut la nommer.
+ */
+export const EQUIPMENT_SEARCH_EMPTY_MESSAGE =
+  'Aucun appareil de la liste ne correspond à ce que vous avez tapé. Vérifiez l’orthographe, ou effacez les filtres pour chercher dans tout le parc.';
+
+export const EQUIPMENT_NOT_FOUND_TITLE = 'Équipement introuvable';
+export const EQUIPMENT_NOT_FOUND_MESSAGE = 'Cet appareil n’existe pas dans ce centre.';

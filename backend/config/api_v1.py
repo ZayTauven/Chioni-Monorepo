@@ -37,6 +37,11 @@ urlpatterns = [
     # personne existe DANS un centre, jamais au-dessus (invariant 1).
     # Aucune route `guardian/`, `patients/me/` ni `platform/`.
     path("", include("apps.hrm.urls")),
+    # S8 (ADR 0021) — `centers/{c}/equipment/…` SEULEMENT : le parc
+    # appartient au centre. Aucune route `guardian/`, `patients/me/` ni
+    # `platform/` — un tuteur, un patient et un exploitant Chioni n'ont
+    # rien à voir avec le matériel d'un établissement.
+    path("", include("apps.equipment.urls")),
     path("", include("apps.trustbridge.urls")),
     # S5 — `centers/{c}/subscription/` (directeur seul) : l'app porte
     # l'objet, l'URL dit quelle casquette le lit.

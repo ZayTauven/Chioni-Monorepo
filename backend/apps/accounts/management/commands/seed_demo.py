@@ -59,6 +59,8 @@ from apps.centers.models import (
     TariffItem,
 )
 from apps.common.models import ActCategory, Currency
+from apps.equipment import services as equipment_services
+from apps.equipment.models import Equipment
 from apps.hrm import services as hrm_services
 
 # ``Department``/``JobTitle`` sont VOLONTAIREMENT absents de cet import :
@@ -124,6 +126,24 @@ TARIFFS = (
     ("MEDI01", "Médicaments", ActCategory.MEDICAMENTS, "8000"),
     ("ECHO01", "Échographie", ActCategory.ACTE_TECHNIQUE, "12000"),
 )
+
+#: S8 (ADR 0021) — le parc de démonstration : (nom, catégorie, emplacement,
+#: numéro de série, mise en service). L'emplacement est un TEXTE (décision 2)
+#: — aucun de ces quatre appareils n'est rattaché à une chambre, et
+#: « Salle d'accouchement » n'en est pas une.
+EQUIPMENTS = (
+    ("Tensiomètre électronique", "diagnostic", "Salle de consultation 1",
+     "TNS-2451", date(2024, 3, 12)),
+    ("Échographe portable", "imagerie", "Salle d'échographie",
+     "ECHO-77A", date(2023, 9, 4)),
+    ("Centrifugeuse de laboratoire", "laboratoire", "Laboratoire", "", None),
+    ("Table d'accouchement", "mobilier_medical", "Salle d'accouchement",
+     "", date(2022, 1, 20)),
+)
+
+#: Celui qui est EN PANNE dans la démo — signalé par la médecin, mis hors
+#: service par le directeur : deux gestes, deux personnes (décision 1).
+BROKEN_EQUIPMENT = "Échographe portable"
 
 #: (username, first name, last name, phone, role) — distinct fictional +269.
 STAFF = (
@@ -243,6 +263,9 @@ class Command(BaseCommand):
             center=center, director=director, doctor=doctor, patient=patient,
         )
         hrm = self._ensure_hrm(center=center, director=director, staff=staff)
+        equipment = self._ensure_equipment(
+            center=center, director=director, doctor=doctor
+        )
         self._ensure_erasure_request(user=guardian2)
 
         return {
@@ -254,6 +277,7 @@ class Command(BaseCommand):
             "support_ticket": support_ticket,
             "stay": stay,
             "hrm": hrm,
+            "equipment": equipment,
         }
 
     def _ensure_superuser(self):
@@ -693,6 +717,55 @@ class Command(BaseCommand):
             "approved_leave": approved,
             "pending_leave": pending,
         }
+
+    def _ensure_equipment(self, *, center, director, doctor):
+        """S8 (ADR 0021) — quatre équipements, dont un EN PANNE avec son
+        signalement.
+
+        Le scénario rend la décision 1 démontrable en deux clics : c'est la
+        **médecin** qui signale (« la sonde ne s'allume plus »), et c'est le
+        **directeur** qui met l'appareil en panne. Deux gestes, deux
+        personnes — le signalement, lui, n'a rien changé.
+
+        Passe par les vrais services (audit, machine à états) — jamais un
+        ``objects.create`` de complaisance. Idempotent : les appareils sont
+        retrouvés par (centre, nom), le signalement par son existence.
+        """
+        created = 0
+        for name, category, location, serial_number, commissioned_on in EQUIPMENTS:
+            if Equipment.objects.for_center(center).filter(name=name).exists():
+                continue
+            equipment_services.create_equipment(
+                actor=director, center=center, name=name, category=category,
+                location=location, serial_number=serial_number,
+                commissioned_on=commissioned_on,
+            )
+            created += 1
+        self._note(
+            f"Équipements : {created} appareil(s) déclaré(s) "
+            f"({Equipment.objects.for_center(center).count()} au parc)."
+        )
+
+        broken = Equipment.objects.for_center(center).get(name=BROKEN_EQUIPMENT)
+        if broken.reports.exists():
+            self._note("Équipements : signalement de démo déjà en place.")
+            return {"broken": broken}
+        equipment_services.report_equipment_issue(
+            actor=doctor, equipment=broken,
+            description=(
+                "La sonde ne s'allume plus depuis ce matin : l'écran reste "
+                "noir malgré une batterie chargée."
+            ),
+        )
+        equipment_services.set_equipment_status(
+            actor=director, equipment=broken,
+            status=Equipment.Status.OUT_OF_ORDER,
+        )
+        self._note(
+            "Équipements : l'échographe est signalé par medecin.demo, puis "
+            "mis « en panne » par le directeur (deux gestes, deux personnes)."
+        )
+        return {"broken": broken}
 
     def _ensure_erasure_request(self, *, user):
         """S4 lot 3 (ADR 0017 §7) — one PENDING erasure request to demo.
@@ -1212,6 +1285,17 @@ class Command(BaseCommand):
                 f"{hrm['approved_leave'].end_date} pour medecin.demo, "
                 f"demande annuelle en attente pour secretaire.demo."
             )
+        equipment = state.get("equipment")
+        if equipment:
+            broken = equipment["broken"]
+            write("")
+            write(
+                f"Équipements : {Equipment.objects.for_center(center).count()} "
+                f"appareils au parc — « {broken.name} » "
+                f"{broken.get_status_display().lower()}, "
+                f"{broken.reports.count()} signalement(s) (constat de la "
+                "médecin, décision du directeur)."
+            )
         write("")
         write("État du Pont de Confiance :")
         if payment_request is not None:
@@ -1302,6 +1386,15 @@ class Command(BaseCommand):
             "présence en tant que directeur → refusé, (b) demander un "
             "congé en tant que secretaire.demo → ça passe. Le gel ferme "
             "l'administration du centre, jamais les données d'une personne.",
+            "17. Équipements : GET /api/v1/centers/{id}/equipment/ — "
+            "l'échographe est « en panne ». Ouvrir ses signalements "
+            "(GET .../equipment/{id}/reports/) avec caissier.demo puis avec "
+            "directeur.demo : le CONSTAT est le même, seul le directeur voit "
+            "QUI a signalé (ADR 0021). Signaler une panne avec "
+            "caissier.demo (POST .../reports/) passe ; changer l'état "
+            "(POST .../status/) lui répond 403 — tout staff signale, le "
+            "directeur décide. Et sur un centre suspendu, les trois gestes "
+            "passent : le gel n'atteint jamais le parc.",
         ):
             write(f"  {step}")
         write("")

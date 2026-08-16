@@ -65,6 +65,13 @@ const NAV_ROLE_GATES: Record<string, StaffRole[]> = {
   // ouvert dont trois onglets sur quatre répondent 403) aurait été pire
   // encore. Deux portes, deux audiences, deux entrées.
   'centre.registre': DIRECTOR_ONLY,
+  // S8 (ADR 0021) — « Équipements » (`centre.equipements`) n'est
+  // volontairement PAS gaté, et l'absence est aussi délibérée que les
+  // présences ci-dessus : la LECTURE du parc est ouverte à tout membre actif
+  // (c'est l'infirmière qui a besoin de savoir si l'échographe marche), et le
+  // geste central du module — signaler une panne — lui est ouvert aussi.
+  // Seules l'écriture du parc et la machine à états sont directeur seul, et
+  // elles sont gardées DANS l'écran, là où le backend les refuse.
 };
 
 /** Shared with the command palette — one source of truth for nav visibility.

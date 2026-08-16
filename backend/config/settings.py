@@ -62,6 +62,13 @@ INSTALLED_APPS = [
     # médecin qui est aussi directeur. Et une fonction n'est JAMAIS un droit
     # (décision 2) : aucun module hors de cette app n'importe ses libellés.
     "apps.hrm",
+    # S8 (ADR 0021) — inventaire des équipements. App à part de `centers` :
+    # le parc a sa machine à états (`reforme` est terminal) et son
+    # signalement append-only, là où `centers` porte le tenant et ses
+    # tarifs. C'est le plus petit module du plan, et le seul avec
+    # `inpatient` et `support` dont AUCUNE écriture n'est gelable
+    # (décision 4) : signaler une panne doit toujours passer.
+    "apps.equipment",
     "apps.trustbridge",
     # S5 (ADR 0018) — abonnement SaaS Chioni → centre. REGISTRE SÉPARÉ :
     # cette app n'écrit jamais dans le ledger des soins (ADR 0003).

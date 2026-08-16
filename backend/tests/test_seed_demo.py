@@ -38,6 +38,7 @@ from apps.centers.models import (
     TariffItem,
 )
 from apps.common.models import ActCategory
+from apps.equipment.models import Equipment, EquipmentReport
 from apps.hrm.models import (
     AttendanceRecord,
     Department,
@@ -407,6 +408,30 @@ class TestSeedDemoScenario:
         assert pending.end_date >= approved.start_date
 
     @override_settings(DEBUG=True)
+    def test_equipment_park_is_seeded_with_one_broken_device(self):
+        """S8 (ADR 0021) — quatre équipements, dont un EN PANNE avec son
+        signalement. Le scénario montre les DEUX gestes : la médecin
+        constate, le directeur décide."""
+        from apps.equipment.models import Equipment, EquipmentReport
+
+        run_command()
+        center = HealthCenter.objects.get(name="Clinique Ylang")
+
+        park = Equipment.objects.for_center(center)
+        assert park.count() == 4
+        assert park.filter(status=Equipment.Status.IN_SERVICE).count() == 3
+
+        broken = park.get(name="Échographe portable")
+        assert broken.status == Equipment.Status.OUT_OF_ORDER
+        assert broken.category == Equipment.Category.IMAGING
+        # L'emplacement est un TEXTE, jamais une chambre (décision 2).
+        assert broken.location == "Salle d'échographie"
+
+        report = EquipmentReport.objects.for_center(center).get()
+        assert report.equipment_id == broken.pk
+        assert report.reported_by.username == "medecin.demo"
+
+    @override_settings(DEBUG=True)
     def test_recap_output_names_the_accounts_and_the_demo_flow(self):
         output = run_command()
 
@@ -480,6 +505,9 @@ class TestSeedDemoIdempotence:
             "holidays": Holiday.objects.count(),
             "attendance": AttendanceRecord.objects.count(),
             "leaves": LeaveRequest.objects.count(),
+            # S8 (ADR 0021) — le parc et ses signalements.
+            "equipments": Equipment.objects.count(),
+            "equipment_reports": EquipmentReport.objects.count(),
         }
 
 

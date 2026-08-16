@@ -54,6 +54,12 @@ const PATHS: Record<string, string> = {
   // planchette du registre papier qu'on numérise.
   'calendar-user': '<path d="M13 21h-7a2 2 0 0 1 -2 -2v-12a2 2 0 0 1 2 -2h12a2 2 0 0 1 2 2v5"/><path d="M16 3v4"/><path d="M8 3v4"/><path d="M4 11h16"/><path d="M19 22v-1a2 2 0 0 0 -2 -2h-2a2 2 0 0 0 -2 2v1"/><path d="M18 13a2 2 0 1 0 -4 0a2 2 0 0 0 4 0"/>',
   'clipboard-list': '<path d="M9 5h-2a2 2 0 0 0 -2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2 -2v-12a2 2 0 0 0 -2 -2h-2"/><path d="M9 3m0 2a2 2 0 0 1 2 -2h2a2 2 0 0 1 2 2v0a2 2 0 0 1 -2 2h-2a2 2 0 0 1 -2 -2z"/><path d="M9 12l.01 0"/><path d="M13 12l2 0"/><path d="M9 16l.01 0"/><path d="M13 16l2 0"/>',
+  // S8 (ADR 0021) — le parc de matériel. Un moniteur avec sa courbe : c'est
+  // l'objet que le personnel reconnaît, là où une clé à molette aurait dit
+  // « maintenance » (un chantier que le module ne fait PAS) et un carton
+  // « stock » (la pharmacie est hors périmètre).
+  'device-heart-monitor':
+    '<path d="M3 4m0 2a2 2 0 0 1 2 -2h14a2 2 0 0 1 2 2v10a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2z"/><path d="M7 20h10"/><path d="M9 16v4"/><path d="M15 16v4"/><path d="M7 10h2l2 3l2 -6l1 3h3"/>',
   // Not in the template registry — Tabler outline transcriptions on the same contract.
   'cash-banknote': '<path d="M3 6m0 2a2 2 0 0 1 2 -2h14a2 2 0 0 1 2 2v8a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2z"/><path d="M12 12m-2 0a2 2 0 1 0 4 0a2 2 0 1 0 -4 0"/><path d="M6 12h.01"/><path d="M18 12h.01"/>',
   'file-alert': '<path d="M14 3v4a1 1 0 0 0 1 1h4"/><path d="M17 21h-10a2 2 0 0 1 -2 -2v-14a2 2 0 0 1 2 -2h7l5 5v11a2 2 0 0 1 -2 2z"/><path d="M12 17h.01"/><path d="M12 11v3"/>',

@@ -190,7 +190,15 @@ class TestGuardianLockS3:
         congés du personnel d'un centre, et un type de congé (maladie,
         maternité, deuil) est de la donnée de santé sur une personne. Les
         marqueurs RH et le module ``hrm`` s'ajoutent donc ici.
+
+        **Étendue par S8 (ADR 0021)** : le parc d'équipements ne porte ni
+        clinique ni argent, mais il n'a rien non plus à faire chez un
+        tuteur, un patient ou un exploitant Chioni — c'est du matériel
+        d'établissement. L'interdit doit être explicite plutôt
+        qu'accidentel : marqueurs ``equipment``/``equipments`` et module
+        ``equipment`` ajoutés ici.
         """
+        from apps.equipment import urls as equipment_urls
         from apps.hrm import urls as hrm_urls
         from apps.inpatient import urls as inpatient_urls
         from apps.medical import urls as medical_urls
@@ -201,6 +209,7 @@ class TestGuardianLockS3:
             + [str(u.pattern) for u in medical_urls.urlpatterns]
             + [str(u.pattern) for u in inpatient_urls.urlpatterns]
             + [str(u.pattern) for u in hrm_urls.urlpatterns]
+            + [str(u.pattern) for u in equipment_urls.urlpatterns]
         )
         clinical_markers = (
             "medical-file", "vital-signs", "documents", "insurances",
@@ -209,14 +218,16 @@ class TestGuardianLockS3:
             # S7 — RH
             "hrm", "employments", "attendance", "leaves", "schedule",
             "departments", "job-titles", "holidays",
+            # S8 — équipements
+            "equipment", "equipments",
         )
         for route in all_routes:
             if route.startswith("guardian/"):
                 assert not any(m in route for m in clinical_markers), route
-        # Et les deux modules de sprint n'exposent AUCUNE route tuteur, quel
+        # Et les trois modules de sprint n'exposent AUCUNE route tuteur, quel
         # que soit son nom : l'absence est vérifiée de front, pas seulement
         # par l'absence de marqueur.
-        for module in (inpatient_urls, hrm_urls):
+        for module in (inpatient_urls, hrm_urls, equipment_urls):
             assert not [
                 str(u.pattern)
                 for u in module.urlpatterns
@@ -225,10 +236,12 @@ class TestGuardianLockS3:
         # S7 : le RH ne vit ni dans l'espace patient, ni dans le
         # back-office plateforme. Le dossier RH d'une personne existe DANS
         # un centre, jamais au-dessus (ADR 0020, invariants 1 et 5).
-        for pattern in hrm_urls.urlpatterns:
-            route = str(pattern.pattern)
-            assert route.startswith("centers/"), route
-            assert not route.startswith(("patients/", "platform/")), route
+        # S8 : même clôture pour le parc — il appartient au centre.
+        for module in (hrm_urls, equipment_urls):
+            for pattern in module.urlpatterns:
+                route = str(pattern.pattern)
+                assert route.startswith("centers/"), route
+                assert not route.startswith(("patients/", "platform/")), route
 
 
 # ---------------------------------------------------------------------------

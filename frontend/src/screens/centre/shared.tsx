@@ -32,6 +32,7 @@ import type {
   ClaimStatus,
   DisputeStatus,
   EncounterStatus,
+  EquipmentStatus,
   InvoiceStatus,
   KycStatus,
   LeaveStatus,
@@ -282,6 +283,25 @@ export const STAY_PRIORITY_TONES: Record<StayPriority, BadgeTone> = {
   normale: 'neutral',
   urgente: 'warning',
   critique: 'danger',
+};
+
+/**
+ * S8 — l'état d'un appareil (ADR 0021).
+ *
+ * **`en_panne` n'est PAS un `danger`**, et c'est l'arbitrage de ton du sprint :
+ * un appareil en panne est une **information de service**, pas une faute. Le
+ * rouge d'alarme dirait « quelque chose a mal tourné » à côté d'un constat
+ * qu'on veut au contraire voir posé sans hésiter — c'est le même raisonnement
+ * que « Manqué » jamais rouge sur un rendez-vous, et qu'`annule` neutre sur un
+ * séjour. `warning` dit ce qu'il faut : quelque chose attend un geste.
+ *
+ * `reforme` est NEUTRE : l'appareil est sorti du parc, il n'y a plus rien à
+ * faire — le signaler en couleur ferait clignoter une page d'histoire.
+ */
+export const EQUIPMENT_TONES: Record<EquipmentStatus, BadgeTone> = {
+  en_service: 'success',
+  en_panne: 'warning',
+  reforme: 'neutral',
 };
 
 /**

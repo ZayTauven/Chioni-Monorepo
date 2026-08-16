@@ -95,6 +95,26 @@ DIRECTOR_JOURNAL_ACTIONS = frozenset(
         # classe qu'un diagnostic).
         AuditAction.LEAVE_REQUESTED,
         AuditAction.LEAVE_DECIDED,
+        # …et le PARC de l'établissement (S8, ADR 0021). Même ajout
+        # conscient : déclarer un équipement, corriger sa fiche, le mettre
+        # en panne ou le réformer est de la configuration d'exploitation,
+        # exactement comme un tarif ou une chambre — le directeur répond du
+        # matériel de sa maison. Les payloads ne portent que des ids et des
+        # CODES fermés : jamais un nom d'appareil, jamais un emplacement,
+        # jamais les notes.
+        #
+        # ``equipment.reported`` y entre AUSSI, et c'est un choix : le
+        # signalement est le seul objet du module où une personne apparaît,
+        # et le journal en résout le nom (``actor_display``) pour les
+        # membres de CE centre. C'est le miroir exact de l'arbitrage de
+        # lecture (ADR 0021 : le constat à tout le staff, son AUTEUR au
+        # directeur seul) — pas une fuite : la même personne, la même
+        # information, la même casquette. Le CONTENU du constat, lui, n'est
+        # dans aucun payload.
+        AuditAction.EQUIPMENT_CREATED,
+        AuditAction.EQUIPMENT_UPDATED,
+        AuditAction.EQUIPMENT_STATUS_CHANGED,
+        AuditAction.EQUIPMENT_REPORTED,
         # The SaaS subscription of THIS center (S5, ADR 0018 invariant 6).
         # A conscious addition: opening a contract, changing an offer or
         # freezing the administration are exploitation events of his own

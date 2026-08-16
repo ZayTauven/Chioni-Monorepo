@@ -371,6 +371,40 @@ def make_leave(employment=None, leave_type=None, start_date=None,
     return leave
 
 
+def make_equipment(center=None, name=None, category=None, status=None, **kwargs):
+    """Un équipement du parc (S8, ADR 0021).
+
+    Direct ORM on purpose (like ``make_room``): this factory sets a STATE —
+    ``create_equipment``, sa machine à états et son audit ont leurs propres
+    tests. ``save()`` est appelé, donc les invariants du modèle jouent.
+    """
+    from apps.equipment.models import Equipment
+
+    equipment = Equipment(
+        center=center or make_center(),
+        name=name or f"Tensiomètre {next(_seq)}",
+        category=category or Equipment.Category.DIAGNOSTIC,
+        status=status or Equipment.Status.IN_SERVICE,
+        **kwargs,
+    )
+    equipment.save()
+    return equipment
+
+
+def make_equipment_report(equipment=None, reported_by=None, description=None):
+    """Un signalement de panne — append-only, sans effet sur l'état."""
+    from apps.equipment.models import EquipmentReport
+
+    equipment = equipment or make_equipment()
+    report = EquipmentReport(
+        equipment=equipment,
+        reported_by=reported_by or make_user(),
+        description=description or "L'appareil ne s'allume plus.",
+    )
+    report.save()
+    return report
+
+
 def make_act(encounter=None, tariff_item=None):
     encounter = encounter or make_encounter()
     return ActPerformed.objects.create(

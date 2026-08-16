@@ -99,6 +99,16 @@ SENSITIVE_MODELS = {
     "hrm.AttendanceRecord",
     "hrm.LeaveRequest",
     "hrm.LeaveDocument",
+    # Équipements (S8, ADR 0021) — un parc porte une machine à états dont
+    # le dernier état est DÉFINITIF (``reforme``), et un formulaire d'admin
+    # serait le seul chemin capable d'y revenir. Les quatre écritures du
+    # module naissent auditées et lues par le directeur dans son journal :
+    # un appareil, une fiche corrigée ou un signalement faits à la main
+    # existeraient sans trace. Le signalement est en outre append-only —
+    # la base refuserait de toute façon, mais un écran qui propose le geste
+    # est déjà un mensonge.
+    "equipment.Equipment",
+    "equipment.EquipmentReport",
     # Patient identity and guardianship (ADR 0008 R-API-2, OTP-1)
     "patients.PatientProfile",
     "patients.GuardianProfile",

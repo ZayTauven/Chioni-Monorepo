@@ -260,7 +260,7 @@ _Gestes (rôles cliniques, sauf mention)_
   - Item : `{id, created_at, action, actor(id|null), actor_display(nom|null), target_type("app.model"|null), object_id, payload{…}}`. `payload` = **références seules** (ids, codes, montants en chaînes) — jamais un nom, jamais un texte libre, jamais de contenu clinique (contrat ADR 0007).
   - `actor_display` n'est rempli **que si l'acteur est membre de CE centre** (actif ou désactivé — l'historique reste lisible). Un patient, un tuteur, un exploitant Chioni ou une tâche système → `null` : afficher « — » ou l'id, ne jamais deviner un nom.
   - **Liste blanche d'actions** (rien d'autre n'existe dans ce flux) : `staff.membership_created|_updated|_deactivated|_reactivated`, `center.created|updated|kyc_changed`, `kyc_document.uploaded|archived`, `tariff.created|updated`, `room.created`, `bed.created`, `invoice.created|issued|cancelled`, `payment_request.created|sent|shared|unshared|care_confirmed|patient_acknowledged|closed`, `payment_intent.created|failed|cancelled`, `payment.recorded`, `payment.webhook_refused`, `cash_payment.recorded|reversed`, `dispute.opened|resolved`, `patient_profile.merged`.
-  - **Jamais** : le clinique (`encounter.*`, `prescription.*`, `health_record_entry.*`, `vital_signs.*`, `patient_document.*`, `patient_medical_file.*`) ni les consentements (`consent.*`) — la segmentation clinique de S3 tient aussi ici. Ne pas construire d'écran « qui a vu quel dossier ». **S6** : les séjours suivent la même règle — `stay.admitted|discharged|cancelled|days_billed`, `bed.assigned`, `bed.released` disent quel patient occupe quel lit et combien de temps ; seules `room.created` / `bed.created` (configuration du parc) entrent dans le journal. **S7** : la CONFIGURATION du travail y entre (`hrm_department.created|updated`, `hrm_job_title.created|updated`, `holiday.created|deleted`) ainsi que `leave.requested` et `leave.decided` (l'exploitation dont le directeur répond, **sans jamais le type du congé** — le payload porte des ids, un nombre de journées et un code de statut). En sont exclues `attendance.recorded` (volumétrie quotidienne **et** surveillance individuelle), `employment.created|updated`, `leave.cancelled` et les deux actions de justificatif : un journal daté « qui a déposé quelle pièce » serait un signal sur la santé d'une personne.
+  - **Jamais** : le clinique (`encounter.*`, `prescription.*`, `health_record_entry.*`, `vital_signs.*`, `patient_document.*`, `patient_medical_file.*`) ni les consentements (`consent.*`) — la segmentation clinique de S3 tient aussi ici. Ne pas construire d'écran « qui a vu quel dossier ». **S6** : les séjours suivent la même règle — `stay.admitted|discharged|cancelled|days_billed`, `bed.assigned`, `bed.released` disent quel patient occupe quel lit et combien de temps ; seules `room.created` / `bed.created` (configuration du parc) entrent dans le journal. **S7** : la CONFIGURATION du travail y entre (`hrm_department.created|updated`, `hrm_job_title.created|updated`, `holiday.created|deleted`) ainsi que `leave.requested` et `leave.decided` (l'exploitation dont le directeur répond, **sans jamais le type du congé** — le payload porte des ids, un nombre de journées et un code de statut). En sont exclues `attendance.recorded` (volumétrie quotidienne **et** surveillance individuelle), `employment.created|updated`, `leave.cancelled` et les deux actions de justificatif : un journal daté « qui a déposé quelle pièce » serait un signal sur la santé d'une personne. **S8** : les quatre actions du parc y entrent (`equipment.created|updated|status_changed|reported`) — configuration d'établissement, même famille qu'un tarif ; `actor_display` y résout le nom du signaleur **pour le directeur seul**, exactement comme le fait le sérialiseur des signalements.
   - `?action=` hors liste blanche (valeur inventée **ou** action clinique volontairement masquée) → **400 identique** `{"action": ["Action inconnue."]}` — pas d'oracle : ne pas proposer les actions cachées dans un sélecteur, se limiter à la liste blanche ci-dessus.
   - `?from=&to=` : **même contrat que les stats** (jours locaux Comores inclusifs, défaut 30 j, max 366 j, 400 par champ sur date malformée/impossible, `from` > `to`, période trop longue).
   - `journal_starts_at` (ISO|`null`) = date de la **première entrée du centre**, y compris une entrée non listée. Le journal ne rétro-remplit rien (table append-only + trigger PostgreSQL) : afficher honnêtement « Le journal de votre centre commence le … » et ne jamais laisser croire que l'historique est complet depuis l'ouverture du centre. `null` = aucune entrée : état vide, pas une erreur.
@@ -336,6 +336,49 @@ _Gel d'abonnement (ADR 0018 × ADR 0020 décision 7)_
 - `impaye` ne ferme **rien** (bannière + relances seulement).
 
 _Ce que le RH n'expose à personne d'autre_ : un **patient**, un **tuteur** et un **exploitant Chioni** reçoivent **404** sur toutes ces routes (aucun membership → le centre n'existe pas pour eux). Aucune route `guardian/`, `patients/me/` ou `platform/` ne touche le personnel.
+
+### Équipements (S8, ADR 0021) — `centers/{c}/equipment/…`
+
+**Doctrine** : ce que le centre possède, **où**, et **si ça marche**. C'est le plus petit module du produit et le moins sensible — ni patient, ni argent, ni donnée personnelle, **hormis le nom de qui signale une panne**. Deux règles gouvernent chaque écran, appliquées côté serveur :
+
+1. **Tout staff signale, le directeur décide.** Signaler une panne est un **constat** (c'est l'infirmière qui voit que le tensiomètre ne marche plus) ; changer l'état officiel est un **geste de directeur**. Ce sont deux gestes distincts, par deux personnes potentiellement différentes — **un signalement ne change PAS l'état de l'appareil**, et l'UI ne doit surtout pas le laisser croire.
+2. **Un équipement ne se supprime pas : il se réforme.** `reforme` est un état **terminal et définitif**. Pas de bouton « supprimer », jamais — le parc raconte son histoire, y compris ce qui en est sorti.
+
+_Le parc (lecture **tout staff actif**, écriture **DIRECTEUR**)_
+
+- `GET /centers/{c}/equipment/?status=&category=` — **non paginé** (le parc tient à l'écran). Item : `{id, name, category, serial_number, location, commissioned_on, status, notes, report_count, last_report_at, created_at, updated_at}`, trié par nom.
+  - `status ∈ en_service | en_panne | reforme` · `category ∈ diagnostic | imagerie | bloc_operatoire | laboratoire | mobilier_medical | informatique | autre`.
+  - Valeur de filtre inconnue → **400 par champ** (`{"status": ["État inconnu."]}` / `{"category": ["Catégorie inconnue."]}`) : ne proposer que les valeurs ci-dessus dans les sélecteurs.
+  - `report_count` / `last_report_at` (ISO|`null`) sont des compteurs de lecture : ils valent `0`/`null` dans la réponse d'une écriture (l'objet n'y est pas annoté) — ne pas s'en servir pour décider d'un rendu juste après un POST, relire la liste.
+- `POST /centers/{c}/equipment/` `{name*, category*, serial_number?, location?, commissioned_on?, notes?}` → **201** avec la fiche. **DIRECTEUR** (les autres casquettes → 403).
+  - `location` est un **texte libre**, jamais une chambre : tous les centres n'ont pas d'hospitalisation, et un échographe vit au bloc, en salle d'accouchement ou dans un couloir. Ne pas brancher de sélecteur sur `inpatient/rooms/`.
+  - `serial_number` est **libre et non unique** : deux appareils identiques sans numéro sont un cas normal. Ne pas valider de format côté écran, ne pas signaler un doublon comme une erreur.
+- `GET /centers/{c}/equipment/{pk}/` — tout staff. `PATCH` — **DIRECTEUR**, champs `{name?, category?, serial_number?, location?, commissioned_on?, notes?}`.
+  - **`status` n'est PAS modifiable par ce PATCH** (il serait ignoré en silence) : l'état a sa porte, ci-dessous, parce qu'elle seule connaît la machine à états.
+- `POST /centers/{c}/equipment/{pk}/status/` `{status*}` → **200** avec la fiche. **DIRECTEUR**.
+  - Machine à états : `en_service ⇄ en_panne`, et **les deux → `reforme`**, qui est **terminal**. Toute autre transition (y compris rejouer l'état courant, ou revenir d'une réforme) → **400** « Transition impossible : cet équipement est « … » ». Afficher le message tel quel.
+  - Geste **irréversible** côté réforme : le modaliser (confirmation explicite), au même titre qu'une annulation de facture.
+
+_Signalements de panne (**TOUT staff actif**, lecture ET écriture)_
+
+- `GET /centers/{c}/equipment/{pk}/reports/` — **paginé** (20/page), du plus récent au plus ancien.
+- `POST /centers/{c}/equipment/{pk}/reports/` `{description*}` → **201**. **Aucun autre champ** : l'équipement voyage dans l'URL et l'auteur est l'appelant (un `reported_by` envoyé dans le corps est ignoré — on ne signale jamais au nom d'un collègue).
+- **Append-only** : un signalement ne se corrige pas et ne se supprime pas — **on en poste un second** (« Corrigé : c'était le câble »). Ne construire ni bouton « modifier », ni bouton « supprimer », ni statut « résolu » : un signalement n'a pas de cycle de vie, c'est l'**état de l'équipement** qui dit où on en est.
+- Signaler un équipement **réformé** → 400 « Cet équipement est réformé : il n'est plus en service. » (masquer le formulaire dans ce cas).
+- **Le payload dépend de la casquette, et c'est LA décision du sprint** :
+  - **tout staff actif** → `{id, equipment, description, created_at}` — le constat et sa date, **sans son auteur** (ni nom, ni id) ;
+  - **directeur** → les mêmes champs **plus** `reported_by` (id) et `reported_by_display` (nom).
+  - Pourquoi : un signalement **ne change rien**, donc l'équipe n'a besoin d'aucun responsable pour agir — seulement de la phrase. Nommer le signaleur devant toute l'équipe refroidirait la prochaine panne (« qui a encore dit que l'appareil est cassé ? »), et `GET /centers/{c}/staff/` est déjà **directeur seul**. **Ne pas afficher « signalé par … » hors casquette directeur**, et ne pas tenter de résoudre l'auteur par un autre appel : il n'est pas dans le payload. Arbitrage **RÉVERSIBLE** (un champ).
+
+_Gel d'abonnement (ADR 0018 × ADR 0021 décision 4)_
+
+- **Rien de ce module n'est gelé, jamais** — ni sur `suspendu`, ni sur `resilie`, ni sur `impaye` : déclarer, corriger, changer l'état et **signaler une panne** passent exactement comme sur un centre à jour. *Signaler une panne doit toujours passer* : un appareil cassé est une information de soin, et le centre gelé est celui qui a le plus besoin qu'elle circule. **Ne griser aucun bouton de cet écran sur un centre gelé.**
+
+_Journal du directeur_ : les quatre actions (`equipment.created|updated|status_changed|reported`) sont dans la liste blanche de `GET /centers/{c}/audit-log/` — c'est de la configuration d'établissement, même famille que `room.created` et `tariff.created`. Les payloads ne portent que des **ids et des codes fermés** : jamais le nom d'un appareil, jamais son emplacement, jamais les notes, **jamais la description d'un signalement**.
+
+_Ce que le module n'expose à personne d'autre_ : un **patient**, un **tuteur** et un **exploitant Chioni** reçoivent **404** sur ces routes (aucun membership → le centre n'existe pas pour eux). Aucune route `guardian/`, `patients/me/` ou `platform/` ne touche le matériel.
+
+_Ce que le backend n'a PAS, et n'aura pas sans arbitrage explicite_ : **aucune valeur financière** (ni prix d'achat, ni amortissement, ni valeur de parc — la comptabilité est le sujet de S10), **aucune maintenance préventive** (ni périodicité, ni prochaine révision), **aucun champ de responsabilité** (« qui l'a cassé ») : un parc sert à réparer, pas à imputer. Ne pas construire d'écran branché dessus.
 
 ### Abonnement SaaS du centre (S5 lot 1 — DIRECTEUR SEUL, ADR 0018)
 

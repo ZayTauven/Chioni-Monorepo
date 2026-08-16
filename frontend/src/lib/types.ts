@@ -181,6 +181,15 @@ export type AuditAction =
      lit et combien de temps, c'est-à-dire du clinique. */
   | 'room.created'
   | 'bed.created'
+  /* S8 (ADR 0021) — le parc de matériel est de la CONFIGURATION
+     d'établissement, même famille que `room.created` et `tariff.created`.
+     `equipment.reported` y entre aussi : le journal note QU'un constat a été
+     posé, jamais ce qu'il dit — la description est du texte libre, écarté du
+     payload comme le corps d'un ticket de support. */
+  | 'equipment.created'
+  | 'equipment.updated'
+  | 'equipment.status_changed'
+  | 'equipment.reported'
   | 'invoice.created'
   | 'invoice.issued'
   | 'invoice.cancelled'
@@ -1665,4 +1674,93 @@ export interface AttendanceStats {
   days: AttendanceStatsDay[];
   totals: AttendanceTally;
   by_employment: AttendanceStatsEmployment[];
+}
+
+/* ── S8 — équipements (ADR 0021) ────────────────────────────────────────────
+   Le plus petit domaine du produit : deux tables, quatre routes. Ni patient,
+   ni argent, ni donnée personnelle — SAUF une, le nom de qui signale une
+   panne, et c'est tout l'enjeu de typage de la section (voir
+   `EquipmentReport`). */
+
+/**
+ * L'état officiel d'un appareil. `reforme` est **terminal** : la machine à
+ * états backend est `en_service ⇄ en_panne`, et les deux → `reforme`.
+ */
+export type EquipmentStatus = 'en_service' | 'en_panne' | 'reforme';
+
+export type EquipmentCategory =
+  | 'diagnostic'
+  | 'imagerie'
+  | 'bloc_operatoire'
+  | 'laboratoire'
+  | 'mobilier_medical'
+  | 'informatique'
+  | 'autre';
+
+/**
+ * Une ligne de parc. **Une seule audience** : tout membre actif du centre lit
+ * exactement cette fiche — un appareil n'a ni régime, ni secret médical, ni
+ * argent, et le backend n'a qu'un sérialiseur de lecture.
+ *
+ * `location` est un **texte libre**, jamais une chambre d'hospitalisation
+ * (ADR 0021 décision 2) : ne pas y brancher `inpatient/rooms/`.
+ *
+ * `report_count` / `last_report_at` sont des **compteurs de lecture** annotés
+ * par la liste. Ils valent `0` / `null` dans la réponse d'une ÉCRITURE (POST,
+ * PATCH, changement d'état) : ne jamais s'en servir pour décider d'un rendu
+ * juste après une écriture — relire la liste.
+ *
+ * Aucun champ de valeur financière, aucune maintenance préventive, aucun champ
+ * de responsabilité : ce sont des absences DÉCIDÉES (ADR 0021 décision 3), pas
+ * des oublis. Un parc sert à réparer, pas à imputer.
+ */
+export interface Equipment {
+  id: number;
+  name: string;
+  category: EquipmentCategory;
+  serial_number: string;
+  location: string;
+  commissioned_on: string | null;
+  status: EquipmentStatus;
+  notes: string;
+  report_count: number;
+  last_report_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/**
+ * Un constat de panne. **Append-only** : un signalement ne se corrige pas et
+ * ne se supprime pas — on en poste un second (« Corrigé : c'était le câble »).
+ * Il n'a **aucun cycle de vie** (ni statut, ni « résolu ») : c'est l'ÉTAT de
+ * l'équipement qui dit où on en est.
+ *
+ * ─── LA décision d'audience du sprint ───────────────────────────────────────
+ *
+ * Le backend rend DEUX payloads pour la même ligne :
+ *
+ * - **tout staff actif** → `{id, equipment, description, created_at}` : le
+ *   constat et sa date, **sans son auteur** — ni nom, ni id ;
+ * - **directeur** → les mêmes champs **plus** `reported_by` et
+ *   `reported_by_display`.
+ *
+ * Les deux champs d'auteur sont donc `?:` — ils sont **absents** du payload
+ * d'une infirmière, ils n'y valent pas `null`. L'écran REND ce qui arrive et
+ * **ne réserve aucun emplacement** pour un auteur qu'il ne recevra pas : pas
+ * de colonne vide, et surtout **jamais d'« Anonyme »** — l'absence d'auteur
+ * n'est pas une donnée manquante, c'est une décision de produit (nommer le
+ * signaleur devant toute l'équipe refroidirait la prochaine panne).
+ *
+ * Ne pas tenter de résoudre l'auteur par un autre appel : il n'est pas dans le
+ * payload, et `GET /centers/{c}/staff/` est déjà directeur seul.
+ */
+export interface EquipmentReport {
+  id: number;
+  equipment: number;
+  description: string;
+  created_at: string;
+  /** DIRECTEUR SEUL — absent (jamais `null`) pour toute autre casquette. */
+  reported_by?: number;
+  /** DIRECTEUR SEUL — absent (jamais `null`) pour toute autre casquette. */
+  reported_by_display?: string;
 }

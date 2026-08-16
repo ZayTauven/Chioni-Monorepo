@@ -232,6 +232,25 @@ class AuditAction:
     LEAVE_DOCUMENT_UPLOADED = "leave_document.uploaded"
     LEAVE_DOCUMENT_ARCHIVED = "leave_document.archived"
 
+    # Équipements (S8, ADR 0021). Payload contract : ids, CODES fermés
+    # (catégorie, états) et noms de champs — **jamais la description d'un
+    # signalement** (texte libre écrit par un humain pressé, même classe
+    # que le corps d'un ticket de support), jamais les ``notes``, jamais le
+    # nom ni l'emplacement d'un appareil (« Échographe du service VIH »
+    # ferait d'une ligne de parc une ligne clinique).
+    #
+    # Journal du directeur : les QUATRE y entrent, et c'est cohérent avec
+    # ``room.created``/``tariff.created`` — le parc est de la configuration
+    # d'établissement, dont le directeur répond. ``equipment.reported`` y
+    # est aussi : c'est même le seul endroit où le nom du signaleur lui est
+    # rendu par le journal (``actor_display``), en miroir exact du
+    # sérialiseur (ADR 0021 — le constat à tout le staff, son auteur au
+    # directeur).
+    EQUIPMENT_CREATED = "equipment.created"
+    EQUIPMENT_UPDATED = "equipment.updated"
+    EQUIPMENT_STATUS_CHANGED = "equipment.status_changed"
+    EQUIPMENT_REPORTED = "equipment.reported"
+
     # Trust Bridge — money (phase B). Payloads: references, amounts and
     # currencies ONLY — never an act label (ADR 0005/0007).
     INVOICE_CREATED = "invoice.created"
