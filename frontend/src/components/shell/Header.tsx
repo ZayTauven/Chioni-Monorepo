@@ -92,6 +92,14 @@ export function Header({
   const { me, signOut } = useAuth();
   const { center, centers, switchCenter } = useCenter();
   const [full, setFull] = useState(false);
+  /* SV — « ⌘K » n'existe pas sous Windows/Linux : on affiche le raccourci de
+     la plateforme réelle. Détection en effet (jamais au rendu serveur — pas
+     de mismatch d'hydratation) ; défaut Ctrl+K, la plateforme majoritaire du
+     terrain. Le raccourci LUI-MÊME acceptait déjà les deux touches. */
+  const [keycap, setKeycap] = useState('Ctrl K');
+  useEffect(() => {
+    if (/Mac|iPhone|iPad/i.test(navigator.platform || navigator.userAgent)) setKeycap('⌘K');
+  }, []);
 
   useEffect(() => {
     const onFs = () => setFull(!!document.fullscreenElement);
@@ -134,7 +142,7 @@ export function Header({
       >
         {ICON.search}
         <span className="ax-search__placeholder">Rechercher…</span>
-        <kbd className="ax-search__keycap">⌘K</kbd>
+        <kbd className="ax-search__keycap">{keycap}</kbd>
       </button>
 
       <span className="ax-header__spacer"></span>

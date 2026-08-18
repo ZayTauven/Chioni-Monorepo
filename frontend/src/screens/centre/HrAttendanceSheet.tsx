@@ -486,7 +486,7 @@ export function HrAttendanceSheet() {
         )}
 
         {sheet.data?.truncated && (
-          <div className="ax-alert ax-alert--info" role="status" style={{ marginBottom: 'var(--ax-space-4)' }}>
+          <div className="ax-alert ax-alert--info" role="note" style={{ marginBottom: 'var(--ax-space-4)' }}>
             <div className="ax-alert__content">
               <p className="ax-alert__message">
                 Semaine très fournie : toutes les journées déjà notées n&rsquo;ont pas pu être
@@ -506,7 +506,7 @@ export function HrAttendanceSheet() {
         ) : rows.length === 0 ? (
           <EmptyState title={HRM_NO_EMPLOYMENT_TITLE} message={HRM_NO_EMPLOYMENT_DIRECTOR} />
         ) : (
-          <div className="ax-table-wrap">
+          <div className="ax-table-wrap" tabIndex={0} role="region" aria-label="Tableau">
             <table className="ax-table ax-table--hover ax-sheet">
               <thead className="ax-table__head">
                 <tr>

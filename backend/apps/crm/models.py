@@ -32,11 +32,10 @@ décisions, jamais des oublis — patron ``apps.equipment``) :
    l'existence d'un nouveau rendez-vous.
 
 **Append-only** (ORM : ``AppendOnlyModel`` + ``AppendOnlyQuerySet``) — un
-contact se corrige par un nouveau contact. Dette assumée et consignée,
-identique à S3/S5/S6/S7/S8 : **pas de trigger PostgreSQL** sur cette table.
-Les triggers de l'ADR 0006 protègent l'argent (ledger, reçus, audit) ; un
-``UPDATE`` brut resterait ici possible depuis un shell, et le pire qu'il
-puisse faire est de fausser une cadence de relance.
+contact se corrige par un nouveau contact. La dette « pas de trigger
+PostgreSQL » consignée à la livraison de S10 est SOLDÉE par le lot SV
+(migration ``crm/0002_sv_db_triggers``) : la base refuse désormais tout
+``UPDATE``/``DELETE`` brut sur ``crm_contactlog``, quel que soit le chemin.
 
 Cloisonnement (ADR 0002) : la ligne porte son ``center``, et ``save()``
 revérifie EN BASE que la facture et le rendez-vous référencés appartiennent
@@ -93,6 +92,10 @@ class ContactOutcome(models.TextChoices):
     NO_ANSWER = "sans_reponse", "Sans réponse"
     PAYMENT_PROMISED = "promesse_de_reglement", "Promesse de règlement"
     CALL_BACK = "a_rappeler", "À rappeler"
+    # SV — l'issue heureuse d'une reprise de contact : la personne revient.
+    # Sans elle, le guichet qui fixait un rendez-vous au téléphone devait
+    # choisir entre « joint » (vrai mais pauvre) et ne rien journaliser.
+    APPOINTMENT_BOOKED = "rdv_fixe", "Rendez-vous fixé"
 
 
 class ContactLogQuerySet(CenterScopedQuerySet, AppendOnlyQuerySet):

@@ -345,7 +345,7 @@ function InvoicesCard({ subscriptionId, canWrite }: { subscriptionId: number; ca
         />
       ) : (
         <>
-          <div className="ax-table-wrap">
+          <div className="ax-table-wrap" tabIndex={0} role="region" aria-label="Tableau">
             <table className="ax-table ax-table--hover">
               <thead className="ax-table__head">
                 <tr>

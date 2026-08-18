@@ -41,3 +41,28 @@
 ### Réversibilité (l'invariant éthique, verrouillé par test)
 
 Un consentement recueilli par le centre **meurt à l'instant où le patient prend possession de son profil**, par HÉRITAGE de la porte de confirmation du titulaire (OTP-1) : les trois portes (revendication OTP, fusion — lien déplacé sur cible revendiquée, fusion — transfert du titulaire) suspendent le lien et révoquent ses consentements actifs, guichet compris. La confirmation ultérieure du lien par le titulaire ne restaure QUE la portée minimale `paiements` — jamais le `detail_clinique` recueilli au guichet (ré-octroi explicite requis, par le patient seul désormais). Le retrait au guichet reste possible à tout moment tant que le profil n'est pas revendiqué (`DELETE`). Tests : `tests/test_center_clinical_consent.py::TestClaimGateInvariant`.
+
+## Addendum SV — Les deux arbitrages PO de S2, implémentés (2026-08-16)
+
+Les deux arbitrages tranchés par le PO le 14/08/2026 (consignés en SV.1 de l'audit) entrent dans le code.
+
+### SV.1.1 — Consentement guichet interdit sur un lien initié par le centre lui-même (option b)
+
+**La chaîne « le centre fabrique le tuteur » est fermée** : le même guichet ne peut pas inviter le tuteur PUIS lui ouvrir la sphère clinique, le patient nulle part dans la boucle.
+
+- **Provenance tracée** : `GuardianLink.initiated_by_center` (FK nullable vers `HealthCenter`), posée par `invite_guardian` quand `initiated_by = centre` (porte C), NULL pour les portes A/B. **Aucun rétro-remplissage** (l'histoire ne se réécrit pas — même posture qu'ADR 0017 pour `AuditLog.center`).
+- **La garde vit dans le service** (`grant_clinical_consent_at_center`), SOUS les relectures `select_for_update` posées en S2 (le TOCTOU revendication×octroi reste fermé, la provenance est immuable). Refus explicite si `initiated_by = centre` ET (`initiated_by_center` = ce centre OU NULL).
+- **Fail-closed sur la provenance inconnue** : un lien historique porte C sans `initiated_by_center` ne peut pas être prouvé étranger — refuser un octroi de consentement clinique est toujours la posture du produit. Le corps du refus est **byte-identique** entre « centre initiateur » et « provenance inconnue » (le refus ne dit pas si la provenance est connue).
+- **Le centre B reste libre** (sous toutes les autres règles) : la garde vise le conflit d'intérêts du CENTRE, pas le lien ni la personne — un staff multi-centres est refusé au guichet de A et accepté au guichet de B (testé). Le RETRAIT reste ouvert au centre initiateur (révoquer ne fait que retirer une portée).
+- Tests : `tests/test_center_clinical_consent.py::TestSelfInitiatedLinkGuard` (dont la course réelle A×B à deux threads, sérialisée sur le verrou du lien).
+
+### SV.1.2 — Papier signé obligatoire (mode `oral` supprimé)
+
+- `collected_via` n'accepte plus que `papier` — au serializer (choix d'entrée réduit) ET au service (garde pour les appelants directs). Motivation PO : trace opposable, éviter les litiges des consentements oraux.
+- **L'historique reste lisible** : le choix `oral` demeure sur le modèle (affichage), seule l'ENTRÉE le refuse.
+- **Migration défensive** `medical/0005_revoke_oral_desk_consents` : tout consentement `oral` encore ACTIF est **révoqué à la migration, avec une entrée d'AuditLog par ligne** (`consent.revoked`, reason `collected_via_oral_retired_sv12`) — jamais requalifié en silence. Reverse no-op assumé (une révocation de consentement ne se rejoue pas à l'envers).
+- L'option `oral` doit disparaître de l'UI — **à la charge de la vague frontend** (signalé au rapport SV).
+
+### Lecture de l'état persistant (SV.2)
+
+`GET /centers/{c}/patients/{pk}/consents/clinical/` (BILLING) : les consentements cliniques ACTIFS porteurs d'une trace de recueil guichet, sur les liens ACTIFS du patient. Les consentements accordés par le patient depuis son espace (`collected_via` vide) ne transitent JAMAIS ici — le guichet relit SES recueils. Un patient revendiqué se lit comme une liste vide (tout consentement guichet est mort à la revendication) : **lire n'est pas octroyer**, pas de 400 sur le GET. Rend aussi la garde SV.1.1 auditable (un lien auto-initié n'apparaît jamais dans cette liste).

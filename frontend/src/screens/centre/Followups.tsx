@@ -84,6 +84,7 @@ import {
   remindersSentLabel,
   shiftIsoDate,
   todayIsoDate,
+  unpaidLastContactLabel,
 } from '@/lib/labels';
 import type {
   ContactKind,
@@ -378,7 +379,7 @@ function UnpaidQueue() {
         />
       ) : (
         <>
-          <div className="ax-table-wrap">
+          <div className="ax-table-wrap" tabIndex={0} role="region" aria-label="Tableau">
             <table className="ax-table ax-table--hover">
               <thead className="ax-table__head">
                 <tr>
@@ -489,8 +490,15 @@ function UnpaidQueue() {
                           </span>
                         )}
                       </td>
+                      {/* SV — `last_human_contact_at` date le contact HUMAIN :
+                          le verbe précis revient (« Contact le … »), le SMS
+                          de l'automate reste « Message automatique le … ». */}
                       <td className="ax-table__td" style={{ fontSize: 'var(--ax-text-xs)', color: 'var(--ax-text-muted)' }}>
-                        {lastContactLabel(row.last_contact_at, row.last_outcome)}
+                        {unpaidLastContactLabel(
+                          row.last_contact_at,
+                          row.last_human_contact_at,
+                          row.last_outcome,
+                        )}
                       </td>
                       <td className="ax-table__td" style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
                         <button
@@ -687,7 +695,7 @@ function MissedQueue() {
       ) : (
         <>
           {todo.length > 0 ? (
-            <div className="ax-table-wrap">
+            <div className="ax-table-wrap" tabIndex={0} role="region" aria-label="Tableau">
               <table className="ax-table ax-table--hover">
                 <MissedHead lastLabel="À rappeler" />
                 <tbody>
@@ -725,7 +733,7 @@ function MissedQueue() {
                   {MISSED_REBOOKED_HINT}
                 </p>
               </div>
-              <div className="ax-table-wrap">
+              <div className="ax-table-wrap" tabIndex={0} role="region" aria-label="Tableau">
                 <table className="ax-table">
                   <MissedHead lastLabel="État" />
                   <tbody>

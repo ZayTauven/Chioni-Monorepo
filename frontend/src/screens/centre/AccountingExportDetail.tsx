@@ -176,6 +176,9 @@ export function AccountingExportDetail({ exportId }: { exportId: number }) {
             meta={[
               { label: 'Période', value: accountingPeriodLabel(doc.period_start, doc.period_end) },
               { label: 'Généré le', value: formatDateTime(doc.created_at) },
+              /* SV — « un humain signe la photo » : la pièce nomme qui l'a
+                 générée. Le tiret couvre le compte sans nom renseigné. */
+              { label: 'Générée par', value: doc.generated_by_display || '—' },
               { label: 'Mouvements', value: doc.line_count },
             ]}
             lineHeaders={{ label: ACCOUNTING_MOVEMENT_HEADER, amount: DOC_AMOUNT_HEADER }}

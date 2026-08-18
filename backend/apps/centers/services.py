@@ -181,6 +181,20 @@ def reactivate_staff_member(*, actor, membership):
     return membership
 
 
+def staff_identity_editable(user) -> bool:
+    """Le compte est-il encore une ombre « jamais revendiquée » ?
+
+    LE prédicat, en un seul endroit (SV) : téléphone jamais vérifié ET mot
+    de passe inutilisable. Partagé par la garde d'écriture de
+    :func:`update_staff_member` et par le contrat de lecture
+    ``StaffUserSerializer.identity_editable`` (le frontend grise
+    proactivement l'édition d'identité) — les deux ne peuvent pas dériver.
+    Un compte activé gère sa propre identité via ``PATCH /auth/me/``
+    (règle R-API-2, miroir de l'identité patient).
+    """
+    return user.phone_verified_at is None and not user.has_usable_password()
+
+
 @transaction.atomic
 def update_staff_member(*, actor, membership, role=None, first_name=None, last_name=None):
     """Director edits an ACTIVE membership: role change and, for shadow
@@ -210,7 +224,7 @@ def update_staff_member(*, actor, membership, role=None, first_name=None, last_n
     changed = []
     if first_name is not None or last_name is not None:
         user = membership.user
-        if user.phone_verified_at is not None or user.has_usable_password():
+        if not staff_identity_editable(user):
             raise ValidationError(
                 "Ce compte est activé : seule la personne concernée peut "
                 "modifier son identité."

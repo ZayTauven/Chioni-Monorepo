@@ -41,6 +41,10 @@ class UnpaidFollowupSerializer(serializers.ModelSerializer):
     reminders_sent = serializers.SerializerMethodField()
     last_contact_at = serializers.SerializerMethodField()
     last_outcome = serializers.SerializerMethodField()
+    # SV — le QUAND du dernier contact HUMAIN (issue non vide) : un geste
+    # humain porte une issue, l'automate jamais. `last_contact_at` reste le
+    # dernier contact de TOUTE nature.
+    last_human_contact_at = serializers.SerializerMethodField()
     guardian_reachable = serializers.SerializerMethodField()
     reminders_exhausted = serializers.SerializerMethodField()
 
@@ -50,7 +54,7 @@ class UnpaidFollowupSerializer(serializers.ModelSerializer):
             "id", "patient", "patient_name", "patient_phone_masked",
             "total_kmf", "paid_kmf", "balance_kmf", "age_days", "created_at",
             "reminders_sent", "reminders_exhausted", "last_contact_at",
-            "last_outcome", "guardian_reachable",
+            "last_human_contact_at", "last_outcome", "guardian_reachable",
         ]
         read_only_fields = fields
 
@@ -93,6 +97,9 @@ class UnpaidFollowupSerializer(serializers.ModelSerializer):
 
     def get_last_contact_at(self, invoice):
         return invoice.last_contact_at_agg
+
+    def get_last_human_contact_at(self, invoice):
+        return invoice.last_human_contact_at_agg
 
     def get_last_outcome(self, invoice) -> str:
         return invoice.last_outcome_agg or ""

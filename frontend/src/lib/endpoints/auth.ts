@@ -84,6 +84,16 @@ export function createErasureRequest(): Promise<ErasureRequestMine> {
 }
 
 /**
+ * SV — rétractation (art. 12) : the person withdraws their OWN request while
+ * it is still `en_attente`. EMPTY body ; 200 with the same shape, `status:
+ * "annulee"`. No pending request → 400 « Aucune demande d'effacement en
+ * attente… ». Re-asking afterwards is possible (a new row).
+ */
+export function cancelErasureRequest(): Promise<ErasureRequestMine> {
+  return apiFetch('/auth/me/erasure-request/cancel/', { method: 'POST', body: {} });
+}
+
+/**
  * Portability (art. 20): a JSON of what the caller ALREADY sees in their own
  * space — the backend replays the very same querysets and serializers, so
  * nothing new is revealed. Ordinary API JSON (no Content-Disposition): the

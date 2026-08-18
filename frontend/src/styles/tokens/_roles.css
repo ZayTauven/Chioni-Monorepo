@@ -40,7 +40,11 @@
   --ax-text-strong:     var(--ax-neutral-900);    /* #151B27 headings, key numbers */
   --ax-text:            var(--ax-neutral-700);     /* #3A4456 body */
   --ax-text-muted:      var(--ax-neutral-600);     /* #535E74 secondary */
-  --ax-text-subtle:     var(--ax-neutral-500);     /* #6E7A92 tertiary, captions, idle icons */
+  /* SV — relevé de #6E7A92 (4,32:1 sur blanc, 3,89:1 sur --ax-surface-subtle :
+     sous AA, revues S4/S5). #5E6A82 mesure 5,44:1 sur blanc et 4,89:1 sur
+     #F0F3F9 — AA partout où le produit le pose. Le remède est LE TOKEN, pas la
+     chasse aux usages (décision de design system actée). */
+  --ax-text-subtle:     #5E6A82;                   /* tertiary, captions, idle icons */
   --ax-text-disabled:   var(--ax-neutral-400);     /* #94A0B8 */
 
   /* ── accent (Verdigris default — LIGHT base) ── */
@@ -91,7 +95,10 @@
   --ax-text-strong:     var(--ax-dark-50);         /* #EAEDF3 */
   --ax-text:            var(--ax-dark-100);         /* #D4DAE4 (body slightly below strong) */
   --ax-text-muted:      var(--ax-dark-300);         /* #98A2B3 */
-  --ax-text-subtle:     var(--ax-dark-500);         /* #646E80 */
+  /* SV — relevé de #646E80 (3,55:1 sur le canvas sombre : sous AA). #7C8798
+     mesure 5,38:1 sur #0A0C11, 4,79:1 sur #161A23 et 4,64:1 sur le panel
+     rgba(28,33,44,.80) composé sur le canvas — AA sur les fonds réels. */
+  --ax-text-subtle:     #7C8798;
   --ax-text-disabled:   var(--ax-dark-600);         /* #3A4351 */
 
   /* accent — Verdigris DARK lightened base (spec §3.5.1 / preview) */

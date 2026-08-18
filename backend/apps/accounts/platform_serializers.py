@@ -49,13 +49,21 @@ class PlatformErasureRequestSerializer(serializers.ModelSerializer):
 
     def get_hats(self, erasure_request) -> dict:
         user = erasure_request.user
+        # SV (dette S4) — ``is_platform_operator`` ne compte que les lignes
+        # ACTIVES, comme ``is_center_staff`` : un exploitant désactivé n'est
+        # plus une casquette, seulement de l'historique. ``getattr`` sur la
+        # OneToOne inverse rend None quand la ligne n'existe pas
+        # (RelatedObjectDoesNotExist est un AttributeError).
+        platform_staff = getattr(user, "platform_staff", None)
         return {
             "is_patient": hasattr(user, "patient_profile"),
             "is_guardian": hasattr(user, "guardian_profile"),
             "is_center_staff": user.staff_memberships.filter(
                 is_active=True
             ).exists(),
-            "is_platform_operator": hasattr(user, "platform_staff"),
+            "is_platform_operator": (
+                platform_staff is not None and platform_staff.is_active
+            ),
         }
 
     def get_blockers(self, erasure_request) -> list:

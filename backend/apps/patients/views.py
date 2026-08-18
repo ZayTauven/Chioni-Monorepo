@@ -388,6 +388,38 @@ class CenterPatientClinicalConsentView(CenterScopedViewMixin, APIView):
         return patient
 
     @extend_schema(
+        responses=CenterClinicalConsentReceiptSerializer(many=True),
+    )
+    def get(self, request, center_pk, pk):
+        """SV.2 — persistent state of the DESK-collected clinical consents.
+
+        The UI only ever saw the result of its own session; this read
+        makes the state durable across sessions (and lets the SV.1.1
+        guard be audited: a self-initiated link must never appear here).
+        Scope: ACTIVE clinical consents bearing a desk collection trace,
+        on ACTIVE links of this patient. Patient-granted consents
+        (``collected_via`` empty) never transit: the desk records and
+        withdraws its OWN collections, the patient's own grants are not
+        the desk's business. A claimed patient therefore reads as an
+        empty list (every desk consent died at the claim gate) — no
+        400 here, reading is not granting.
+        """
+        patient = get_object_or_404(center_patients_qs(self.center), pk=pk)
+        consents = (
+            Consent.objects.active()
+            .filter(
+                patient=patient,
+                scope=Consent.Scope.CLINICAL_DETAIL,
+                guardian_link__status=GuardianLink.Status.ACTIVE,
+            )
+            .exclude(collected_via="")
+            .order_by("granted_at")
+        )
+        return Response(
+            CenterClinicalConsentReceiptSerializer(consents, many=True).data
+        )
+
+    @extend_schema(
         request=CenterClinicalConsentSerializer,
         responses=CenterClinicalConsentReceiptSerializer,
     )

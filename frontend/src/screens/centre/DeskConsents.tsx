@@ -1,35 +1,41 @@
 'use client';
 /*
- * Chioni — carte « Consentements » du dossier patient (S2, ADR 0004 addendum).
+ * Chioni — carte « Consentements » du dossier patient (S2, ADR 0004 addendum
+ * + addendum SV).
  *
  * Pour un patient NON revendiqué, les rôles BILLING peuvent enregistrer un
- * consentement clinique recueilli au guichet (formulaire papier signé ou
- * accord oral) au bénéfice d'un lien de tutelle ACTIF — et le retirer.
- * Un patient revendiqué gère ses consentements lui-même, depuis son espace.
+ * consentement clinique recueilli au guichet — **formulaire papier signé
+ * SEULEMENT** (SV.1.2, arbitrage PO : trace opposable ; l'accord oral n'est
+ * plus accepté, son libellé ne sert qu'à lire l'historique) — au bénéfice
+ * d'un lien de tutelle ACTIF, et le retirer. Un patient revendiqué gère ses
+ * consentements lui-même, depuis son espace.
  *
- * Honnêteté des données : GET /centers/{c}/patients/{pk}/guardian-links/ ne
- * porte VOLONTAIREMENT ni scopes ni historique — l'état persistant du
- * consentement clinique n'est donc PAS lisible côté centre (trou de contrat
- * assumé, remonté). L'écran n'invente rien : il n'affiche que le résultat
- * des actions faites dans CETTE session (réponses 201/200 de l'API) et
- * laisse le backend arbitrer (« déjà accordé », « aucun consentement actif »
- * → 400 affichés tels quels).
+ * SV — l'état PERSISTANT est enfin lisible : GET .../consents/clinical/
+ * rend les consentements guichet actifs de ce patient, et la carte l'affiche
+ * au chargement (plus seulement le résultat de sa session). Le retrait n'est
+ * proposé que sur un consentement réellement actif.
+ *
+ * SV.1.1 — un lien né d'une invitation émise par CE centre est refusé en 400
+ * par le backend : c'est un message MÉTIER définitif, affiché tel quel, sans
+ * bouton « réessayer » (un autre centre reste libre de recueillir ce
+ * consentement).
  */
 import { useState } from 'react';
 import { useCenter } from '@/context/CenterContext';
 import type { ApiError } from '@/lib/api';
 import {
   grantDeskClinicalConsent,
+  listDeskClinicalConsents,
   listPatientGuardianLinks,
   revokeDeskClinicalConsent,
 } from '@/lib/endpoints/centers';
-import { CONSENT_COLLECTED_VIA_LABELS, RELATIONSHIP_LABELS, formatDateTime } from '@/lib/labels';
-import type {
-  ConsentCollectedVia,
-  DeskClinicalConsent,
-  GuardianLinkCenter,
-  Patient,
-} from '@/lib/types';
+import {
+  CONSENT_COLLECTED_VIA_LABELS,
+  RELATIONSHIP_LABELS,
+  formatDate,
+  formatDateTime,
+} from '@/lib/labels';
+import type { DeskClinicalConsent, GuardianLinkCenter, Patient } from '@/lib/types';
 import {
   AvatarChip,
   CardSkeleton,
@@ -54,7 +60,10 @@ async function fetchAllLinks(centerId: number, patientId: number): Promise<Guard
 }
 
 const RESPONSIBILITY_TEXT =
-  'Vous attestez avoir recueilli l’accord du patient. Ce consentement ouvre le détail clinique à ce proche et sera tracé à votre nom.';
+  'Vous attestez détenir le formulaire papier signé par le patient. Ce consentement ouvre le détail clinique à ce proche et sera tracé à votre nom.';
+
+const PAPER_ONLY_NOTE =
+  'Seul le formulaire papier signé est accepté au guichet — conservez-le dans le dossier du patient.';
 
 const AUTO_REVOKE_NOTE =
   'Si le patient active son compte, ce consentement sera automatiquement suspendu : il devra le confirmer lui-même depuis son espace.';
@@ -74,19 +83,23 @@ function GrantConsentModal({
 }) {
   const { centerId } = useCenter();
   const [linkId, setLinkId] = useState<number | ''>(links.length === 1 ? links[0].id : '');
-  const [via, setVia] = useState<ConsentCollectedVia | ''>('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<ApiError | null>(null);
 
   const submit = async () => {
-    if (linkId === '' || via === '') return;
+    if (linkId === '') return;
     setSaving(true);
     setError(null);
     try {
-      const consent = await grantDeskClinicalConsent(centerId, patientId, linkId, via);
+      // SV.1.2 — `papier` est posé par l'endpoint lui-même : l'oral n'est
+      // plus envoyable par construction.
+      const consent = await grantDeskClinicalConsent(centerId, patientId, linkId);
       const link = links.find((l) => l.id === linkId);
       if (link) onDone(consent, link);
     } catch (err) {
+      /* Les 400 du backend (déjà accordé, lien inactif, et surtout SV.1.1
+         « lien né d'une invitation émise par le centre ») sont des verdicts
+         métier : affichés tels quels, sans bouton « réessayer ». */
       setError(toApiError(err));
       setSaving(false);
     }
@@ -95,6 +108,7 @@ function GrantConsentModal({
   return (
     <Modal
       title="Enregistrer un consentement"
+      busy={saving}
       onClose={onClose}
       width={560}
       footer={
@@ -106,7 +120,7 @@ function GrantConsentModal({
             type="submit"
             form="desk-consent-form"
             className="ax-btn ax-btn--primary"
-            disabled={saving || linkId === '' || via === ''}
+            disabled={saving || linkId === ''}
           >
             {saving ? 'Enregistrement…' : 'Enregistrer le consentement'}
           </button>
@@ -144,28 +158,15 @@ function GrantConsentModal({
           </select>
         </div>
 
-        <fieldset className="ax-field" style={{ border: 0, margin: 0, padding: 0 }}>
-          <legend className="ax-label">
-            Mode de recueil <span className="ax-field__required" aria-hidden="true">*</span>
-          </legend>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--ax-space-2)' }}>
-            {(Object.keys(CONSENT_COLLECTED_VIA_LABELS) as ConsentCollectedVia[]).map((mode) => (
-              <label key={mode} className="ax-cluster" style={{ gap: 'var(--ax-space-3)', flexWrap: 'nowrap', cursor: 'pointer' }}>
-                <input
-                  type="radio"
-                  name="dc-via"
-                  className="ax-radio"
-                  checked={via === mode}
-                  onChange={() => setVia(mode)}
-                  required
-                />
-                <span style={{ fontSize: 'var(--ax-text-sm)', color: 'var(--ax-text)' }}>
-                  {CONSENT_COLLECTED_VIA_LABELS[mode]}
-                </span>
-              </label>
-            ))}
-          </div>
-        </fieldset>
+        {/* SV.1.2 — plus de choix de mode : le papier signé est LE mode. Le
+            dire remplace l'ancien groupe de boutons radio (papier / oral). */}
+        <div className="ax-field">
+          <span className="ax-label">Mode de recueil</span>
+          <p style={{ margin: 0, fontSize: 'var(--ax-text-sm)', color: 'var(--ax-text)' }}>
+            {CONSENT_COLLECTED_VIA_LABELS.papier}
+          </p>
+          <span className="ax-field__message">{PAPER_ONLY_NOTE}</span>
+        </div>
 
         <div className="ax-alert ax-alert--warning" role="note">
           <div className="ax-alert__content">
@@ -190,6 +191,7 @@ function WithdrawConsentModal({
   onDone,
 }: {
   patientId: number;
+  /** SV — seulement les liens porteurs d'un consentement ACTIF. */
   links: GuardianLinkCenter[];
   onClose: () => void;
   onDone: (consent: DeskClinicalConsent, link: GuardianLinkCenter) => void;
@@ -216,6 +218,7 @@ function WithdrawConsentModal({
   return (
     <Modal
       title="Retirer un consentement"
+      busy={saving}
       onClose={onClose}
       footer={
         <>
@@ -267,8 +270,17 @@ export function DeskConsentsCard({ patient }: { patient: Patient }) {
   const { centerId } = useCenter();
   const claimed = patient.claim_status === 'actif';
 
-  const links = useAsync(
-    () => (claimed ? Promise.resolve([]) : fetchAllLinks(centerId, patient.id)),
+  /* SV — un seul chargement : les liens actifs ET l'état persistant des
+     consentements guichet. Patient revendiqué → rien à charger (la carte
+     l'explique sans appel API, comme avant). */
+  const state = useAsync(
+    () =>
+      claimed
+        ? Promise.resolve({ links: [] as GuardianLinkCenter[], consents: [] as DeskClinicalConsent[] })
+        : Promise.all([
+            fetchAllLinks(centerId, patient.id),
+            listDeskClinicalConsents(centerId, patient.id),
+          ]).then(([links, consents]) => ({ links, consents })),
     [centerId, patient.id, claimed],
   );
 
@@ -278,7 +290,19 @@ export function DeskConsentsCard({ patient }: { patient: Patient }) {
   const [sessionActions, setSessionActions] = useState<Record<number, SessionAction>>({});
   const [notice, setNotice] = useState<string | null>(null);
 
-  const activeLinks = links.data ?? [];
+  const activeLinks = state.data?.links ?? [];
+  const persisted = new Map<number, DeskClinicalConsent>(
+    (state.data?.consents ?? []).map((c) => [c.guardian_link, c]),
+  );
+
+  /** L'état d'un lien = état persistant, recouvert par le geste de la session. */
+  const isGranted = (linkId: number): boolean => {
+    const action = sessionActions[linkId];
+    if (action) return action.kind === 'accorde';
+    return persisted.has(linkId);
+  };
+
+  const withdrawableLinks = activeLinks.filter((l) => isGranted(l.id));
 
   return (
     <section className="ax-card ax-col--4" role="region" aria-label="Consentements">
@@ -293,10 +317,10 @@ export function DeskConsentsCard({ patient }: { patient: Patient }) {
           <p style={{ margin: 0, fontSize: 'var(--ax-text-sm)', color: 'var(--ax-text-muted)', lineHeight: 1.6 }}>
             Ce patient a activé son compte : il gère ses consentements lui-même, depuis son espace.
           </p>
-        ) : links.loading ? (
+        ) : state.loading ? (
           <CardSkeleton lines={3} />
-        ) : links.error ? (
-          <ErrorAlert error={links.error} onRetry={links.reload} />
+        ) : state.error ? (
+          <ErrorAlert error={state.error} onRetry={state.reload} />
         ) : activeLinks.length === 0 ? (
           <p style={{ margin: 0, fontSize: 'var(--ax-text-sm)', color: 'var(--ax-text-muted)', lineHeight: 1.6 }}>
             Aucun tuteur actif pour ce patient. Un consentement clinique se recueille auprès
@@ -315,6 +339,8 @@ export function DeskConsentsCard({ patient }: { patient: Patient }) {
             <ul className="ax-list ax-list--compact">
               {activeLinks.map((l) => {
                 const action = sessionActions[l.id];
+                const consent = persisted.get(l.id);
+                const granted = isGranted(l.id);
                 return (
                   <li key={l.id} className="ax-list__row" style={{ paddingInline: 0 }}>
                     <span className="ax-list__leading">
@@ -327,13 +353,25 @@ export function DeskConsentsCard({ patient }: { patient: Patient }) {
                       <span style={{ display: 'block', fontSize: 'var(--ax-text-xs)', color: 'var(--ax-text-subtle)' }}>
                         {RELATIONSHIP_LABELS[l.relationship]}
                       </span>
+                      {/* SV — l'état persistant, enfin dit au chargement :
+                          date et mode de recueil (l'historique « oral »
+                          d'avant SV.1.2 reste lisible tel qu'il fut). */}
+                      {granted && !action && consent && (
+                        <span style={{ display: 'block', fontSize: 'var(--ax-text-xs)', color: 'var(--ax-text-muted)' }}>
+                          Depuis le {formatDate(consent.granted_at)} · {CONSENT_COLLECTED_VIA_LABELS[consent.collected_via]}
+                        </span>
+                      )}
                     </span>
-                    {action && (
+                    {(granted || action) && (
                       <span className="ax-list__trailing">
                         <span
-                          className={`ax-badge ax-badge--soft ax-badge--pill ax-badge--${action.kind === 'accorde' ? 'success' : 'neutral'}`}
+                          className={`ax-badge ax-badge--soft ax-badge--pill ax-badge--${granted ? 'success' : 'neutral'}`}
                         >
-                          {action.kind === 'accorde' ? 'Consentement enregistré' : 'Consentement retiré'}
+                          {action
+                            ? action.kind === 'accorde'
+                              ? 'Consentement enregistré'
+                              : 'Consentement retiré'
+                            : 'Détail clinique ouvert'}
                         </span>
                       </span>
                     )}
@@ -344,13 +382,16 @@ export function DeskConsentsCard({ patient }: { patient: Patient }) {
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--ax-space-2)' }}>
               <button type="button" className="ax-btn ax-btn--secondary" onClick={() => { setNotice(null); setGrantOpen(true); }}>
-                <span className="ax-btn__label">Enregistrer un consentement (papier / oral)</span>
+                <span className="ax-btn__label">Enregistrer un consentement (papier signé)</span>
               </button>
               {/* Same hit target as the grant button: withdrawing is a RIGHT,
-                  never a second-class action. */}
-              <button type="button" className="ax-btn ax-btn--ghost" onClick={() => { setNotice(null); setWithdrawOpen(true); }}>
-                <span className="ax-btn__label">Retirer un consentement</span>
-              </button>
+                  never a second-class action. SV : proposé seulement quand un
+                  consentement est réellement actif — l'état est enfin connu. */}
+              {withdrawableLinks.length > 0 && (
+                <button type="button" className="ax-btn ax-btn--ghost" onClick={() => { setNotice(null); setWithdrawOpen(true); }}>
+                  <span className="ax-btn__label">Retirer un consentement</span>
+                </button>
+              )}
             </div>
 
             <p style={{ margin: 0, fontSize: 'var(--ax-text-xs)', color: 'var(--ax-text-subtle)' }}>
@@ -377,7 +418,7 @@ export function DeskConsentsCard({ patient }: { patient: Patient }) {
       {withdrawOpen && (
         <WithdrawConsentModal
           patientId={patient.id}
-          links={activeLinks}
+          links={withdrawableLinks}
           onClose={() => setWithdrawOpen(false)}
           onDone={(consent, link) => {
             setWithdrawOpen(false);

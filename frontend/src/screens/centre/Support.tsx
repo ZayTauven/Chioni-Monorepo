@@ -77,6 +77,19 @@ function NewTicketModal({
   const [body, setBody] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<ApiError | null>(null);
+  /*
+   * SV — garde de brouillon : Échap, un clic à côté ou la croix fermaient la
+   * modale en emportant un message parfois long, sans un mot. Si un champ de
+   * texte est rempli, la fermeture demande d'abord — le formulaire reste
+   * intact derrière la question, rien n'est perdu tant qu'on n'a pas choisi.
+   */
+  const [confirmDiscard, setConfirmDiscard] = useState(false);
+  const hasDraft = subject.trim() !== '' || body.trim() !== '';
+  const requestClose = () => {
+    if (saving) return;
+    if (hasDraft) setConfirmDiscard(true);
+    else onClose();
+  };
 
   const submit = async () => {
     setSaving(true);
@@ -95,15 +108,44 @@ function NewTicketModal({
     }
   };
 
+  if (confirmDiscard) {
+    return (
+      <Modal
+        title="Quitter sans envoyer ?"
+        onClose={() => setConfirmDiscard(false)}
+        width={440}
+        footer={
+          <>
+            <button
+              type="button"
+              className="ax-btn ax-btn--ghost"
+              onClick={() => setConfirmDiscard(false)}
+              data-autofocus=""
+            >
+              Continuer d&rsquo;écrire
+            </button>
+            <button type="button" className="ax-btn ax-btn--soft-danger" onClick={onClose}>
+              <span className="ax-btn__label">Quitter sans envoyer</span>
+            </button>
+          </>
+        }
+      >
+        <p style={{ margin: 0, fontSize: 'var(--ax-text-sm)', color: 'var(--ax-text)', lineHeight: 1.6 }}>
+          Votre message n&rsquo;a pas été envoyé : si vous quittez maintenant, il sera perdu.
+        </p>
+      </Modal>
+    );
+  }
+
   return (
     <Modal
       title="Demander de l’aide"
-      onClose={onClose}
+      onClose={requestClose}
       width={620}
       busy={saving}
       footer={
         <>
-          <button type="button" className="ax-btn ax-btn--ghost" onClick={onClose} disabled={saving}>
+          <button type="button" className="ax-btn ax-btn--ghost" onClick={requestClose} disabled={saving}>
             Annuler
           </button>
           <button
@@ -354,7 +396,7 @@ export function Support() {
             />
           ) : (
             <>
-              <div className="ax-table-wrap">
+              <div className="ax-table-wrap" tabIndex={0} role="region" aria-label="Tableau">
                 <table className="ax-table ax-table--hover">
                   <thead className="ax-table__head">
                     <tr>

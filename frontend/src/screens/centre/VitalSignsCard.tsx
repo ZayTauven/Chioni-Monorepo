@@ -74,6 +74,7 @@ function AddVitalSignsModal({
   return (
     <Modal
       title="Nouveau relevé de signes vitaux"
+      busy={saving}
       onClose={onClose}
       width={560}
       footer={

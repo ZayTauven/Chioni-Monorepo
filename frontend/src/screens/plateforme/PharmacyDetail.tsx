@@ -596,7 +596,7 @@ export function PlatformPharmacyDetail({ pharmacyId }: { pharmacyId: number }) {
                 relève — et personne ne peut plus s'y inscrire : le chemin de
                 secours est ici. */}
             {pharmacy.member_active_count === 0 && (
-              <div className="ax-alert ax-alert--warning" role="status">
+              <div className="ax-alert ax-alert--warning" role="note">
                 <div className="ax-alert__content">
                   <p className="ax-alert__title">{PLATFORM_PHARMACY_NO_MEMBER_TITLE}</p>
                   <p className="ax-alert__message" style={{ lineHeight: 1.7 }}>

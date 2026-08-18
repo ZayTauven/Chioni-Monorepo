@@ -96,6 +96,7 @@ function CloseEncounterModal({
   return (
     <Modal
       title="Clôturer la consultation ?"
+      busy={saving}
       onClose={onClose}
       footer={
         <>
@@ -163,6 +164,7 @@ function PrescriptionModal({
   return (
     <Modal
       title="Nouvelle ordonnance"
+      busy={saving}
       onClose={onClose}
       width={560}
       footer={
@@ -262,6 +264,7 @@ function RecordEntryModal({
   return (
     <Modal
       title="Nouvelle entrée de carnet"
+      busy={saving}
       onClose={onClose}
       footer={
         <>
@@ -450,7 +453,7 @@ export function ConsultationDetail({ encounterId }: { encounterId: number }) {
               <EmptyState title="Aucun acte" message="Aucun acte de la grille tarifaire n'a été rattaché à cette consultation." />
             </div>
           ) : (
-            <div className="ax-table-wrap">
+            <div className="ax-table-wrap" tabIndex={0} role="region" aria-label="Tableau">
               <table className="ax-table">
                 <thead className="ax-table__head">
                   <tr>

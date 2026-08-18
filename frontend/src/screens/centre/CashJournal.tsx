@@ -41,6 +41,16 @@ function methodLabel(key: CashMethod | 'total'): string {
   return key === 'total' ? 'Total' : CASH_METHOD_LABELS[key];
 }
 
+/**
+ * SV — qui a fait le geste : `null` = encaissement système (webhook PSP du
+ * Pont de Confiance — aucune main au guichet), `""` = compte sans nom
+ * renseigné (le tiret vaut mieux qu'un blanc qui ressemble à un oubli).
+ */
+function actorLabel(display: string | null): string {
+  if (display === null) return 'Automatique (Pont de Confiance)';
+  return display || '—';
+}
+
 export function CashJournal() {
   const { centerId, roles } = useCenter();
   const billing = hasRole(roles, BILLING_ROLES);
@@ -131,7 +141,7 @@ export function CashJournal() {
           {journal.loading ? (
             <CardSkeleton lines={4} />
           ) : data ? (
-            <div className="ax-table-wrap">
+            <div className="ax-table-wrap" tabIndex={0} role="region" aria-label="Tableau">
               <table className="ax-table">
                 <thead className="ax-table__head">
                   <tr>
@@ -187,13 +197,14 @@ export function CashJournal() {
               message="Les encaissements se saisissent depuis la page d'une facture émise (bouton « Encaisser »)."
             />
           ) : data ? (
-            <div className="ax-table-wrap">
+            <div className="ax-table-wrap" tabIndex={0} role="region" aria-label="Tableau">
               <table className="ax-table ax-table--hover">
                 <thead className="ax-table__head">
                   <tr>
                     <th className="ax-table__th" scope="col">Heure</th>
                     <th className="ax-table__th" scope="col">Facture</th>
                     <th className="ax-table__th" scope="col">Méthode</th>
+                    <th className="ax-table__th" scope="col">Encaissé par</th>
                     <th className="ax-table__th" scope="col">Référence</th>
                     <th className="ax-table__th" scope="col">Reçu</th>
                     <th className="ax-table__th ax-table__th--num" scope="col">Montant</th>
@@ -218,6 +229,11 @@ export function CashJournal() {
                             {MOBILE_OPERATOR_LABELS[p.operator]}
                           </span>
                         )}
+                      </td>
+                      {/* SV — la redevabilité de la caisse : un nom, plus un
+                          id brut à résoudre de tête. */}
+                      <td className="ax-table__td" style={{ color: 'var(--ax-text)', fontSize: 'var(--ax-text-xs)' }}>
+                        {actorLabel(p.received_by_display)}
                       </td>
                       <td className="ax-table__td" style={{ color: 'var(--ax-text-muted)', fontSize: 'var(--ax-text-xs)' }}>
                         {p.reference || '—'}
@@ -261,13 +277,14 @@ export function CashJournal() {
             {journal.loading ? (
               <CardSkeleton lines={3} />
             ) : data ? (
-              <div className="ax-table-wrap">
+              <div className="ax-table-wrap" tabIndex={0} role="region" aria-label="Tableau">
                 <table className="ax-table">
                   <thead className="ax-table__head">
                     <tr>
                       <th className="ax-table__th" scope="col">Quand</th>
                       <th className="ax-table__th" scope="col">Encaissement corrigé</th>
                       <th className="ax-table__th" scope="col">Méthode</th>
+                      <th className="ax-table__th" scope="col">Contre-passé par</th>
                       <th className="ax-table__th ax-table__th--num" scope="col">Montant</th>
                       <th className="ax-table__th" scope="col">Motif</th>
                     </tr>
@@ -278,10 +295,24 @@ export function CashJournal() {
                         <td className="ax-table__td" style={{ whiteSpace: 'nowrap', color: 'var(--ax-text-muted)', fontSize: 'var(--ax-text-xs)' }}>
                           {formatDateTime(r.created_at)}
                         </td>
-                        <td className="ax-table__td ax-num" style={{ fontFamily: 'var(--ax-font-mono)', fontSize: 'var(--ax-text-xs)' }}>
-                          n° {r.cash_payment}
+                        {/* SV — `invoice` rend enfin la ligne navigable : on
+                            réconcilie depuis la facture, plus depuis un id
+                            d'encaissement recopié à la main. */}
+                        <td className="ax-table__td">
+                          <Link href={`/centre/factures/${r.invoice}`} className="ax-link" style={{ fontWeight: 500 }}>
+                            Facture n° {r.invoice}
+                          </Link>
+                          <span className="ax-num" style={{ display: 'block', fontFamily: 'var(--ax-font-mono)', fontSize: 'var(--ax-text-2xs)', color: 'var(--ax-text-muted)' }}>
+                            encaissement n° {r.cash_payment}
+                          </span>
                         </td>
                         <td className="ax-table__td">{CASH_METHOD_LABELS[r.method]}</td>
+                        {/* Une contre-passation est toujours un geste humain
+                            (`pont_confiance` n'est jamais contre-passable au
+                            guichet) : pas de libellé « automatique » ici. */}
+                        <td className="ax-table__td" style={{ color: 'var(--ax-text)', fontSize: 'var(--ax-text-xs)' }}>
+                          {r.reversed_by_display || '—'}
+                        </td>
                         <td className="ax-table__td ax-table__td--num ax-num" style={{ fontFamily: 'var(--ax-font-mono)', color: 'var(--ax-danger-700)' }}>
                           − {formatKmf(r.amount_kmf)}
                         </td>

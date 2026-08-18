@@ -243,7 +243,14 @@ function saveBlob(blob: Blob, filename: string): void {
   document.body.appendChild(anchor);
   anchor.click();
   anchor.remove();
-  URL.revokeObjectURL(url);
+  /*
+   * SV — révocation DIFFÉRÉE : révoquer l'URL synchronement après `click()`
+   * peut annuler le téléchargement sur certains navigateurs (le moteur n'a
+   * pas encore ouvert le blob). 40 s, la marge des appareils lents — même
+   * arbitrage que FileSaver.js. Le blob reste en mémoire ce temps-là, c'est
+   * le prix d'un téléchargement fiable sur un Android d'entrée de gamme.
+   */
+  window.setTimeout(() => URL.revokeObjectURL(url), 40_000);
 }
 
 /**

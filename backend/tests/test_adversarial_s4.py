@@ -968,11 +968,17 @@ class TestExportRevealsNothingNew:
     def test_a_staff_export_is_memberships_only(self):
         """Le tenant appartient au centre, pas au salarié : un export qui
         embarquerait le registre patients serait une exfiltration déguisée
-        en droit individuel."""
+        en droit individuel.
+
+        Mise à jour CONSCIENTE en SV (avec la sonde S7 jumelle) : l'export
+        gagne `hr` — le dossier RH de la PERSONNE, jamais une donnée du
+        tenant. L'invariant de CE test est inchangé : rien du registre
+        patients, rien du libellé sensible."""
         scn = build_scenario(status=Status.PAID)
         response = client_for(scn.cashier).get("/api/v1/auth/me/export/")
         assert response.status_code == 200
-        assert set(response.data["center_staff"]) == {"memberships"}
+        assert set(response.data["center_staff"]) == {"memberships", "hr"}
+        assert response.data["center_staff"]["hr"] == []
         body = body_of(response)
         assert scn.patient.first_name not in body
         assert SENSITIVE_LABEL not in body

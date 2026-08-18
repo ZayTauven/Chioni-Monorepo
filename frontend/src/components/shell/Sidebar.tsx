@@ -3,7 +3,7 @@
  * Vireo Next.js — Sidebar (manifest-driven nav tree).
  *
  * Renders the reference .ax-sidebar DOM contract from nav-manifest.json:
- * brand → menu filter → role="tree" nav with section headers, L1 parent groups
+ * brand → menu filter → plain <nav> with section headers, L1 parent groups
  * (collapsible) and child leaves. The active leaf (matched against the router
  * path) gets `ax-nav__item--active is-active aria-current="page"`, its ancestor
  * group opens (`is-open`, panel un-hidden), and the parent button gets
@@ -159,8 +159,6 @@ function TopLeaf({ node, activeSlug, filter }: { node: NavNode; activeSlug: stri
   return (
     <Link
       className={cls.join(' ')}
-      role="treeitem"
-      aria-level={1}
       aria-current={isActive ? 'page' : undefined}
       href={hrefForSlug(resolved.slug)}
     >
@@ -181,8 +179,6 @@ function Leaf({ node, level, activeSlug, filter }: LeafProps) {
   return (
     <Link
       className={cls.join(' ')}
-      role="treeitem"
-      aria-level={level}
       aria-current={isActive ? 'page' : undefined}
       href={hrefForSlug(resolved.slug)}
     >
@@ -222,8 +218,6 @@ function Group({ node, level, activeSlug, filter }: GroupProps) {
       <button
         type="button"
         className={parentCls.join(' ')}
-        role="treeitem"
-        aria-level={level}
         aria-expanded={isOpen}
         data-ax-group={node.id}
         onClick={() => setOpen((o) => !o)}
@@ -235,7 +229,6 @@ function Group({ node, level, activeSlug, filter }: GroupProps) {
       </button>
       <div
         className="ax-nav__children"
-        role="group"
         data-ax-collapse-panel
         hidden={!isOpen}
       >
@@ -309,7 +302,10 @@ export function Sidebar() {
   const [filter, setFilter] = useState('');
 
   return (
-    <aside className="ax-sidebar" role="navigation" aria-label="Primary">
+    // SV — plus de `role="tree"` : l'arbre ARIA exigeait un roving-tabindex
+    // et une navigation aux flèches jamais câblés (l'ARIA impur est pire que
+    // pas d'ARIA). Une <nav> de liens ordinaires dit exactement ce que c'est.
+    <aside className="ax-sidebar">
       {/* ===== BRAND ===== */}
       <div className="ax-sidebar__brand">
         <Link className="ax-sidebar__logo" href="/centre" aria-label="Accueil Chioni">
@@ -376,10 +372,10 @@ export function Sidebar() {
       </div>
 
       {/* ===== NAV TREE ===== */}
-      <nav className="ax-sidebar__nav" role="tree" aria-label="Main menu">
+      <nav className="ax-sidebar__nav" aria-label="Navigation principale">
         {sections().map((section) => (
           <div key={section}>
-            <p className="ax-sidebar__section" role="presentation">
+            <p className="ax-sidebar__section">
               {sectionLabel(section)}
             </p>
             {groupsInSection(section)

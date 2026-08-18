@@ -386,7 +386,7 @@ export function SupportTicketScreen({ ticketId }: { ticketId: number }) {
             {/* Un ticket résolu accepte encore un message et ne se rouvre pas
                 tout seul : le dire évite d'attendre un changement d'état. */}
             {ticket.status === 'resolu' && (
-              <div className="ax-alert ax-alert--info" role="status">
+              <div className="ax-alert ax-alert--info" role="note">
                 <div className="ax-alert__content">
                   <p className="ax-alert__message">{SUPPORT_RESOLVED_NOTICE}</p>
                 </div>
@@ -394,7 +394,7 @@ export function SupportTicketScreen({ ticketId }: { ticketId: number }) {
             )}
 
             {closed ? (
-              <div className="ax-alert ax-alert--info" role="status">
+              <div className="ax-alert ax-alert--info" role="note">
                 <div className="ax-alert__content">
                   <p className="ax-alert__message">{SUPPORT_CLOSED_NOTICE}</p>
                   <div className="ax-alert__actions">

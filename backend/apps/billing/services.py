@@ -86,6 +86,26 @@ SUBSCRIPTION_INITIAL_STATUSES = frozenset({Status.TRIAL, Status.ACTIVE})
 # ---------------------------------------------------------------------------
 
 
+def _require_strictly_positive_price(fields):
+    """Refus explicite d'un prix d'offre ≤ 0 (SV).
+
+    La contrainte DB ``subscription_plan_price_positive`` n'exclut que le
+    NÉGATIF (``price_kmf >= 0``) : une offre repricée à 0 KMF passerait la
+    base et arrêterait silencieusement la facturation de tous ses abonnés
+    (chaque période émettrait une facture à 0, soldée d'office). Le
+    serializer amont (``PlatformSubscriptionPlanWriteSerializer``) n'a pas
+    de ``min_value`` : la garde vit ICI, dans le service, qui porte LE
+    message — la contrainte reste le filet contre l'ORM brut.
+    """
+    price = fields.get("price_kmf")
+    if price is not None and Decimal(price) <= 0:
+        raise ValidationError(
+            "Le prix d'une offre doit être strictement positif : une offre "
+            "à 0 KMF arrêterait silencieusement la facturation des centres "
+            "abonnés."
+        )
+
+
 @transaction.atomic
 def create_plan(*, actor, **fields):
     """Create a commercial offer. ``code`` is unique across the platform."""
@@ -95,6 +115,7 @@ def create_plan(*, actor, **fields):
     fields["code"] = code
     if SubscriptionPlan.objects.filter(code=code).exists():
         raise ValidationError("Ce code d'offre existe déjà.")
+    _require_strictly_positive_price(fields)
     plan = SubscriptionPlan.objects.create(**fields)
     audit(
         actor=actor, action=AuditAction.SUBSCRIPTION_PLAN_CREATED, target=plan,
@@ -121,6 +142,7 @@ def update_plan(*, actor, plan, **fields):
         ).exists():
             raise ValidationError("Ce code d'offre existe déjà.")
         fields["code"] = new_code
+    _require_strictly_positive_price(fields)
     for name, value in fields.items():
         setattr(plan, name, value)
     plan.save()
@@ -1042,8 +1064,18 @@ def send_subscription_payment_reminders(*, today=None):
             locked.save(
                 update_fields=["reminders_sent", "last_reminder_at", "updated_at"]
             )
+            # SV : « première relance » ne veut pas dire « copie du jour J ».
+            # ``first`` s'appuie sur la proximité RÉELLE de l'échéance, pas
+            # sur le compteur : une facture très en retard (beat resté muet,
+            # facture rattrapée) recevrait sinon sa PREMIÈRE relance avec la
+            # copie « arrive à échéance aujourd'hui » — mensongère. L'offset
+            # 0 fait normalement partir la première vague le jour J (copie
+            # DUE inchangée) ; si elle part en retard, la copie OVERDUE dit
+            # la vérité. Ni la cadence, ni les destinataires ne changent.
             notify_subscription_invoice_reminder(
-                locked, balance_kmf=balance, first=index == 0
+                locked,
+                balance_kmf=balance,
+                first=(today - locked.due_date).days <= 0,
             )
         sent += 1
     return sent

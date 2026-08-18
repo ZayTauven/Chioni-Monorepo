@@ -5,6 +5,7 @@ from django.urls import path
 from apps.accounts.views import (
     LogoutView,
     MeAvatarView,
+    MeErasureRequestCancelView,
     MeErasureRequestView,
     MeExportView,
     MeView,
@@ -31,6 +32,12 @@ urlpatterns = [
         "me/erasure-request/",
         MeErasureRequestView.as_view(),
         name="me_erasure_request",
+    ),
+    # SV — rétractation par la personne (art. 12).
+    path(
+        "me/erasure-request/cancel/",
+        MeErasureRequestCancelView.as_view(),
+        name="me_erasure_request_cancel",
     ),
     path("me/export/", MeExportView.as_view(), name="me_export"),
 ]

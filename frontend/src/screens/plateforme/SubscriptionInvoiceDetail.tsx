@@ -17,10 +17,11 @@
  *
  * `support` LIT : aucune de ces trois commandes n'est montée pour lui.
  *
- * Écart de contrat consigné : le payload plateforme d'un centre ne porte PAS
- * son logo (`/platform/centers/` ne l'expose pas). Le papier rend donc les
- * initiales du centre côté destinataire — le logo du centre s'affichera de
- * lui-même le jour où l'API l'exposera, sans toucher à cet écran.
+ * SV — l'écart de contrat consigné en S5 est soldé : `/platform/centers/`
+ * expose `logo`, et le papier rend enfin la vraie image du centre côté
+ * destinataire (un GET séparé sur la fiche du centre — la facture ne porte
+ * que son id). Un échec de ce fetch retombe sans bruit sur les initiales :
+ * le logo est un ornement, jamais une condition de lecture d'une créance.
  */
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
@@ -28,6 +29,7 @@ import { PlatformPageHead } from '@/components/shell-platform/PlatformPageHead';
 import type { ApiError } from '@/lib/api';
 import {
   cancelSubscriptionInvoice,
+  getPlatformCenter,
   getPlatformSubscriptionInvoice,
   recordSubscriptionPayment,
   reverseSubscriptionPayment,
@@ -374,6 +376,19 @@ export function PlatformSubscriptionInvoiceDetail({ invoiceId }: { invoiceId: nu
   useEffect(() => setPatched(null), [invoiceId]);
   const invoice = patched ?? state.data;
 
+  /* SV — le logo du destinataire : la facture ne porte que l'id du centre,
+     sa fiche plateforme porte le logo. Échec avalé exprès (`null` → le
+     papier retombe sur les initiales) : l'ornement ne conditionne jamais la
+     lecture de la créance. */
+  const recipientCenterId = invoice?.center;
+  const recipientCenter = useAsync(
+    () =>
+      recipientCenterId === undefined
+        ? Promise.resolve(null)
+        : getPlatformCenter(recipientCenterId).catch(() => null),
+    [recipientCenterId],
+  );
+
   if (!invoice) {
     return (
       <>
@@ -440,6 +455,8 @@ export function PlatformSubscriptionInvoiceDetail({ invoiceId }: { invoiceId: nu
             recipient={{
               name: invoice.center_name,
               qualifier: CENTER_RECIPIENT_QUALIFIER,
+              /* SV — le vrai logo au lieu des initiales, quand il existe. */
+              logo: recipientCenter.data?.logo ?? null,
               lines: [`Centre n° ${invoice.center}`],
             }}
             meta={[

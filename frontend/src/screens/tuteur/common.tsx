@@ -201,7 +201,9 @@ export function EmptyState({
   children?: ReactNode;
 }) {
   return (
-    <div className="tuteur-empty" role="status">
+    // SV — plus de `role="status"` : un état vide est un contenu de page, pas
+    // une annonce (il se lit dans le flux — le patron « statique » du KYC).
+    <div className="tuteur-empty">
       {icon && (
         <span className="tuteur-empty__icon" aria-hidden="true">
           {icon}
@@ -313,7 +315,10 @@ export function DeclineInvitationModal({
   onClose: () => void;
 }) {
   return (
-    <Modal title="Refuser cette invitation ?" onClose={onClose}>
+    /* SV — sortie neutralisée EN VOL (patron `busy` du socle centre) : un
+       refus est définitif, un clic à côté pendant l'appel ne doit pas
+       démonter la modale en laissant croire que rien n'est parti. */
+    <Modal title="Refuser cette invitation ?" onClose={busy ? () => undefined : onClose}>
       <div className="ax-stack" style={{ gap: 'var(--ax-space-4)' }}>
         <p style={{ margin: 0, fontSize: 'var(--ax-text-sm)', color: 'var(--ax-text)', lineHeight: 1.6 }}>
           Ce refus est définitif : le lien avec{' '}
@@ -362,7 +367,8 @@ export function DisputeModal({
   };
 
   return (
-    <Modal title="Signaler un problème" onClose={onClose}>
+    /* SV — même garde en vol : le litige gèle une demande de paiement. */
+    <Modal title="Signaler un problème" onClose={submitting ? () => undefined : onClose}>
       <form onSubmit={handleSubmit} className="ax-stack" style={{ gap: 'var(--ax-space-4)' }}>
         <div className="ax-alert ax-alert--warning" role="note">
           <div className="ax-alert__content">
@@ -388,7 +394,7 @@ export function DisputeModal({
         </div>
         {error && <ErrorAlert error={error} />}
         <div className="ax-cluster" style={{ justifyContent: 'flex-end', gap: 'var(--ax-space-3)' }}>
-          <button type="button" className="ax-btn ax-btn--ghost" onClick={onClose}>
+          <button type="button" className="ax-btn ax-btn--ghost" onClick={onClose} disabled={submitting}>
             <span className="ax-btn__label">Annuler</span>
           </button>
           <button

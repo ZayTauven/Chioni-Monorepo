@@ -315,6 +315,24 @@ hr {
      <aside class="ax-customizer">…</aside>
    ════════════════════════════════════════════════════════════════════════ */
 
+/* SV — lien d'évitement des shells centre et plateforme (le shell-lite a le
+   sien) : même patron que .ax-lite__skip, au-dessus de tout le chrome. Rendu
+   par .visually-hidden-focusable — visible seulement au focus clavier. */
+.ax-skip {
+  position: fixed;
+  inset-block-start: var(--ax-space-2);
+  inset-inline-start: var(--ax-space-2);
+  z-index: var(--ax-z-command);
+  padding: var(--ax-space-2) var(--ax-space-3);
+  border-radius: var(--ax-radius-sm);
+  border: 1px solid var(--ax-border);
+  background: var(--ax-surface-solid);
+  color: var(--ax-text-strong);
+  font-size: var(--ax-text-sm);
+  font-weight: var(--ax-weight-medium);
+  text-decoration: none;
+}
+
 /* root scope — sits above the fixed .ax-ambient glow layer (z-base 0) */
 .ax-layout {
   position: relative;

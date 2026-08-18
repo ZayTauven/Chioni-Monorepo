@@ -538,6 +538,12 @@ def invite_guardian(*, actor, patient, phone, relationship, initiated_by,
         relationship=relationship,
         status=GuardianLink.Status.INVITATION_SENT,
         initiated_by=initiated_by,
+        # SV.1.1 — provenance : quand l'invitation part du guichet, le lien
+        # retient QUEL centre l'a émise (la garde du consentement clinique
+        # guichet s'y adosse). NULL pour les portes A/B.
+        initiated_by_center=(
+            center if initiated_by == GuardianLink.InitiatedBy.CENTER else None
+        ),
     )
     audit(
         actor=actor, action=AuditAction.LINK_CREATED, target=link,
@@ -689,6 +695,19 @@ _DESK_CLAIMED_REFUSAL = (
     "Ce patient gère lui-même ses consentements depuis son espace."
 )
 
+#: SV.1.1 (arbitrage PO S2, option b) — a center must NOT collect a
+#: clinical consent on a link IT fabricated itself (porte C invitation):
+#: the same desk would be inviting the guardian AND granting them the
+#: clinical scope, with the patient nowhere in the loop. One byte-identical
+#: message for the self-initiated case AND the unknown-provenance case
+#: (historical center-links with a NULL ``initiated_by_center``): the
+#: refusal must not disclose whether the provenance is known.
+_DESK_SELF_INITIATED_LINK_REFUSAL = (
+    "Ce lien de tutelle est né d'une invitation émise par le centre : le "
+    "consentement clinique ne peut pas être recueilli au guichet du centre "
+    "qui a lui-même initié le lien."
+)
+
 
 def resolve_desk_consent_link(*, patient, link_pk):
     """Resolve a body-referenced link for the desk-consent endpoints.
@@ -734,8 +753,31 @@ def grant_clinical_consent_at_center(*, actor, center, patient, link,
         raise ValidationError(_DESK_CLAIMED_REFUSAL)
     if link.patient_id != patient.pk or link.status != GuardianLink.Status.ACTIVE:
         raise ValidationError(_DESK_LINK_REFUSAL)
-    if collected_via not in Consent.CollectedVia.values:
-        raise ValidationError("Mode de recueil invalide : papier ou oral.")
+    # SV.1.1 — the chain « le centre fabrique le tuteur » is CLOSED: a link
+    # born from an invitation this very center emitted (porte C) cannot
+    # receive a desk clinical consent HERE. Another center remains free
+    # (subject to every other rule) — the guard targets the conflict of
+    # interest, not the link. FAIL-CLOSED on unknown provenance: a
+    # historical center-initiated link with no ``initiated_by_center``
+    # cannot be proven foreign, and granting clinical access is exactly
+    # where this product refuses to guess. The guard sits UNDER the
+    # ``select_for_update`` re-reads above — the S2 claim×grant TOCTOU
+    # closure covers it unchanged (provenance is immutable, but the link
+    # row is the one being serialised on).
+    if link.initiated_by == GuardianLink.InitiatedBy.CENTER and (
+        link.initiated_by_center_id is None
+        or link.initiated_by_center_id == center.pk
+    ):
+        raise ValidationError(_DESK_SELF_INITIATED_LINK_REFUSAL)
+    # SV.1.2 (arbitrage PO S2) — papier signé OBLIGATOIRE : le recueil oral
+    # n'est plus accepté (trace opposable). L'historique `oral` reste
+    # lisible ; les consentements oraux encore actifs ont été révoqués par
+    # la migration `medical/0005` (jamais requalifiés en silence).
+    if collected_via != Consent.CollectedVia.PAPER:
+        raise ValidationError(
+            "Mode de recueil invalide : seul le formulaire papier signé "
+            "est accepté au guichet."
+        )
     if Consent.objects.allows(link, Consent.Scope.CLINICAL_DETAIL):
         raise ValidationError("Ce consentement est déjà accordé.")
     consent = Consent.objects.create(

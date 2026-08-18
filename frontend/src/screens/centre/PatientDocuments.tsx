@@ -285,6 +285,7 @@ function ArchiveDocumentModal({
   return (
     <Modal
       title="Archiver ce document ?"
+      busy={saving}
       onClose={onClose}
       footer={
         <>

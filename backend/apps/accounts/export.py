@@ -47,6 +47,15 @@ from apps.common.permissions import (
     receipts_visible_to_guardian,
 )
 from apps.common.uploads import media_url
+from apps.hrm.models import AttendanceRecord, Employment, LeaveDocument, LeaveRequest
+from apps.hrm.serializers import (
+    LeaveDocumentSerializer,
+    MyAttendanceSerializer,
+    MyEmploymentSerializer,
+    MyLeaveRequestSerializer,
+)
+from apps.inpatient.models import Stay
+from apps.inpatient.serializers import StayPatientSerializer
 from apps.medical.models import (
     Consent,
     Encounter,
@@ -70,9 +79,14 @@ from apps.patients.serializers import (
     GuardianLinkHistorySerializer,
     GuardianLinkPatientSerializer,
     GuardianProfileSerializer,
+    PatientContactPreferenceSerializer,
     PatientInsuranceSerializer,
     PatientSelfSerializer,
 )
+from apps.patients.services import patient_contact_preferences
+from apps.pharmacy.models import AvailabilityRequest
+from apps.pharmacy.serializers import AvailabilityRequestPatientSerializer
+from apps.pharmacy.services import prescription_requests_qs
 from apps.scheduling.models import Appointment
 from apps.scheduling.serializers import AppointmentPatientSerializer
 from apps.trustbridge.models import CashReceipt, PaymentRequest, Receipt
@@ -106,12 +120,21 @@ def build_user_export(*, user, request=None):
     guardian = guardian_profile(user)
     if guardian is not None:
         payload["guardian"] = _guardian_block(user, guardian)
-    memberships = active_membership_qs(user).select_related("center")
-    if memberships.exists():
+    memberships = list(active_membership_qs(user).select_related("center"))
+    if memberships:
         payload["center_staff"] = {
             "memberships": _StaffMembershipSerializer(
                 memberships, many=True, context={"request": request}
-            ).data
+            ).data,
+            # SV — les données RH de la PERSONNE (reliquat ADR 0020 n° 17,
+            # sonde S7 mise à jour consciemment). Miroir STRICT des routes
+            # « mon dossier » (`/centers/{c}/hrm/me/*`) : un emploi n'est
+            # exporté que dans un centre où l'appelant est ENCORE membre
+            # actif (mêmes portes que les écrans — exporter le dossier d'un
+            # centre quitté serait une décision de permission NOUVELLE,
+            # interdite ici par la règle du module). Ses présences et ses
+            # congés à lui, jamais ceux d'un collègue.
+            "hr": _hr_block(user, [m.center_id for m in memberships]),
         }
     operator = platform_staff(user)
     if operator is not None:
@@ -218,7 +241,82 @@ def _patient_block(profile):
             .order_by("-issued_at"),
             many=True,
         ).data,
+        # SV — les trois clés de la même famille de reliquats (S6/S9/S10),
+        # ajoutées EN UNE FOIS, chacune miroir strict de son écran.
+        # `GET /patients/me/stays/` : ni lit, ni priorité, ni motif
+        # d'annulation (ADR 0019 §5) — le serializer patient est la fenêtre.
+        "stays": StayPatientSerializer(
+            Stay.objects.for_patient(profile)
+            .select_related("center")
+            .order_by("-admitted_at", "-id"),
+            many=True,
+        ).data,
+        # `GET /patients/me/contact-preferences/` : forme constante, ligne
+        # ou pas (les défauts sont le comportement historique du produit).
+        "contact_preferences": PatientContactPreferenceSerializer(
+            patient_contact_preferences(profile)
+        ).data,
+        # `GET /patients/me/prescriptions/{pk}/availability/` : le payload
+        # PATIENT (jamais le commentaire d'officine ni les compteurs de
+        # diffusion), regroupé par ordonnance comme à l'écran.
+        "availability": [
+            {
+                "prescription": prescription_id,
+                "requests": AvailabilityRequestPatientSerializer(
+                    prescription_requests_qs(prescription_id), many=True
+                ).data,
+            }
+            for prescription_id in AvailabilityRequest.objects.filter(
+                prescription__encounter__patient=profile
+            )
+            .values_list("prescription_id", flat=True)
+            .distinct()
+            .order_by("prescription_id")
+        ],
     }
+
+
+def _hr_block(user, active_center_ids):
+    """SV — the caller's OWN HR file, center by center (art. 20).
+
+    Strict mirror of the « mon dossier » routes (`_MyHrmMixin`): the
+    employment of the CALLER, in the centers where they still hold an
+    ACTIVE membership — the same gate as the screens. The person's own
+    attendance and leave history in full (their own data, no collective
+    window: the ±31 j planning bound protects COLLEAGUES, not the person
+    from themselves). Leave documents are METADATA only, like patient
+    documents — the bytes stay behind the authenticated download."""
+    blocks = []
+    employments = (
+        Employment.objects.filter(user=user, center_id__in=active_center_ids)
+        .select_related("center", "department", "job_title")
+        .order_by("center_id")
+    )
+    for employment in employments:
+        blocks.append(
+            {
+                "employment": MyEmploymentSerializer(employment).data,
+                "attendance": MyAttendanceSerializer(
+                    AttendanceRecord.objects.filter(
+                        employment=employment
+                    ).order_by("-date", "-id"),
+                    many=True,
+                ).data,
+                "leave_requests": MyLeaveRequestSerializer(
+                    LeaveRequest.objects.filter(
+                        employment=employment
+                    ).order_by("-start_date", "-id"),
+                    many=True,
+                ).data,
+                "leave_documents": LeaveDocumentSerializer(
+                    LeaveDocument.objects.filter(
+                        leave__employment=employment
+                    ).order_by("-created_at", "-id"),
+                    many=True,
+                ).data,
+            }
+        )
+    return blocks
 
 
 def _guardian_block(user, guardian):

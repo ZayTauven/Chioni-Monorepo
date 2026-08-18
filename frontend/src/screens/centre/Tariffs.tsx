@@ -77,6 +77,7 @@ function TariffModal({
   return (
     <Modal
       title={existing ? `Modifier « ${existing.label} »` : 'Nouvel acte tarifé'}
+      busy={saving}
       onClose={onClose}
       footer={
         <>
@@ -132,7 +133,7 @@ function TariffModal({
           </div>
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--ax-space-4)' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 'var(--ax-space-4)' }}>
           <div className="ax-field">
             <label className="ax-label" htmlFor="tf-cat">
               Catégorie générique <span className="ax-field__required" aria-hidden="true">*</span>
@@ -257,7 +258,7 @@ export function Tariffs() {
             />
           ) : (
             <>
-              <div className="ax-table-wrap">
+              <div className="ax-table-wrap" tabIndex={0} role="region" aria-label="Tableau">
                 <table className="ax-table ax-table--hover">
                   <thead className="ax-table__head">
                     <tr>

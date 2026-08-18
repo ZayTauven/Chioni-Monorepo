@@ -872,7 +872,17 @@ class TestExportPerimeter:
             "prescriptions", "record_entries", "medical_file", "vital_signs",
             "documents", "insurances", "payment_requests", "receipts",
             "cash_receipts",
+            # SV — les reliquats S6/S9/S10 de la même famille, soldés en
+            # une fois (miroir strict des écrans patient).
+            "stays", "contact_preferences", "availability",
         }
+        # Forme constante, ligne ou pas (patron `PatientMedicalFile`).
+        assert set(block["contact_preferences"]) == {
+            "appointment_reminders", "missed_appointment_followup",
+            "updated_at",
+        }
+        assert block["stays"] == []
+        assert block["availability"] == []
         assert block["profile"]["id"] == scn.patient.pk
         assert len(block["encounters"]) == 1
         assert len(block["record_entries"]) == 1
@@ -952,7 +962,10 @@ class TestExportPerimeter:
         make_encounter(patient=patient, center=center)
 
         payload = client_for(director).get("/api/v1/auth/me/export/").data
-        assert set(payload["center_staff"]) == {"memberships"}
+        # SV — `hr` : le dossier RH de la PERSONNE (vide tant que le
+        # directeur n'a pas d'Employment), jamais les données du tenant.
+        assert set(payload["center_staff"]) == {"memberships", "hr"}
+        assert payload["center_staff"]["hr"] == []
         (membership,) = payload["center_staff"]["memberships"]
         assert membership["center"]["name"] == "Clinique Ylang"
         assert membership["role"] == Role.DIRECTOR

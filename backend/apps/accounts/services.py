@@ -412,6 +412,7 @@ def _auto_claim_profile(user):
 ERASURE_BLOCKER_LAST_DIRECTOR = "dernier_directeur"
 ERASURE_BLOCKER_PAYMENT_IN_FLIGHT = "paiement_en_cours"
 ERASURE_BLOCKER_LAST_PLATFORM_ADMIN = "dernier_admin_plateforme"
+ERASURE_BLOCKER_OPEN_DISPUTE = "litige_ouvert"
 
 #: One French sentence per blocker — rendered to the operator (400) and,
 #: as a code, in the back-office payload. Never a name, never a phone.
@@ -430,6 +431,12 @@ ERASURE_BLOCKER_MESSAGES = {
         "Effacement refusé : cette personne est le dernier administrateur "
         "actif de la plateforme Chioni. Nommez un autre administrateur "
         "avant d'effacer son compte."
+    ),
+    ERASURE_BLOCKER_OPEN_DISPUTE: (
+        "Effacement refusé : un litige est ouvert sur un paiement qui "
+        "concerne cette personne. Le litige doit d'abord être résolu — "
+        "anonymiser une partie en plein litige rendrait sa résolution "
+        "impossible."
     ),
 }
 
@@ -467,7 +474,7 @@ def erasure_blockers(user, *, lock=False):
       holders of a seat serialise instead of both passing (same failure
       mode, and same parade, as the vague-1 fix on staff deactivation).
     """
-    from apps.trustbridge.models import PaymentIntent
+    from apps.trustbridge.models import Dispute, PaymentIntent
 
     blockers = []
     if centers_locked_by_last_director(user, lock=lock):
@@ -489,6 +496,21 @@ def erasure_blockers(user, *, lock=False):
     # person and may ask, they just cannot be the last one standing.
     if _is_last_platform_admin(user, lock=lock):
         blockers.append(ERASURE_BLOCKER_LAST_PLATFORM_ADMIN)
+    # SV (dette S4) — an OPEN dispute names its parties: anonymising the
+    # person who contests, or the patient whose care the contested payment
+    # bought, would leave the center resolving a disagreement against a
+    # tombstone. Same posture as the in-flight payment: fix first (resolve
+    # the dispute), erase after. No row lock, like the PaymentIntent
+    # check — a dispute resolved mid-erasure only ever UNBLOCKS.
+    if (
+        Dispute.objects.filter(status=Dispute.Status.OPEN)
+        .filter(
+            models.Q(opened_by=user)
+            | models.Q(payment_request__invoice__patient__user=user)
+        )
+        .exists()
+    ):
+        blockers.append(ERASURE_BLOCKER_OPEN_DISPUTE)
     return blockers
 
 
@@ -533,6 +555,38 @@ def request_erasure(*, user):
     erasure_request = ErasureRequest.objects.create(user=user)
     audit(
         actor=user, action=AuditAction.ERASURE_REQUESTED, target=erasure_request,
+        erasure_request_id=erasure_request.pk, user_id=user.pk,
+    )
+    return erasure_request
+
+
+@transaction.atomic
+def cancel_erasure_request(*, user):
+    """SV (art. 12) — the person WITHDRAWS their own pending request.
+
+    The right to ask carries the right to change one's mind while nothing
+    has been executed. Only a ``en_attente`` request of the CALLER can be
+    cancelled — the row is locked so a platform operator processing it at
+    the same instant serialises with the retraction (the loser of the race
+    gets its explicit 400, nothing half-done). Terminal like the other two
+    outcomes: a cancelled request is history, asking again deposits a NEW
+    one (the partial unique constraint only ever counts ``en_attente``).
+
+    Audited ``erasure.cancelled`` — references only.
+    """
+    erasure_request = (
+        ErasureRequest.objects.select_for_update()
+        .filter(user=user, status=ErasureRequest.Status.PENDING)
+        .first()
+    )
+    if erasure_request is None:
+        raise ValidationError(
+            "Aucune demande d'effacement en attente pour votre compte."
+        )
+    erasure_request.status = ErasureRequest.Status.CANCELLED
+    erasure_request.save(update_fields=["status", "updated_at"])
+    audit(
+        actor=user, action=AuditAction.ERASURE_CANCELLED, target=erasure_request,
         erasure_request_id=erasure_request.pk, user_id=user.pk,
     )
     return erasure_request

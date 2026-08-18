@@ -286,28 +286,6 @@ def _unpaid_reminder_state(invoice):
     return rows["n"] or 0, (_local_day(last) if last else None)
 
 
-def _last_patient_wave_day(patient_id):
-    """Le jour local de la dernière vague d'impayé reçue PAR CETTE PERSONNE,
-    toutes factures et **tous centres** confondus (revue guardian S10).
-
-    Voir :data:`UNPAID_REMINDER_PATIENT_GAP_DAYS` : le plafond par facture
-    ne borne rien pour l'humain au bout du fil.
-    """
-    last = (
-        ContactLog.objects.filter(
-            patient_id=patient_id, kind=Kind.UNPAID_REMINDER,
-            channel=Channel.SMS,
-        )
-        .aggregate(last=Max("created_at"))["last"]
-    )
-    return _local_day(last) if last else None
-
-
-def _patient_gap_is_clear(patient_id, *, today, gap_days) -> bool:
-    last_day = _last_patient_wave_day(patient_id)
-    return last_day is None or (today - last_day).days >= gap_days
-
-
 def _wave_is_due(*, index, age_days, last_wave_day, today) -> bool:
     """La vague n° ``index`` est-elle due aujourd'hui ?
 
@@ -367,15 +345,52 @@ def send_unpaid_invoice_reminders(*, today=None):
     #: Le plafond de la PERSONNE, dans l'exécution courante : une facture
     #: qui vient de faire partir une vague ferme la porte à ses sœurs du
     #: même dossier, y compris dans un autre centre parcouru plus loin.
-    #: La garde de base (:func:`_patient_gap_is_clear`) ne verrait pas
-    #: encore la ligne d'une transaction commitée dans la même boucle si
-    #: deux exécutions se chevauchaient — ce set, lui, est infaillible à
-    #: l'intérieur d'un passage.
+    #: La garde de base (le plafond annoté ``patient_last_wave_at_agg``,
+    #: revue guardian S10 : toutes factures et TOUS CENTRES confondus) ne
+    #: verrait pas encore la ligne d'une transaction commitée dans la même
+    #: boucle si deux exécutions se chevauchaient — ce set, lui, est
+    #: infaillible à l'intérieur d'un passage.
     served_patients = set()
     for center in HealthCenter.objects.order_by("pk"):
+        # SV (volumétrie) — le PRÉ-FILTRE de cadence tient désormais en UNE
+        # requête par centre : l'état de cadence (compte de vagues +
+        # dernière vague) et le plafond de la personne sont annotés en SQL
+        # sur la sélection, au lieu de 2 requêtes PAR FACTURE. La
+        # SÉMANTIQUE est inchangée : ces lectures restent le pré-filtre de
+        # confort, LA décision qui fait foi reste la relecture SOUS VERROU
+        # plus bas, et le pré-filtre « un proche joignable » reste l'APPEL
+        # à :func:`reminder_reachable_links` — il ne concerne que les
+        # factures DUES (rares), et les sondes S10 verrouillent son
+        # architecture en deux temps (pré-filtre puis relecture sous
+        # verrou).
+        wave_logs = ContactLog.objects.filter(
+            invoice=OuterRef("pk"), kind=Kind.UNPAID_REMINDER,
+            channel=Channel.SMS,
+        ).order_by()
+        patient_waves = ContactLog.objects.filter(
+            patient_id=OuterRef("patient_id"), kind=Kind.UNPAID_REMINDER,
+            channel=Channel.SMS,
+        ).order_by()
         invoices = (
             unpaid_invoices_qs(center)
             .select_related("center", "patient")
+            .annotate(
+                wave_count_agg=Subquery(
+                    wave_logs.values("invoice")
+                    .annotate(n=Count("pk"))
+                    .values("n")
+                ),
+                last_wave_at_agg=Subquery(
+                    wave_logs.values("invoice")
+                    .annotate(last=Max("created_at"))
+                    .values("last")
+                ),
+                patient_last_wave_at_agg=Subquery(
+                    patient_waves.values("patient")
+                    .annotate(last=Max("created_at"))
+                    .values("last")
+                ),
+            )
             .order_by("pk")
         )
         for invoice in invoices:
@@ -385,7 +400,12 @@ def send_unpaid_invoice_reminders(*, today=None):
                     "personne dans ce passage) : facture #%s.", invoice.pk,
                 )
                 continue
-            index, last_wave_day = _unpaid_reminder_state(invoice)
+            index = invoice.wave_count_agg or 0
+            last_wave_day = (
+                _local_day(invoice.last_wave_at_agg)
+                if invoice.last_wave_at_agg
+                else None
+            )
             if index >= len(UNPAID_REMINDER_OFFSETS_DAYS):
                 continue
             age_days = (today - _local_day(invoice.created_at)).days
@@ -394,9 +414,15 @@ def send_unpaid_invoice_reminders(*, today=None):
                 last_wave_day=last_wave_day, today=today,
             ):
                 continue
-            if not _patient_gap_is_clear(
-                invoice.patient_id, today=today,
-                gap_days=UNPAID_REMINDER_PATIENT_GAP_DAYS,
+            patient_last_wave_day = (
+                _local_day(invoice.patient_last_wave_at_agg)
+                if invoice.patient_last_wave_at_agg
+                else None
+            )
+            if not (
+                patient_last_wave_day is None
+                or (today - patient_last_wave_day).days
+                >= UNPAID_REMINDER_PATIENT_GAP_DAYS
             ):
                 # Cette personne a reçu une relance récemment, pour une
                 # AUTRE facture. Rien n'est écrit : la cadence de celle-ci
@@ -413,7 +439,9 @@ def send_unpaid_invoice_reminders(*, today=None):
                 # la relecture SOUS VERROU, plus bas. Sans cette sortie, la
                 # facture brûlerait sa cadence en silence et ne serait plus
                 # jamais relancée le jour où un tuteur arrive ; la file du
-                # guichet, elle, la montre déjà.
+                # guichet, elle, la montre déjà. (SV : cet appel ne
+                # concerne plus que les factures DUES — la cadence est
+                # pré-filtrée par annotation, plus par requête par ligne.)
                 logger.debug(
                     "Relance d'impayé ignorée (aucun proche joignable) : "
                     "facture #%s.", invoice.pk,
@@ -653,6 +681,19 @@ def unpaid_followup_rows(center):
         .order_by("-created_at", "-id")
         .values("outcome")[:1]
     )
+    # SV — le QUAND du dernier contact HUMAIN (une issue n'existe que sur
+    # un geste humain — l'automate n'en pose jamais) : ``last_contact_at``
+    # mélange SMS automatiques et gestes humains, or « un humain a parlé à
+    # cette famille il y a deux jours » est l'information qui évite de
+    # rappeler trop tôt. Écart de contrat comblé pour la vague frontend.
+    last_human_contact = (
+        ContactLog.objects.filter(invoice=OuterRef("pk"))
+        .exclude(outcome="")
+        .order_by()
+        .values("invoice")
+        .annotate(last=Max("created_at"))
+        .values("last")
+    )
     # Miroir EXACT de ``reminder_reachable_links`` — statut de la demande
     # compris (revue guardian S10). Un booléen qui dirait « oui » là où
     # aucun SMS ne peut partir mentirait au caissier, et la file de travail
@@ -669,6 +710,7 @@ def unpaid_followup_rows(center):
             reminders_sent_agg=Subquery(reminders),
             last_contact_at_agg=Subquery(last_contact),
             last_outcome_agg=Subquery(last_human_outcome),
+            last_human_contact_at_agg=Subquery(last_human_contact),
             guardian_reachable_agg=Exists(reachable),
         )
         .select_related("patient")

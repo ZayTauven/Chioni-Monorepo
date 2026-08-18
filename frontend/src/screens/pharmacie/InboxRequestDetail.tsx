@@ -240,7 +240,7 @@ function AnswerForm({
 
   if (blocked !== null) {
     return (
-      <div className="ax-alert ax-alert--info" role="status">
+      <div className="ax-alert ax-alert--info" role="note">
         <div className="ax-alert__content">
           <p className="ax-alert__message" style={{ lineHeight: 1.7 }}>
             {blocked}
@@ -259,7 +259,7 @@ function AnswerForm({
       style={{ display: 'flex', flexDirection: 'column', gap: 'var(--ax-space-4)' }}
     >
       {notice !== null && (
-        <div className="ax-alert ax-alert--info" role="status">
+        <div className="ax-alert ax-alert--info" role="note">
           <div className="ax-alert__content">
             <p className="ax-alert__message" style={{ lineHeight: 1.7 }}>
               {notice}

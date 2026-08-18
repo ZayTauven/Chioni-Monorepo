@@ -127,7 +127,7 @@ function ContractCard({ subscription }: { subscription: CenterSubscription }) {
             className={`ax-alert ${
               subscription.is_frozen ? 'ax-alert--warning' : 'ax-alert--info'
             }`}
-            role="status"
+            role="note"
           >
             <div className="ax-alert__content">
               <p className="ax-alert__title">{SUBSCRIPTION_REASON_TITLE[subscription.status]}</p>
@@ -210,7 +210,7 @@ function UsageCard({ subscription }: { subscription: CenterSubscription }) {
 
         {/* Le dépassement est un signal COMMERCIAL, jamais un verrou : le ton
             de la carte le dit (`info`, pas `warning`), et la phrase aussi. */}
-        <div className={`ax-alert ${usage.over_quota ? 'ax-alert--info' : 'ax-alert--success'}`} role="status">
+        <div className={`ax-alert ${usage.over_quota ? 'ax-alert--info' : 'ax-alert--success'}`} role="note">
           <div className="ax-alert__content">
             <p className="ax-alert__message">
               {usage.over_quota ? QUOTA_OVER_NOTICE : QUOTA_WITHIN_NOTICE}
@@ -292,7 +292,7 @@ function InvoicesCard({ centerId }: { centerId: number }) {
         <EmptyState title="Aucune facture pour l’instant" message={SUBSCRIPTION_NO_INVOICE_YET} />
       ) : (
         <>
-          <div className="ax-table-wrap">
+          <div className="ax-table-wrap" tabIndex={0} role="region" aria-label="Tableau">
             <table className="ax-table ax-table--hover">
               <thead className="ax-table__head">
                 <tr>

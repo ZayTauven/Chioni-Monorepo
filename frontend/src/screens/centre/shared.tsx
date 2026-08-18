@@ -522,9 +522,20 @@ interface IconProps {
 function icon(paths: ReactNode) {
   return function Icon({ className = 'ax-btn__icon' }: IconProps) {
     return (
+      /*
+       * SV — `width/height="1em"` : la taille INTRINSÈQUE de l'icône. Hors
+       * d'un bouton, ni `ax-btn__icon` (son `--_btn-icon` n'existe que sous
+       * `.ax-btn`) ni `className=""` ne dimensionnaient le SVG — il prenait
+       * la taille par défaut d'un élément remplacé. Avec 1em, une icône suit
+       * le texte qui l'entoure partout ; les contextes stylés (`.ax-btn`,
+       * `.ax-field__affix`, `.ax-alert__icon`…) continuent de gagner, le CSS
+       * primant sur les attributs de présentation.
+       */
       <svg
         className={className}
         viewBox="0 0 24 24"
+        width="1em"
+        height="1em"
         fill="none"
         stroke="currentColor"
         strokeWidth={1.75}
@@ -613,9 +624,9 @@ export function ErrorAlert({ error, onRetry }: { error: ApiError; onRetry?: () =
       : ['Une erreur est survenue. Réessayez dans un instant.'];
   return (
     <div className="ax-alert ax-alert--danger" role="alert">
-      <span className="ax-alert__icon">
-        <IconAlertTriangle className="" />
-      </span>
+      {/* La classe va sur le SVG lui-même (patron du socle patient) : c'est
+          `.ax-alert__icon` qui porte les 20 px, pas un span d'enrobage. */}
+      <IconAlertTriangle className="ax-alert__icon" />
       <div className="ax-alert__content">
         {messages.map((m) => (
           <p key={m} className="ax-alert__message">
@@ -657,11 +668,56 @@ export function ErrorAlert({ error, onRetry }: { error: ApiError; onRetry?: () =
  * concernés (aujourd'hui seule la classe `is-invalid` marque le champ) et le
  * déplacement du focus vers le premier champ refusé.
  */
+/*
+ * SV — le patron générique `aria-invalid` + focus sur la PREMIÈRE erreur,
+ * posé dans le socle et non écran par écran (dette a11y S5).
+ *
+ * Chaque FieldError monté marque son champ (le contrôle voisin dans le même
+ * `.ax-field`) `aria-invalid="true"`, et se déclare candidat au focus. Un
+ * ordonnanceur de module attend la micro-fenêtre du rendu puis focalise le
+ * candidat le plus HAUT dans le document — une seule fois par soumission
+ * refusée (l'instance d'ApiError change à chaque refus, les re-rendus avec la
+ * même instance ne re-volent jamais le focus).
+ */
+let focusCandidates: HTMLElement[] = [];
+let focusTimer: number | null = null;
+
+function claimErrorFocus(control: HTMLElement) {
+  focusCandidates.push(control);
+  if (focusTimer !== null) return;
+  focusTimer = window.setTimeout(() => {
+    focusTimer = null;
+    const list = focusCandidates.filter((el) => el.isConnected);
+    focusCandidates = [];
+    if (list.length === 0) return;
+    list.sort((a, b) =>
+      a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1,
+    );
+    list[0].focus({ preventScroll: false });
+  }, 0);
+}
+
 export function FieldError({ error, field }: { error: ApiError | null; field: string }) {
   const messages = error?.fieldErrors[field];
-  if (!messages || messages.length === 0) return null;
+  const active = !!messages && messages.length > 0;
+  const selfRef = useRef<HTMLSpanElement>(null);
+
+  useEffect(() => {
+    if (!active) return;
+    const control = selfRef.current
+      ?.closest('.ax-field')
+      ?.querySelector<HTMLElement>('input, select, textarea');
+    if (!control) return;
+    control.setAttribute('aria-invalid', 'true');
+    claimErrorFocus(control);
+    return () => control.removeAttribute('aria-invalid');
+    // `error` (l'instance) et non `active` : un NOUVEAU refus refocalise,
+    // un simple re-rendu ne le fait pas.
+  }, [error, active]);
+
+  if (!active) return null;
   return (
-    <span className="ax-field__message ax-field__message--error" role="alert">
+    <span ref={selfRef} className="ax-field__message ax-field__message--error" role="alert">
       {messages.join(' ')}
     </span>
   );
@@ -669,30 +725,42 @@ export function FieldError({ error, field }: { error: ApiError | null; field: st
 
 /* ── loading / empty states ── */
 
+/*
+ * SV — les squelettes S'ANNONCENT (dette a11y S5) : ils restaient
+ * `aria-hidden`, donc filtrer ou paginer ne disait rien à un lecteur d'écran.
+ * Le conteneur est une région `status` polie avec un libellé masqué ; les
+ * lignes miroitantes, purement décoratives, restent hors de l'arbre.
+ */
 export function TableSkeleton({ rows = 5, cols = 4 }: { rows?: number; cols?: number }) {
   return (
-    <div aria-hidden="true" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--ax-space-3)', padding: 'var(--ax-space-4)' }}>
-      {Array.from({ length: rows }, (_, r) => (
-        <div key={r} style={{ display: 'grid', gridTemplateColumns: `repeat(${cols},1fr)`, gap: 'var(--ax-space-4)' }}>
-          {Array.from({ length: cols }, (_, c) => (
-            <span key={c} className="ax-skeleton ax-skeleton--line ax-skeleton--shimmer" style={{ height: 14 }} />
-          ))}
-        </div>
-      ))}
+    <div role="status" aria-live="polite" aria-busy="true">
+      <span className="visually-hidden">Chargement en cours…</span>
+      <div aria-hidden="true" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--ax-space-3)', padding: 'var(--ax-space-4)' }}>
+        {Array.from({ length: rows }, (_, r) => (
+          <div key={r} style={{ display: 'grid', gridTemplateColumns: `repeat(${cols},1fr)`, gap: 'var(--ax-space-4)' }}>
+            {Array.from({ length: cols }, (_, c) => (
+              <span key={c} className="ax-skeleton ax-skeleton--line ax-skeleton--shimmer" style={{ height: 14 }} />
+            ))}
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
 
 export function CardSkeleton({ lines = 4 }: { lines?: number }) {
   return (
-    <div aria-hidden="true" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--ax-space-3)', padding: 'var(--ax-space-4)' }}>
-      {Array.from({ length: lines }, (_, i) => (
-        <span
-          key={i}
-          className="ax-skeleton ax-skeleton--line ax-skeleton--shimmer"
-          style={{ height: 14, width: `${100 - i * 12}%` }}
-        />
-      ))}
+    <div role="status" aria-live="polite" aria-busy="true">
+      <span className="visually-hidden">Chargement en cours…</span>
+      <div aria-hidden="true" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--ax-space-3)', padding: 'var(--ax-space-4)' }}>
+        {Array.from({ length: lines }, (_, i) => (
+          <span
+            key={i}
+            className="ax-skeleton ax-skeleton--line ax-skeleton--shimmer"
+            style={{ height: 14, width: `${100 - i * 12}%` }}
+          />
+        ))}
+      </div>
     </div>
   );
 }
@@ -708,9 +776,12 @@ export function EmptyState({
 }) {
   return (
     <div style={{ textAlign: 'center', padding: 'var(--ax-space-8) var(--ax-space-4)' }}>
-      <h3 style={{ color: 'var(--ax-text-strong)', fontFamily: 'var(--ax-font-display)', marginBottom: 'var(--ax-space-2)' }}>
+      {/* SV — un `p` stylé et non un `h3` : l'état vide se pose n'importe où
+          (parfois directement sous le `h1` de la page) et un titre d'état
+          vide n'est pas un jalon de navigation. */}
+      <p style={{ color: 'var(--ax-text-strong)', fontFamily: 'var(--ax-font-display)', fontSize: 'var(--ax-text-lg)', fontWeight: 'var(--ax-weight-semibold)', margin: `0 0 var(--ax-space-2)` }}>
         {title}
-      </h3>
+      </p>
       <p style={{ color: 'var(--ax-text-muted)', fontSize: 'var(--ax-text-sm)', marginBottom: action ? 'var(--ax-space-4)' : 0 }}>
         {message}
       </p>
@@ -840,22 +911,37 @@ export function Modal({
   // close — the trap itself mirrors core/focus-trap.js.
   useFocusTrap(cardRef, true);
   useEffect(() => {
-    cardRef.current?.querySelector<HTMLElement>('[data-autofocus]')?.focus();
+    /*
+     * SV — transposition du correctif S4 grand public : `focus()` fait
+     * DÉFILER son conteneur pour montrer l'élément visé. La sortie sûre étant
+     * souvent en fin de DOM, toute modale plus haute que 90 vh s'ouvrait déjà
+     * défilée vers le bas — on lisait la fin d'un formulaire, jamais sa
+     * première phrase. `preventScroll` + remise à zéro : le focus reste où il
+     * doit, le contenu se lit par le début, et les boutons du pied restent
+     * visibles grâce à la barre d'actions collante ci-dessous.
+     */
+    cardRef.current?.querySelector<HTMLElement>('[data-autofocus]')?.focus({ preventScroll: true });
+    if (cardRef.current) cardRef.current.scrollTop = 0;
   }, []);
 
   return (
     <div>
+      {/* SV — `--ax-z-modal` (1200) > `--ax-z-header` (200) : l'en-tête, le
+          sélecteur de centre et ⌘K passent SOUS une modale ouverte. Les 50/51
+          en dur laissaient tout le chrome cliquable par-dessus l'écriture en
+          cours, sur les quatre espaces à shell, depuis les premiers sprints.
+          Les toasts (1300) et la palette (1400) restent au-dessus — voulu. */}
       <div
         className="ax-backdrop"
         onClick={busy ? undefined : onClose}
-        style={{ position: 'fixed', inset: 0, zIndex: 50, background: 'rgba(0,0,0,.4)' }}
+        style={{ position: 'fixed', inset: 0, zIndex: 'var(--ax-z-modal)', background: 'rgba(0,0,0,.4)' }}
       />
       <div
         role="dialog"
         aria-modal="true"
         aria-label={labelledById ? undefined : title}
         aria-labelledby={labelledById}
-        style={{ position: 'fixed', inset: 0, zIndex: 51, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 'var(--ax-space-4)', pointerEvents: 'none' }}
+        style={{ position: 'fixed', inset: 0, zIndex: 'var(--ax-z-modal)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 'var(--ax-space-4)', pointerEvents: 'none' }}
       >
         <div
           ref={cardRef}
@@ -883,9 +969,15 @@ export function Modal({
             {children}
           </div>
           {footer && (
+            /* SV — barre d'actions COLLANTE : la carte est le conteneur de
+               défilement (maxHeight 90vh). Sans elle, le correctif de focus
+               ci-dessus mettrait la sortie sûre hors de vue sur une modale
+               haute — un défaut d'accessibilité en remplacerait un autre.
+               Fond opaque (`--ax-surface-solid`) : le verre translucide
+               laisserait lire le formulaire à travers les boutons. */
             <div
               className="ax-card__footer"
-              style={{ display: 'flex', justifyContent: 'flex-end', gap: 'var(--ax-space-2)', borderTop: '1px solid var(--ax-border)' }}
+              style={{ position: 'sticky', bottom: 0, background: 'var(--ax-surface-solid)', display: 'flex', justifyContent: 'flex-end', gap: 'var(--ax-space-2)', borderTop: '1px solid var(--ax-border)' }}
             >
               {footer}
             </div>

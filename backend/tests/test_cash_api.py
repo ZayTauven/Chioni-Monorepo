@@ -30,18 +30,21 @@ pytestmark = pytest.mark.django_db
 Method = CashPayment.Method
 
 #: Exact field contracts (asserted, not just spot-checked).
+#: SV : ``received_by_display``/``reversed_by_display`` (redevabilité de la
+#: caisse, audience staff BILLING) et ``invoice`` sur la contre-passation
+#: (navigabilité du journal) — champs AJOUTÉS, jamais retirés.
 CASH_PAYMENT_FIELDS = {
     "id", "invoice", "method", "operator", "reference", "amount_kmf",
-    "received_by", "payment_intent", "ledger_transaction", "receipt",
-    "reversal", "created_at",
+    "received_by", "received_by_display", "payment_intent",
+    "ledger_transaction", "receipt", "reversal", "created_at",
 }
 CASH_RECEIPT_FIELDS = {
     "id", "receipt_number", "sequence_number", "center", "center_name",
     "amount_kmf", "method", "issued_at",
 }
 REVERSAL_FIELDS = {
-    "id", "cash_payment", "method", "amount_kmf", "reason", "reversed_by",
-    "ledger_transaction", "created_at",
+    "id", "cash_payment", "invoice", "method", "amount_kmf", "reason",
+    "reversed_by", "reversed_by_display", "ledger_transaction", "created_at",
 }
 PATIENT_CASH_RECEIPT_FIELDS = {
     "id", "receipt_number", "center_name", "amount_kmf", "method",

@@ -110,7 +110,7 @@ function StatsUnavailable({
     );
   }
   return (
-    <div className="ax-alert ax-alert--info" role="status">
+    <div className="ax-alert ax-alert--info" role="note">
       <div className="ax-alert__content">
         <p className="ax-alert__title">{SUBSCRIPTION_STATS_FROZEN_TITLE}</p>
         {error.messages.map((m) => (
@@ -583,7 +583,7 @@ function SubscriptionBanner({ centerId }: { centerId: number }) {
   return (
     <div
       className={`ax-alert ax-alert--${SUBSCRIPTION_BANNER_TONE[data.status]}`}
-      role="status"
+      role="note"
       style={{ marginBottom: 'var(--ax-space-5)' }}
     >
       <div className="ax-alert__content">
@@ -639,7 +639,7 @@ export function Dashboard() {
       {centerDetail.data && centerDetail.data.kyc_status !== 'actif' && (
         <div
           className={`ax-alert ax-alert--${centerDetail.data.kyc_status === 'suspendu' ? 'warning' : 'info'}`}
-          role="status"
+          role="note"
           style={{ marginBottom: 'var(--ax-space-5)' }}
         >
           <div className="ax-alert__content">

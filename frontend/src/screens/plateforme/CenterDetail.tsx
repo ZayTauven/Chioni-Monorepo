@@ -34,6 +34,7 @@ import {
 } from '@/lib/labels';
 import type { KycStatus, PlatformCenter } from '@/lib/types';
 import {
+  AvatarChip,
   CardSkeleton,
   DetailItem,
   EmptyState,
@@ -414,6 +415,29 @@ export function PlatformCenterDetail({ centerId }: { centerId: number }) {
             </div>
           </div>
           <div className="ax-card__body" style={{ paddingTop: 0 }}>
+            {/* SV — le logo du centre (exposé par /platform/centers/) : la
+                vraie image, ou la pastille d'initiales quand il n'y en a pas.
+                Le dire évite de chercher un upload qui n'existe pas ici — le
+                logo appartient au directeur, comme le reste du profil. */}
+            <div className="ax-cluster" style={{ gap: 'var(--ax-space-3)', flexWrap: 'nowrap', marginBottom: 'var(--ax-space-4)' }}>
+              {center.logo ? (
+                // eslint-disable-next-line @next/next/no-img-element -- URL média de l'API, aucun loader Next configuré
+                <img
+                  src={center.logo}
+                  alt=""
+                  width={48}
+                  height={48}
+                  style={{ width: 48, height: 48, borderRadius: 'var(--ax-radius-md)', objectFit: 'cover', flex: '0 0 auto' }}
+                />
+              ) : (
+                <AvatarChip name={center.name} seed={center.id} />
+              )}
+              <span style={{ fontSize: 'var(--ax-text-xs)', color: 'var(--ax-text-muted)' }}>
+                {center.logo
+                  ? 'Logo déposé par le directeur du centre.'
+                  : 'Aucun logo déposé — les documents du centre portent ses initiales.'}
+              </span>
+            </div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 'var(--ax-space-4)' }}>
               <DetailItem label="Nom">{center.name}</DetailItem>
               <DetailItem label="Type">{CENTER_TYPE_LABELS[center.type]}</DetailItem>
@@ -446,7 +470,7 @@ export function PlatformCenterDetail({ centerId }: { centerId: number }) {
             </div>
 
             {center.director_active_count === 0 && (
-              <div className="ax-alert ax-alert--danger" role="status">
+              <div className="ax-alert ax-alert--danger" role="note">
                 <div className="ax-alert__content">
                   <p className="ax-alert__title">Ce centre n&apos;a plus de directeur</p>
                   <p className="ax-alert__message">

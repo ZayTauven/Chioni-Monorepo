@@ -7,9 +7,11 @@ Champs EXPLICITES, jamais ``fields = "__all__"``. Deux formes :
   des milliers de lignes à chaque affichage ;
 - **le détail** — la même chose **plus le snapshot**, relu tel quel.
 
-Aucun nom nulle part : ``generated_by`` est un id nu (le directeur lit
-l'annuaire du personnel, qui est sa propre porte), et les lignes ne portent
-que des références et des montants.
+Les lignes ne portent que des références et des montants. Sur la LISTE,
+``generated_by`` reste un id nu ; le DÉTAIL porte en plus
+``generated_by_display`` (SV) — « un humain signe la photo » : une pièce
+comptable ouverte dit le nom de qui l'a générée, comme la caisse dit qui
+l'a tenue. Jamais le username en repli (identifiant technique).
 """
 
 from rest_framework import serializers
@@ -39,9 +41,22 @@ class AccountingExportSerializer(serializers.ModelSerializer):
 class AccountingExportDetailSerializer(AccountingExportSerializer):
     """La pièce entière — snapshot compris, **relu, jamais recalculé**."""
 
+    # SV : « un humain signe la photo » — le détail d'une pièce porte le nom
+    # de qui l'a générée (la liste garde l'id nu). Nom complet, jamais le
+    # username en repli : deux noms vides rendent une chaîne vide. La vue
+    # détail charge la jointure (``select_related("generated_by")``).
+    generated_by_display = serializers.SerializerMethodField()
+
     class Meta(AccountingExportSerializer.Meta):
-        fields = [*AccountingExportSerializer.Meta.fields, "lines"]
+        fields = [
+            *AccountingExportSerializer.Meta.fields,
+            "generated_by_display", "lines",
+        ]
         read_only_fields = fields
+
+    def get_generated_by_display(self, obj) -> str:
+        user = obj.generated_by
+        return f"{user.first_name} {user.last_name}".strip()
 
 
 class AccountingExportCreateSerializer(serializers.Serializer):

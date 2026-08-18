@@ -49,6 +49,8 @@ class AuditAction:
     ERASURE_REQUESTED = "erasure.requested"
     ERASURE_PROCESSED = "erasure.processed"
     ERASURE_REFUSED = "erasure.refused"
+    # SV — rétractation par la personne elle-même (art. 12).
+    ERASURE_CANCELLED = "erasure.cancelled"
     USER_ANONYMIZED = "user.anonymized"
 
     # Patient identity

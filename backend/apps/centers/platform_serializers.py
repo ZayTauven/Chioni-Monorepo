@@ -8,13 +8,14 @@ supervises centers, not sick people; a negative field test keeps it that
 way (``tests/test_platform_api.py``).
 
 The center payload is deliberately NOT ``HealthCenterSerializer``: the
-tenant-facing one gates ``kyc_reason`` by role and carries the logo URL,
-two concerns that do not belong in a back-office list.
+tenant-facing one gates ``kyc_reason`` by role — a concern that does not
+belong in a back-office list (here the operator reads every motive).
 """
 
 from rest_framework import serializers
 
 from apps.centers.models import HealthCenter, StaffMembership
+from apps.common.uploads import media_url
 
 
 class PlatformCenterSerializer(serializers.ModelSerializer):
@@ -25,22 +26,30 @@ class PlatformCenterSerializer(serializers.ModelSerializer):
     en amorcer un ») WITHOUT opening the staff directory — that richer
     support module is S5. They are annotated by the view (SQL), never
     computed row by row.
+
+    ``logo`` (SV, reliquat S5) : même mécanique que le tenant-facing
+    (``media_url``) — l'identité visuelle d'un tenant fait partie de sa
+    fiche back-office. Lecture plateforme seulement, par les vues.
     """
 
     staff_active_count = serializers.IntegerField(read_only=True)
     director_active_count = serializers.IntegerField(read_only=True)
     kyc_document_count = serializers.IntegerField(read_only=True)
+    logo = serializers.SerializerMethodField()
 
     class Meta:
         model = HealthCenter
         fields = [
             "id", "name", "type", "island", "city", "address", "phone",
             "email", "kyc_status", "kyc_reason", "kyc_updated_at",
-            "created_at",
+            "logo", "created_at",
             "staff_active_count", "director_active_count",
             "kyc_document_count",
         ]
         read_only_fields = fields
+
+    def get_logo(self, obj):
+        return media_url(self.context.get("request"), obj.logo)
 
 
 class PlatformCenterCreateSerializer(serializers.Serializer):

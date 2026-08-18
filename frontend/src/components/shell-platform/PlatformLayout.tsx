@@ -28,6 +28,10 @@ export function PlatformLayout({ children }: { children: ReactNode }) {
 
   return (
     <div className="ax-layout">
+      {/* SV — lien d'évitement, même patron que les autres shells. */}
+      <a href="#ax-main" className="visually-hidden-focusable ax-skip">
+        Aller au contenu
+      </a>
       <PlatformSidebar />
       <div className="ax-shell">
         <PlatformHeader />

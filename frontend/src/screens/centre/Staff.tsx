@@ -87,6 +87,7 @@ function AddStaffModal({ onClose, onCreated }: { onClose: () => void; onCreated:
   return (
     <Modal
       title="Ajouter un membre de l'équipe"
+      busy={saving}
       onClose={onClose}
       footer={
         <>
@@ -114,7 +115,7 @@ function AddStaffModal({ onClose, onCreated }: { onClose: () => void; onCreated:
           elle-même en recevant un code par SMS à sa première connexion.
         </p>
 
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--ax-space-4)' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 'var(--ax-space-4)' }}>
           <div className="ax-field">
             <label className="ax-label" htmlFor="st-phone">
               Téléphone <span className="ax-field__required" aria-hidden="true">*</span>
@@ -151,7 +152,7 @@ function AddStaffModal({ onClose, onCreated }: { onClose: () => void; onCreated:
           </div>
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--ax-space-4)' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 'var(--ax-space-4)' }}>
           <div className="ax-field">
             <label className="ax-label" htmlFor="st-first">Prénom</label>
             <input
@@ -197,12 +198,16 @@ function EditStaffModal({
   const [lastName, setLastName] = useState(member.user.last_name);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<ApiError | null>(null);
+  /* SV — `identity_editable` est LE prédicat du PATCH, calculé par le
+     backend : on grise l'identité PROACTIVEMENT avec la raison, au lieu de
+     laisser le PATCH échouer après la saisie. */
+  const identityLocked = !member.user.identity_editable;
 
   const submit = async () => {
     const payload: StaffUpdatePayload = {};
     if (role !== member.role) payload.role = role;
-    if (firstName !== member.user.first_name) payload.first_name = firstName.trim();
-    if (lastName !== member.user.last_name) payload.last_name = lastName.trim();
+    if (!identityLocked && firstName !== member.user.first_name) payload.first_name = firstName.trim();
+    if (!identityLocked && lastName !== member.user.last_name) payload.last_name = lastName.trim();
     if (Object.keys(payload).length === 0) {
       onClose();
       return;
@@ -221,6 +226,7 @@ function EditStaffModal({
   return (
     <Modal
       title={`Modifier ${memberName(member)}`}
+      busy={saving}
       onClose={onClose}
       footer={
         <>
@@ -261,7 +267,7 @@ function EditStaffModal({
           <FieldError error={error} field="role" />
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--ax-space-4)' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 'var(--ax-space-4)' }}>
           <div className="ax-field">
             <label className="ax-label" htmlFor="ste-first">Prénom</label>
             <input
@@ -270,6 +276,8 @@ function EditStaffModal({
               className={`ax-input${error?.fieldErrors.first_name ? ' is-invalid' : ''}`}
               value={firstName}
               onChange={(e) => setFirstName(e.target.value)}
+              disabled={identityLocked}
+              aria-describedby={identityLocked ? 'ste-identity-locked' : undefined}
             />
             <FieldError error={error} field="first_name" />
           </div>
@@ -281,15 +289,27 @@ function EditStaffModal({
               className={`ax-input${error?.fieldErrors.last_name ? ' is-invalid' : ''}`}
               value={lastName}
               onChange={(e) => setLastName(e.target.value)}
+              disabled={identityLocked}
+              aria-describedby={identityLocked ? 'ste-identity-locked' : undefined}
             />
             <FieldError error={error} field="last_name" />
           </div>
         </div>
 
-        <p style={{ margin: 0, fontSize: 'var(--ax-text-xs)', color: 'var(--ax-text-muted)' }}>
-          Le nom n&apos;est modifiable que tant que la personne n&apos;a pas activé son compte. Une fois le compte
-          activé, seule la personne concernée peut modifier son identité, depuis son profil.
-        </p>
+        {identityLocked ? (
+          /* SV — la raison au moment du grisage, jamais un champ mort sans
+             explication : le directeur saurait sinon seulement que « ça ne
+             marche pas ». */
+          <p id="ste-identity-locked" style={{ margin: 0, fontSize: 'var(--ax-text-xs)', color: 'var(--ax-text-muted)' }}>
+            Ce compte a été revendiqué par son titulaire&nbsp;: seule la personne concernée peut
+            modifier son identité, depuis son profil. Le rôle, lui, reste modifiable.
+          </p>
+        ) : (
+          <p style={{ margin: 0, fontSize: 'var(--ax-text-xs)', color: 'var(--ax-text-muted)' }}>
+            Le nom n&apos;est modifiable que tant que la personne n&apos;a pas activé son compte. Une fois le compte
+            activé, seule la personne concernée peut modifier son identité, depuis son profil.
+          </p>
+        )}
       </form>
     </Modal>
   );
@@ -325,6 +345,7 @@ function DeactivateModal({
   return (
     <Modal
       title={`Désactiver ${memberName(member)} ?`}
+      busy={saving}
       onClose={onClose}
       footer={
         <>
@@ -377,6 +398,7 @@ function ReactivateModal({
   return (
     <Modal
       title={`Réactiver ${memberName(member)} ?`}
+      busy={saving}
       onClose={onClose}
       footer={
         <>
@@ -462,7 +484,7 @@ export function Staff() {
             />
           ) : (
             <>
-              <div className="ax-table-wrap">
+              <div className="ax-table-wrap" tabIndex={0} role="region" aria-label="Tableau">
                 <table className="ax-table ax-table--hover">
                   <thead className="ax-table__head">
                     <tr>

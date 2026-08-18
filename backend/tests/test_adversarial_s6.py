@@ -580,6 +580,12 @@ class TestNothingOfS6EverReachesAGuardian:
         "patients/services.py",       # fusion de doublons (invariant 5)
         "medical/services.py",        # garde « pivot d'un séjour en cours »
         "accounts/management/commands/seed_demo.py",
+        # SV (16/08/2026, extension CONSCIENTE) : l'export RGPD art. 20
+        # gagne la clé `stays` — fenêtre PATIENT (`StayPatientSerializer`)
+        # dans le bloc PATIENT seul. Le verrou tuteur tient : le bloc
+        # tuteur de l'export ne touche pas ce module, et le test « widest
+        # consent » ci-dessous balaie l'export tuteur par le CONTENU.
+        "accounts/export.py",
     }
 
     def test_the_list_of_modules_that_know_the_ward_is_closed(self):

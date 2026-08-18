@@ -88,19 +88,24 @@ export function SuccessAlert({ message }: { message: string }) {
 
 /* ── loading & empty states ── */
 
-/** Card-shaped skeletons while a list loads. */
+/** Card-shaped skeletons while a list loads.
+ *  SV — le squelette S'ANNONCE (dette a11y S5) : région `status` polie avec
+ *  un libellé masqué, les lignes décoratives restant hors de l'arbre. */
 export function SkeletonCards({ count = 3 }: { count?: number }) {
   return (
-    <div className="pat-stack" aria-hidden="true">
-      {Array.from({ length: count }, (_, i) => (
-        <section key={i} className="ax-card">
-          <div className="ax-card__body pat-skeleton-body">
-            <div className="ax-skeleton ax-skeleton--line" style={{ width: '55%' }} />
-            <div className="ax-skeleton ax-skeleton--line" style={{ width: '85%' }} />
-            <div className="ax-skeleton ax-skeleton--line" style={{ width: '40%' }} />
-          </div>
-        </section>
-      ))}
+    <div role="status" aria-live="polite" aria-busy="true">
+      <span className="visually-hidden">Chargement en cours…</span>
+      <div className="pat-stack" aria-hidden="true">
+        {Array.from({ length: count }, (_, i) => (
+          <section key={i} className="ax-card">
+            <div className="ax-card__body pat-skeleton-body">
+              <div className="ax-skeleton ax-skeleton--line" style={{ width: '55%' }} />
+              <div className="ax-skeleton ax-skeleton--line" style={{ width: '85%' }} />
+              <div className="ax-skeleton ax-skeleton--line" style={{ width: '40%' }} />
+            </div>
+          </section>
+        ))}
+      </div>
     </div>
   );
 }
@@ -118,7 +123,9 @@ export function EmptyState({
   return (
     <section className="ax-card" role="region" aria-label={title}>
       <div className="ax-card__body pat-empty">
-        <h3 className="pat-empty__title">{title}</h3>
+        {/* SV — un `p` stylé et non un `h3` : l'état vide se pose parfois
+            directement sous le titre de page, sans niveau intermédiaire. */}
+        <p className="pat-empty__title">{title}</p>
         <p className="pat-empty__message">{message}</p>
         {action}
       </div>

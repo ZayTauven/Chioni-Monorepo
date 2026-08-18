@@ -24,7 +24,7 @@ import { deleteAvatar, updateMe, uploadAvatar } from '@/lib/endpoints/auth';
 import { UPLOAD_IMAGE_HINT, uploadThrottled } from '@/lib/labels';
 import { MyDataCard } from '@/screens/lite/MyDataCard';
 import { MyHrCard } from './MyHr';
-import { ErrorAlert, FieldError, IconArrowLeft, IconCheck, initialsOf, toApiError } from './shared';
+import { ErrorAlert, FieldError, IconArrowLeft, IconCheck, Modal, initialsOf, toApiError } from './shared';
 
 /** 429 du scope `uploads` (20/h) : remplacer le message anglais de DRF. */
 function toUploadError(err: unknown): ApiError {
@@ -46,6 +46,9 @@ export function ProfileSettings() {
 
   const [busyAvatar, setBusyAvatar] = useState(false);
   const [avatarError, setAvatarError] = useState<ApiError | null>(null);
+  /* SV — supprimer sa photo demandait zéro confirmation (le fichier est
+     détruit côté serveur) : un clic à côté de « Remplacer » suffisait. */
+  const [confirmDeleteAvatar, setConfirmDeleteAvatar] = useState(false);
 
   const savedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(
@@ -106,9 +109,11 @@ export function ProfileSettings() {
     setAvatarError(null);
     try {
       await deleteAvatar();
+      setConfirmDeleteAvatar(false);
       await refreshMe();
     } catch (err) {
       setAvatarError(toUploadError(err));
+      setConfirmDeleteAvatar(false);
     } finally {
       setBusyAvatar(false);
     }
@@ -188,12 +193,49 @@ export function ProfileSettings() {
                     </span>
                   </button>
                   {me?.avatar && (
-                    <button type="button" className="ax-btn ax-btn--ghost" onClick={() => void onDeleteAvatar()} disabled={busyAvatar}>
+                    <button type="button" className="ax-btn ax-btn--ghost" onClick={() => setConfirmDeleteAvatar(true)} disabled={busyAvatar}>
                       <span className="ax-btn__label">Supprimer</span>
                     </button>
                   )}
                 </div>
               </div>
+
+              {confirmDeleteAvatar && (
+                <Modal
+                  title="Supprimer votre photo ?"
+                  onClose={() => {
+                    if (!busyAvatar) setConfirmDeleteAvatar(false);
+                  }}
+                  busy={busyAvatar}
+                  width={440}
+                  footer={
+                    <>
+                      <button
+                        type="button"
+                        className="ax-btn ax-btn--ghost"
+                        onClick={() => setConfirmDeleteAvatar(false)}
+                        disabled={busyAvatar}
+                        data-autofocus=""
+                      >
+                        Garder la photo
+                      </button>
+                      <button
+                        type="button"
+                        className="ax-btn ax-btn--soft-danger"
+                        onClick={() => void onDeleteAvatar()}
+                        disabled={busyAvatar}
+                      >
+                        <span className="ax-btn__label">{busyAvatar ? 'Suppression…' : 'Supprimer la photo'}</span>
+                      </button>
+                    </>
+                  }
+                >
+                  <p style={{ margin: 0, fontSize: 'var(--ax-text-sm)', color: 'var(--ax-text)', lineHeight: 1.6 }}>
+                    Vos initiales reprendront sa place dans l&rsquo;en-tête et les annuaires. Vous
+                    pourrez ajouter une autre photo à tout moment.
+                  </p>
+                </Modal>
+              )}
             </div>
           </section>
 

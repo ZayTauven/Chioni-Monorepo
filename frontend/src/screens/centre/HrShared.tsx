@@ -115,7 +115,7 @@ export function HrFrozenBanner({ centerId }: { centerId: number }) {
   if (!data || !data.is_frozen) return null;
 
   return (
-    <div className="ax-alert ax-alert--warning" role="status" style={{ marginBottom: 'var(--ax-space-5)' }}>
+    <div className="ax-alert ax-alert--warning" role="note" style={{ marginBottom: 'var(--ax-space-5)' }}>
       <div className="ax-alert__content">
         <p className="ax-alert__title">{SUBSCRIPTION_BANNER_TITLE[data.status]}</p>
         <p className="ax-alert__message">{SUBSCRIPTION_BANNER_LEAD[data.status]}</p>

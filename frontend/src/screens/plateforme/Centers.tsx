@@ -33,8 +33,9 @@ import {
   SHADOW_ACCOUNT_NOTICE,
   formatDate,
 } from '@/lib/labels';
-import type { CenterType, Island, KycStatus } from '@/lib/types';
+import type { CenterType, Island, KycStatus, PlatformCenter } from '@/lib/types';
 import {
+  AvatarChip,
   EmptyState,
   ErrorAlert,
   FieldError,
@@ -84,6 +85,27 @@ const GRID = {
   gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
   gap: 'var(--ax-space-4)',
 } as const;
+
+/**
+ * SV — `/platform/centers/` expose enfin `logo` (URL absolue ou null) : la
+ * vraie image quand elle existe, la pastille d'initiales sinon (patron
+ * `MemberAvatar` de l'écran Personnel du centre).
+ */
+function CenterLogo({ center }: { center: PlatformCenter }) {
+  if (center.logo) {
+    return (
+      // eslint-disable-next-line @next/next/no-img-element -- URL média de l'API, aucun loader Next configuré
+      <img
+        src={center.logo}
+        alt=""
+        width={32}
+        height={32}
+        style={{ width: 32, height: 32, borderRadius: 'var(--ax-radius-sm)', objectFit: 'cover', flex: '0 0 auto' }}
+      />
+    );
+  }
+  return <AvatarChip name={center.name} seed={center.id} />;
+}
 
 /* ── création d'un centre + son premier directeur ── */
 
@@ -509,7 +531,7 @@ export function PlatformCenters() {
             />
           ) : (
             <>
-              <div className="ax-table-wrap">
+              <div className="ax-table-wrap" tabIndex={0} role="region" aria-label="Tableau">
                 <table className="ax-table ax-table--hover">
                   <thead className="ax-table__head">
                     <tr>
@@ -533,17 +555,22 @@ export function PlatformCenters() {
                         style={{ cursor: 'pointer' }}
                       >
                         <td className="ax-table__td">
-                          <Link
-                            href={`/plateforme/centres/${c.id}`}
-                            className="ax-link"
-                            onClick={(e) => e.stopPropagation()}
-                            style={{ fontWeight: 500, color: 'var(--ax-text-strong)' }}
-                          >
-                            {c.name}
-                          </Link>
-                          <div style={{ fontSize: 'var(--ax-text-xs)', color: 'var(--ax-text-subtle)' }}>
-                            {CENTER_TYPE_LABELS[c.type]}
-                            {c.city ? ` · ${c.city}` : ''}
+                          <div className="ax-cluster" style={{ gap: 'var(--ax-space-3)', flexWrap: 'nowrap' }}>
+                            <CenterLogo center={c} />
+                            <div>
+                              <Link
+                                href={`/plateforme/centres/${c.id}`}
+                                className="ax-link"
+                                onClick={(e) => e.stopPropagation()}
+                                style={{ fontWeight: 500, color: 'var(--ax-text-strong)' }}
+                              >
+                                {c.name}
+                              </Link>
+                              <div style={{ fontSize: 'var(--ax-text-xs)', color: 'var(--ax-text-subtle)' }}>
+                                {CENTER_TYPE_LABELS[c.type]}
+                                {c.city ? ` · ${c.city}` : ''}
+                              </div>
+                            </div>
                           </div>
                         </td>
                         <td className="ax-table__td" style={{ color: 'var(--ax-text-muted)' }}>

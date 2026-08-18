@@ -3,7 +3,7 @@
  * Chioni — sidebar of the PLATEFORME space (S4, ADR 0017).
  *
  * Same Vireo DOM contract as the centre sidebar (.ax-sidebar → brand →
- * role="tree" nav with section headings and .ax-nav__item leaves), driven by
+ * plain <nav> with section headings and .ax-nav__item leaves), driven by
  * the PLATFORM manifest. Deliberately SOBER, and each removal is a decision:
  *
  * - no menu filter: three entries do not need a search box;
@@ -42,7 +42,9 @@ export function PlatformSidebar() {
   const role = me?.platform_staff?.role;
 
   return (
-    <aside className="ax-sidebar" role="navigation" aria-label="Navigation de la plateforme">
+    // SV — même assainissement ARIA que la sidebar du centre : plus de
+    // `role="tree"` sans roving-tabindex, une <nav> de liens ordinaires.
+    <aside className="ax-sidebar">
       <div className="ax-sidebar__brand">
         <Link className="ax-sidebar__logo" href="/plateforme" aria-label="Accueil plateforme Chioni">
           <span className="ax-sidebar__mark" aria-hidden="true">
@@ -79,7 +81,7 @@ export function PlatformSidebar() {
         </span>
       </div>
 
-      <nav className="ax-sidebar__nav" role="tree" aria-label="Menu de la plateforme">
+      <nav className="ax-sidebar__nav" aria-label="Navigation de la plateforme">
         {platformSections()
           // Une rubrique dont toutes les entrées sont gatées ne laisse pas un
           // titre orphelin dans le menu.
@@ -90,7 +92,7 @@ export function PlatformSidebar() {
           )
           .map((section) => (
           <div key={section}>
-            <p className="ax-sidebar__section" role="presentation">
+            <p className="ax-sidebar__section">
               {platformSectionLabel(section)}
             </p>
             {platformGroupsInSection(section)
@@ -103,8 +105,6 @@ export function PlatformSidebar() {
                   <Link
                     key={node.id}
                     className={cls.join(' ')}
-                    role="treeitem"
-                    aria-level={1}
                     aria-current={active ? 'page' : undefined}
                     href={hrefForSlug(node.slug)}
                   >

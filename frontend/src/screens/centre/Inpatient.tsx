@@ -1256,7 +1256,7 @@ function StayList() {
               </div>
             </div>
           )}
-          <div className="ax-table-wrap" hidden={shown.length === 0}>
+          <div className="ax-table-wrap" tabIndex={0} role="region" aria-label="Tableau" hidden={shown.length === 0}>
             <table className="ax-table ax-table--hover">
               <thead className="ax-table__head">
                 <tr>

@@ -47,6 +47,11 @@ export function Layout({ children }: { children: ReactNode }) {
   return (
     <>
       <Loader />
+      {/* SV — lien d'évitement (dette a11y S5) : le shell-lite en avait un,
+          le shell centre non. Première tabulation → sauter le chrome. */}
+      <a href="#ax-main" className="visually-hidden-focusable ax-skip">
+        Aller au contenu
+      </a>
       <div className="ax-ambient" aria-hidden="true"><i></i></div>
       <div className="ax-layout">
         <Sidebar />

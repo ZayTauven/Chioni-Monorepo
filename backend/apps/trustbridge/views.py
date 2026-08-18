@@ -545,7 +545,10 @@ class CenterInvoicePaymentListCreateView(CenterScopedViewMixin, APIView):
         invoice = self.get_invoice()
         payments = (
             invoice.cash_payments.select_related(
-                "cash_receipt__center", "reversal", "received_by"
+                # ``reversal__reversed_by`` : le serializer embarqué rend
+                # ``reversed_by_display`` (SV) — chargé d'avance, jamais une
+                # requête par ligne.
+                "cash_receipt__center", "reversal__reversed_by", "received_by"
             )
             .order_by("created_at", "id")
         )
@@ -603,7 +606,7 @@ class CenterCashPaymentReverseView(CenterScopedViewMixin, APIView):
             reason=serializer.validated_data["reason"],
         )
         payment = CashPayment.objects.select_related(
-            "cash_receipt__center", "reversal", "received_by"
+            "cash_receipt__center", "reversal__reversed_by", "received_by"
         ).get(pk=payment.pk)
         return Response(
             CashPaymentStaffSerializer(payment).data,
@@ -633,7 +636,9 @@ class CenterCashJournalView(CenterScopedViewMixin, APIView):
                 created_at__gte=day_start,
                 created_at__lt=day_end,
             )
-            .select_related("cash_receipt__center", "reversal", "received_by")
+            .select_related(
+                "cash_receipt__center", "reversal__reversed_by", "received_by"
+            )
             .order_by("created_at", "id")
         )
         reversals = list(
@@ -642,7 +647,7 @@ class CenterCashJournalView(CenterScopedViewMixin, APIView):
                 created_at__gte=day_start,
                 created_at__lt=day_end,
             )
-            .select_related("cash_payment")
+            .select_related("cash_payment", "reversed_by")
             .order_by("created_at", "id")
         )
         totals = {}

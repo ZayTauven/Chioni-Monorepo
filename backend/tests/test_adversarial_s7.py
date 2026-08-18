@@ -333,14 +333,17 @@ class TestTheOverlapGuardIsTheOnlyGuardWithoutTheDatabase:
         masse de congés, cette sonde lui dit exactement ce qu'il doit
         refaire lui-même.
         """
-        from django.db import IntegrityError, transaction
+        from django.db import DatabaseError, transaction
 
         ward = Ward()
         approved = ward.ask_leave(10, 20)
         services.decide_leave(actor=ward.director, leave=approved, approve=True)
 
-        # (a) rouvrir un congé décidé : la BASE refuse.
-        with pytest.raises(IntegrityError):
+        # (a) rouvrir un congé décidé : la BASE refuse. Depuis le lot SV
+        # (trigger ``hrm_leaverequest_decision_final``), le refus arrive
+        # AVANT la contrainte ``leave_decision_matches_status`` — même
+        # arbitre (PostgreSQL), classe d'erreur élargie.
+        with pytest.raises(DatabaseError, match="definitive"):
             with transaction.atomic():
                 LeaveRequest.objects.filter(pk=approved.pk).update(
                     status=Status.REQUESTED
@@ -585,25 +588,48 @@ class TestTheRegimeNeverReachesAColleague:
         )
         assert response["X-Content-Type-Options"] == "nosniff"
 
-    def test_the_rgpd_export_carries_no_hr_key_and_that_is_consigned(self):
-        """Reliquat 17 de l'ADR, rendu EXÉCUTABLE : la portabilité art. 20
-        n'emporte pas encore les données RH. La sonde échouera le jour où
-        quelqu'un les ajoutera — c'est-à-dire le jour où il faudra
-        re-vérifier que l'export ne dit que MES données."""
+    def test_the_rgpd_export_carries_the_callers_own_hr_file_only(self):
+        """Sonde S7 mise à jour CONSCIEMMENT en SV (reliquat 17 soldé).
+
+        L'export art. 20 emporte désormais le dossier RH — la sonde
+        d'origine (« pas de clé RH ») a rempli son office : elle a forcé la
+        re-vérification du périmètre au moment de l'ajout. Ce qu'elle
+        verrouille maintenant : l'export ne dit que MES données. La
+        présence du collègue (feuille remplie par le directeur, congé
+        maladie du collègue) ne doit JAMAIS transiter dans l'export de
+        l'infirmière — et réciproquement l'infirmière retrouve les siennes.
+        """
         ward = Ward()
         services.record_attendance(
             actor=ward.director, employment=ward.nurse,
             date=timezone.localdate(), status=Presence.LEAVE,
         )
-        ward.ask_leave(3, 5, leave_type=LeaveType.SICK)
+        my_leave = ward.ask_leave(3, 5, leave_type=LeaveType.SICK)
         response = client_for(ward.nurse_user).get("/api/v1/auth/me/export/")
         assert response.status_code == 200
         assert set(response.data) == {
             "account", "center_staff", "generated_at", "guardian", "patient",
             "platform_staff",
         }
-        blob = json.dumps(response.data, default=str)
-        for forbidden in ("maladie", "leave", "attendance", "employment"):
+        hr = response.data["center_staff"]["hr"]
+        assert len(hr) == 1
+        mine = hr[0]
+        assert set(mine) == {
+            "employment", "attendance", "leave_requests", "leave_documents",
+        }
+        assert [leave["id"] for leave in mine["leave_requests"]] == [
+            my_leave.pk
+        ]
+        assert len(mine["attendance"]) == 1
+        # Le DIRECTEUR, lui, n'a pas de dossier RH ici : son export ne
+        # porte pas la feuille de l'infirmière ni son congé maladie.
+        director_export = client_for(ward.director).get(
+            "/api/v1/auth/me/export/"
+        )
+        assert director_export.status_code == 200
+        assert director_export.data["center_staff"]["hr"] == []
+        blob = json.dumps(director_export.data, default=str)
+        for forbidden in ("maladie", "conge_maladie", "leave_type"):
             assert forbidden not in blob, forbidden
 
 

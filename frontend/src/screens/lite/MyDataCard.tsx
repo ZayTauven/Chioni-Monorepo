@@ -21,9 +21,16 @@
  * 2. **Demander la suppression de mon compte** — une DEMANDE, examinée par
  *    l'équipe Chioni. La modale dit honnêtement que ce n'est pas immédiat,
  *    ce qui est effacé, ce qui est conservé (le carnet de santé), ce que les
- *    proches ne pourront plus faire, et qu'une demande envoyée ne se retire
- *    pas. On ne dramatise pas, on ne culpabilise pas, et on ne promet aucune
- *    suppression instantanée.
+ *    proches ne pourront plus faire — et, depuis SV, qu'une demande en cours
+ *    d'examen PEUT être retirée (rétractation, art. 12). On ne dramatise
+ *    pas, on ne culpabilise pas, et on ne promet aucune suppression
+ *    instantanée.
+ *
+ * SV — la rétractation : sur une demande `en_attente`, un bouton « Retirer
+ * ma demande » ouvre une modale de confirmation (`busy` pendant l'appel —
+ * c'est l'inverse d'un geste destructeur, mais la personne doit comprendre
+ * que sa demande d'effacement s'arrête). Le statut `annulee` est rendu, et
+ * redemander reste possible (nouvelle ligne côté backend).
  *
  * Trois règles portées ici, dans l'ordre où elles comptent :
  * - **la sortie d'abord** : « Ne rien faire » a la même taille que l'action et
@@ -42,6 +49,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { ApiError } from '@/lib/api';
 import {
+  cancelErasureRequest,
   createErasureRequest,
   downloadMyDataExport,
   getMyErasureRequest,
@@ -51,11 +59,15 @@ import {
   ERASURE_ASK_CANCEL,
   ERASURE_ASK_CONFIRM,
   ERASURE_ASK_LABEL,
+  ERASURE_CAN_WITHDRAW,
   ERASURE_COPY,
   ERASURE_EFFECTS_TITLE,
   ERASURE_KEPT_TITLE,
-  ERASURE_NO_UNDO,
   ERASURE_STATUS_SELF,
+  ERASURE_WITHDRAW_CONFIRM,
+  ERASURE_WITHDRAW_LABEL,
+  ERASURE_WITHDRAW_MESSAGE,
+  ERASURE_WITHDRAW_NOTE,
   EXPORT_LABEL,
   erasureFiledOn,
   exportSaved,
@@ -108,12 +120,12 @@ function RequestState({ request, copy }: { request: ErasureRequestMine; copy: Er
           <p style={noteStyle}>{copy.pending}</p>
           {/* Redit APRÈS coup ce qui a été dit AVANT — deux fois, et pour la
               même raison : la personne qui revient sur cet écran des semaines
-              plus tard ne doit chercher ni un bouton « annuler » qui n'existe
-              pas, ni la raison pour laquelle sa demande n'avance pas (le
-              dernier directeur d'un centre reste « en attente », côté
-              backend, tant que personne ne l'a remplacé). */}
+              plus tard doit retrouver le bouton « Retirer ma demande » ET la
+              raison pour laquelle sa demande n'avance pas (le dernier
+              directeur d'un centre reste « en attente », côté backend, tant
+              que personne ne l'a remplacé). */}
           {copy.pendingNote && <p style={noteStyle}>{copy.pendingNote}</p>}
-          <p style={{ ...noteStyle, fontSize: 'var(--ax-text-xs)' }}>{ERASURE_NO_UNDO}</p>
+          <p style={{ ...noteStyle, fontSize: 'var(--ax-text-xs)' }}>{ERASURE_CAN_WITHDRAW}</p>
         </>
       )}
       {/* Le motif d'un refus est écrit POUR la personne (RGPD art. 12.4) :
@@ -121,7 +133,7 @@ function RequestState({ request, copy }: { request: ErasureRequestMine; copy: Er
       {request.status === 'refusee' && request.refusal_reason && (
         <p style={{ ...noteStyle, color: 'var(--ax-text)' }}>{request.refusal_reason}</p>
       )}
-      {request.status === 'refusee' && (
+      {(request.status === 'refusee' || request.status === 'annulee') && (
         <p style={{ ...noteStyle, fontSize: 'var(--ax-text-xs)' }}>{ERASURE_ASK_AGAIN}</p>
       )}
     </div>
@@ -144,6 +156,11 @@ export function MyDataCard({
   const [modalOpen, setModalOpen] = useState(false);
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState<unknown>(null);
+
+  /* SV — rétractation : mêmes états que le dépôt, même patron de modale. */
+  const [withdrawOpen, setWithdrawOpen] = useState(false);
+  const [withdrawing, setWithdrawing] = useState(false);
+  const [withdrawError, setWithdrawError] = useState<unknown>(null);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -196,6 +213,25 @@ export function MyDataCard({
       if (err instanceof ApiError && err.status === 400) load();
     } finally {
       setSending(false);
+    }
+  };
+
+  const onConfirmWithdraw = async () => {
+    setWithdrawing(true);
+    setWithdrawError(null);
+    try {
+      const cancelled = await cancelErasureRequest();
+      setRequest(cancelled);
+      setWithdrawOpen(false);
+    } catch (err) {
+      setWithdrawError(err);
+      /* Miroir du dépôt : la demande a pu être traitée (ou déjà retirée
+         depuis un autre espace) entre la lecture et le clic — le backend
+         répond 400, on l'affiche tel quel ET on relit l'état pour que la
+         carte cesse de proposer un retrait impossible. */
+      if (err instanceof ApiError && err.status === 400) load();
+    } finally {
+      setWithdrawing(false);
     }
   };
 
@@ -279,6 +315,24 @@ export function MyDataCard({
             </button>
           </div>
         )}
+
+        {/* SV — retirer une demande en cours d'examen (rétractation, art. 12).
+            Même gabarit de bouton que le dépôt : exercer un droit et y
+            renoncer pèsent le même poids à l'écran. */}
+        {!loading && loadError == null && hasOpenRequest && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--ax-space-2)' }}>
+            <button
+              type="button"
+              className="ax-btn ax-btn--ghost ax-btn--lg ax-btn--block ax-btn--wrap"
+              onClick={() => {
+                setWithdrawError(null);
+                setWithdrawOpen(true);
+              }}
+            >
+              <span className="ax-btn__label">{ERASURE_WITHDRAW_LABEL}</span>
+            </button>
+          </div>
+        )}
       </div>
 
       <ConfirmModal
@@ -349,10 +403,30 @@ export function MyDataCard({
             </div>
           )}
           {/* Dernière ligne avant les boutons, et volontairement la dernière
-              lue : il n'y a pas de retour en arrière possible sur la DEMANDE
-              (l'effacement, lui, reste soumis à l'équipe). */}
-          <p style={{ ...noteStyle, color: 'var(--ax-text)' }}>{ERASURE_NO_UNDO}</p>
+              lue : la demande n'est pas un aller sans retour — tant qu'elle
+              est à l'étude, elle se retire (SV, art. 12). Le dire AVANT le
+              clic allège la décision sans la banaliser. */}
+          <p style={{ ...noteStyle, color: 'var(--ax-text)' }}>{ERASURE_CAN_WITHDRAW}</p>
         </div>
+      </ConfirmModal>
+
+      {/* SV — la confirmation du retrait. Ton neutre (`danger` NON posé) et
+          `busy` verrouillé : c'est l'inverse d'un geste destructeur, mais la
+          personne doit comprendre que sa demande d'effacement s'arrête. */}
+      <ConfirmModal
+        open={withdrawOpen}
+        title={ERASURE_WITHDRAW_LABEL}
+        message={ERASURE_WITHDRAW_MESSAGE}
+        confirmLabel={ERASURE_WITHDRAW_CONFIRM}
+        cancelLabel={ERASURE_ASK_CANCEL}
+        busy={withdrawing}
+        error={withdrawError}
+        onConfirm={() => void onConfirmWithdraw()}
+        onClose={() => {
+          if (!withdrawing) setWithdrawOpen(false);
+        }}
+      >
+        <p style={{ ...noteStyle, textAlign: 'start', width: '100%' }}>{ERASURE_WITHDRAW_NOTE}</p>
       </ConfirmModal>
     </section>
   );

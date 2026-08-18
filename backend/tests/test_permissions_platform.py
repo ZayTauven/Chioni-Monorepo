@@ -406,6 +406,11 @@ class TestNoPatientEverReachesThePlatform:
             "email", "kyc_status", "kyc_reason", "kyc_updated_at",
             "created_at", "staff_active_count", "director_active_count",
             "kyc_document_count",
+            # SV (mise à jour CONSCIENTE du contrat exact) : `logo` — le
+            # papier de facture plateforme rend enfin le vrai logo. Une
+            # donnée d'identité VISUELLE du tenant, jamais une donnée
+            # patient : l'invariant de cette classe est intact.
+            "logo",
         }
 
 

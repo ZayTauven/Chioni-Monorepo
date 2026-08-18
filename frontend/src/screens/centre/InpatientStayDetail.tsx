@@ -284,7 +284,7 @@ function CancelStayModal({
       >
         {error && error.messages.length > 0 && <ErrorAlert error={error} />}
         {blocked && (
-          <div className="ax-alert ax-alert--warning" role="status">
+          <div className="ax-alert ax-alert--warning" role="note">
             <div className="ax-alert__content">
               <p className="ax-alert__message">{STAY_CANCEL_BLOCKED_BY_ACTS}</p>
             </div>
@@ -614,7 +614,7 @@ function BillDaysModal({
         {error && error.messages.length > 0 && <ErrorAlert error={error} />}
 
         {remaining === 0 && (
-          <div className="ax-alert ax-alert--info" role="status">
+          <div className="ax-alert ax-alert--info" role="note">
             <div className="ax-alert__content">
               <p className="ax-alert__message" style={{ lineHeight: 1.6 }}>
                 {BILL_DAYS_ALL_BILLED}

@@ -810,18 +810,28 @@ class TestTheGuardianSeesNothing:
 
 
 class TestPatientExport:
-    def test_the_stay_is_absent_until_the_export_is_extended(self, scene):
-        """Constat HONNÊTE, verrouillé plutôt que caché : `GET
-        /auth/me/export/` n'a pas gagné de clé ``stays`` en S6. L'export
-        rejoue les écrans un par un et son contrat est verrouillé par les
-        tests S4 ; l'ajouter est un geste à faire en conscience (reliquat
-        consigné). Ce test dit l'état RÉEL du produit — le jour où la clé
-        arrive, il échoue et rappelle de mettre à jour le contrat.
+    def test_the_stay_is_in_the_export_through_the_patient_window_only(
+        self, scene
+    ):
+        """Sonde S6 mise à jour CONSCIEMMENT en SV (reliquat soldé) : la clé
+        ``stays`` est arrivée dans l'export art. 20 — par la fenêtre patient
+        (`StayPatientSerializer`) et RIEN qu'elle : ni lit, ni priorité, ni
+        motif d'annulation (ADR 0019 §5). La consultation pivot reste dans
+        l'export, comme avant.
         """
         export = client_for(scene.patient.user).get("/api/v1/auth/me/export/")
         assert export.status_code == 200
-        assert "stays" not in export.data["patient"]
-        # …mais l'épisode reste lisible par sa consultation pivot, qui EST
+        stays = export.data["patient"]["stays"]
+        assert [row["id"] for row in stays] == [scene.stay.pk]
+        (row,) = stays
+        assert set(row) == {
+            "id", "center", "center_name", "encounter", "admitted_at",
+            "discharged_at", "status",
+        }
+        blob = str(stays)
+        for forbidden in ("bed", "priority", "cancel_reason"):
+            assert forbidden not in blob, forbidden
+        # …et l'épisode reste lisible par sa consultation pivot, qui EST
         # dans l'export : rien n'est caché au patient.
         encounter_ids = {row["id"] for row in export.data["patient"]["encounters"]}
         assert scene.stay.encounter_id in encounter_ids

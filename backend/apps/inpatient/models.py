@@ -478,7 +478,13 @@ class BedAssignment(TimeStampedModel):
                         "L'historique d'occupation d'un lit ne se réécrit "
                         "pas : libérez l'occupation et ouvrez-en une autre."
                     )
-                if previous["released_at"] is not None and self.released_at is None:
+                if previous["released_at"] is not None and (
+                    self.released_at != previous["released_at"]
+                ):
+                    # Alignement SV (préalable au trigger miroir) : l'ORM ne
+                    # refusait que la RÉOUVERTURE (non-null → NULL) ; re-dater
+                    # une libération déjà posée réécrivait l'historique tout
+                    # autant. Une fois posée, ``released_at`` ne bouge plus.
                     raise ValidationError(
                         "Une occupation libérée le reste : la libération est "
                         "définitive."

@@ -37,6 +37,7 @@ import {
   IconCheck,
   IconEdit,
   KYC_TONES,
+  Modal,
   StatusBadge,
   toApiError,
   useAsync,
@@ -57,6 +58,10 @@ function LogoCard({
   const inputRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<ApiError | null>(null);
+  /* SV — la suppression demandait zéro confirmation : un clic à côté de
+     « Remplacer » effaçait le logo sans retour possible (le fichier est
+     détruit côté serveur). */
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   const afterChange = async (logo: string | null) => {
     onLogoChanged(logo);
@@ -87,9 +92,11 @@ function LogoCard({
     setError(null);
     try {
       await deleteCenterLogo(center.id);
+      setConfirmDelete(false);
       await afterChange(null);
     } catch (err) {
       setError(toApiError(err));
+      setConfirmDelete(false);
     } finally {
       setBusy(false);
     }
@@ -151,7 +158,7 @@ function LogoCard({
                   </span>
                 </button>
                 {center.logo && (
-                  <button type="button" className="ax-btn ax-btn--ghost ax-btn--sm" onClick={() => void onDelete()} disabled={busy}>
+                  <button type="button" className="ax-btn ax-btn--ghost ax-btn--sm" onClick={() => setConfirmDelete(true)} disabled={busy}>
                     <span className="ax-btn__label">Supprimer</span>
                   </button>
                 )}
@@ -162,6 +169,38 @@ function LogoCard({
             </div>
           )}
         </div>
+
+        {confirmDelete && (
+          <Modal
+            title="Supprimer le logo ?"
+            onClose={() => {
+              if (!busy) setConfirmDelete(false);
+            }}
+            busy={busy}
+            width={440}
+            footer={
+              <>
+                <button
+                  type="button"
+                  className="ax-btn ax-btn--ghost"
+                  onClick={() => setConfirmDelete(false)}
+                  disabled={busy}
+                  data-autofocus=""
+                >
+                  Garder le logo
+                </button>
+                <button type="button" className="ax-btn ax-btn--soft-danger" onClick={() => void onDelete()} disabled={busy}>
+                  <span className="ax-btn__label">{busy ? 'Suppression…' : 'Supprimer le logo'}</span>
+                </button>
+              </>
+            }
+          >
+            <p style={{ margin: 0, fontSize: 'var(--ax-text-sm)', color: 'var(--ax-text)', lineHeight: 1.6 }}>
+              Le logo disparaîtra de la barre latérale et des documents du centre. Vous pourrez en
+              déposer un autre à tout moment.
+            </p>
+          </Modal>
+        )}
       </div>
     </section>
   );
@@ -413,7 +452,7 @@ export function Settings() {
                   {center.kyc_reason && (
                     <div
                       className={`ax-alert ax-alert--${center.kyc_status === 'actif' ? 'info' : 'warning'}`}
-                      role="status"
+                      role="note"
                     >
                       <div className="ax-alert__content">
                         <p className="ax-alert__title">{KYC_REASON_TITLE[center.kyc_status]}</p>

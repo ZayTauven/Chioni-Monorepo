@@ -129,7 +129,13 @@ class CenterAccountingExportDetailView(_AccountingScopedMixin, APIView):
 
     @extend_schema(responses=AccountingExportDetailSerializer)
     def get(self, request, center_pk, pk):
-        return Response(AccountingExportDetailSerializer(self.get_export()).data)
+        # SV : le détail rend ``generated_by_display`` — la jointure est
+        # chargée d'avance, jamais une requête par rendu.
+        export = get_object_or_404(
+            exports_queryset(self.center).select_related("generated_by"),
+            pk=self.kwargs["pk"],
+        )
+        return Response(AccountingExportDetailSerializer(export).data)
 
 
 class CenterAccountingExportDownloadView(_AccountingScopedMixin, APIView):

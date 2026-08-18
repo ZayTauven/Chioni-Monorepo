@@ -151,7 +151,7 @@ function ReceiptModal({ receipt, onClose }: { receipt: Receipt; onClose: () => v
           </p>
         </div>
       </div>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--ax-space-4)' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 'var(--ax-space-4)' }}>
         <DetailItem label="Numéro de reçu">
           <b className="ax-num" style={{ fontFamily: 'var(--ax-font-mono)' }}>{receipt.receipt_number}</b>
         </DetailItem>
@@ -193,6 +193,7 @@ function ShareModal({
   return (
     <Modal
       title="Partager avec un tuteur"
+      busy={busy}
       onClose={onClose}
       footer={
         <>
@@ -429,7 +430,7 @@ export function PaymentRequestDetail({ requestId }: { requestId: number }) {
       )}
 
       {request.status === 'brouillon' && request.shares.length === 0 && (
-        <div className="ax-alert ax-alert--info" role="status" style={{ marginBottom: 'var(--ax-space-5)' }}>
+        <div className="ax-alert ax-alert--info" role="note" style={{ marginBottom: 'var(--ax-space-5)' }}>
           <div className="ax-alert__content">
             <p className="ax-alert__message">
               Cette demande n&apos;est partagée avec aucun proche pour l&apos;instant : l&apos;envoi sera refusé tant qu&apos;un

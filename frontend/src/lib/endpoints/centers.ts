@@ -19,7 +19,6 @@ import type {
   CashPayment,
   CenterSubscription,
   CenterSubscriptionInvoice,
-  ConsentCollectedVia,
   DeskClinicalConsent,
   Dispute,
   EncounterAct,
@@ -473,21 +472,39 @@ export function listPatientGuardianLinks(
 /* ── desk-collected clinical consent (S2, ADR 0004 addendum — BILLING) ── */
 
 /**
- * Record a clinical consent gathered at the desk (paper form / oral accord)
- * for a NON-claimed patient. Explicit 400s shown as-is: claimed patient
- * (« gère lui-même ses consentements »), link not an active link of THIS
- * patient, already granted. The consent is auto-revoked when the patient
- * claims their profile — never present it as permanent.
+ * SV — persistent state of the DESK-collected clinical consents: bare array
+ * of the ACTIVE ones on ACTIVE links of this patient (the consents the
+ * patient granted from their own space never transit here). Claimed patient
+ * → 200 `[]` (reading is not granting). Lets the card show the state at
+ * load, not only the result of its own session.
+ */
+export function listDeskClinicalConsents(
+  centerId: number,
+  patientId: number,
+): Promise<DeskClinicalConsent[]> {
+  return apiFetch(`/centers/${centerId}/patients/${patientId}/consents/clinical/`);
+}
+
+/**
+ * Record a clinical consent gathered at the desk for a NON-claimed patient.
+ * **SV.1.2 — `collected_via` is ALWAYS `papier`** (signed paper form, PO
+ * arbitrage): `oral` is refused by the backend, and this signature makes it
+ * unsendable by construction. Explicit 400s shown as-is — they are business
+ * verdicts, not technical errors (no retry button): claimed patient (« gère
+ * lui-même ses consentements »), link not an active link of THIS patient,
+ * already granted, and **SV.1.1** link born from an invitation issued by
+ * THIS center (the center cannot collect consent on a link it fabricated —
+ * definitive here, another center stays free). The consent is auto-revoked
+ * when the patient claims their profile — never present it as permanent.
  */
 export function grantDeskClinicalConsent(
   centerId: number,
   patientId: number,
   guardianLinkId: number,
-  collectedVia: ConsentCollectedVia,
 ): Promise<DeskClinicalConsent> {
   return apiFetch(`/centers/${centerId}/patients/${patientId}/consents/clinical/`, {
     method: 'POST',
-    body: { guardian_link: guardianLinkId, collected_via: collectedVia },
+    body: { guardian_link: guardianLinkId, collected_via: 'papier' },
   });
 }
 

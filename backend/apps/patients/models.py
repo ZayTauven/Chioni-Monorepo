@@ -387,6 +387,29 @@ class GuardianLink(TimeStampedModel):
     initiated_by = models.CharField(
         "initié par", max_length=8, choices=InitiatedBy.choices
     )
+    # SV.1.1 (arbitrage PO S2, option b) — provenance du lien quand il est
+    # né au guichet : QUEL centre a émis l'invitation. La garde « le centre
+    # ne recueille pas de consentement clinique sur un lien qu'il a
+    # lui-même fabriqué » a besoin de cette référence. Aucun
+    # rétro-remplissage : les liens historiques porte C gardent NULL, et le
+    # service de consentement guichet est FAIL-CLOSED sur cette valeur (un
+    # lien centre dont on ne peut pas prouver la provenance est traité
+    # comme initié par le centre demandeur — refuser un octroi de
+    # consentement clinique est toujours la posture du produit).
+    initiated_by_center = models.ForeignKey(
+        "centers.HealthCenter",
+        verbose_name="centre initiateur",
+        on_delete=models.PROTECT,
+        related_name="initiated_guardian_links",
+        null=True,
+        blank=True,
+        help_text=(
+            "Centre qui a émis l'invitation quand le lien est né au guichet "
+            "(porte C). Vide pour les portes A/B et pour les liens "
+            "historiques antérieurs à SV (provenance non dérivable — "
+            "fail-closed sur le consentement clinique guichet)."
+        ),
+    )
     accepted_at = models.DateTimeField("accepté le", null=True, blank=True)
     revoked_at = models.DateTimeField("révoqué le", null=True, blank=True)
 

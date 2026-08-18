@@ -138,7 +138,15 @@ def close_encounter(*, actor, encounter):
 
     S6: an encounter that is the PIVOT of a live stay is refused here — see
     :func:`_require_no_live_stay`.
+
+    SV — the encounter row is LOCKED: the closure and
+    :func:`create_prescription` used to read the status on the in-memory
+    instance only, letting a prescription slip into the second of the
+    closure (TOCTOU consigné en S1, fermé ici — le verrou était trivial).
+    Both services re-read under ``select_for_update`` so they serialise;
+    single-row lock, no hierarchy to respect.
     """
+    encounter = Encounter.objects.select_for_update().get(pk=encounter.pk)
     if encounter.status == Encounter.Status.COMPLETED:
         raise ValidationError("Cette consultation est déjà terminée.")
     if encounter.status == Encounter.Status.CANCELLED:
@@ -159,9 +167,15 @@ def close_encounter(*, actor, encounter):
 
 @transaction.atomic
 def create_prescription(*, actor, encounter, items):
-    """Issue a prescription on an encounter (items: dicts medication/dosage)."""
+    """Issue a prescription on an encounter (items: dicts medication/dosage).
+
+    SV — the encounter row is re-read under ``select_for_update`` before
+    the open-encounter check: a closure racing this call now serialises
+    (before, a prescription could slip into the second of the closure —
+    TOCTOU consigné en S1)."""
     if not items:
         raise ValidationError("Une ordonnance doit contenir au moins une ligne.")
+    encounter = Encounter.objects.select_for_update().get(pk=encounter.pk)
     _require_open_encounter(encounter, "une ordonnance")
     prescription = Prescription.objects.create(encounter=encounter)
     for item in items:

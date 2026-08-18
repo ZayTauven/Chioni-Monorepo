@@ -180,6 +180,10 @@ class ErasureRequest(TimeStampedModel):
         PENDING = "en_attente", "En attente"
         PROCESSED = "traitee", "Traitée"
         REFUSED = "refusee", "Refusée"
+        # SV (art. 12) — la personne retire sa PROPRE demande tant qu'elle
+        # est en attente. Terminal comme les deux autres : une rétractation
+        # ne se rejoue pas, on redépose une demande neuve.
+        CANCELLED = "annulee", "Annulée par la personne"
 
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,

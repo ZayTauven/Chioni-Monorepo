@@ -34,6 +34,7 @@ from apps.accounts.serializers import (
 )
 from apps.accounts.services import (
     remove_user_avatar,
+    cancel_erasure_request,
     request_erasure,
     request_otp,
     set_user_avatar,
@@ -224,6 +225,22 @@ class MeErasureRequestView(APIView):
             ErasureRequestSerializer(erasure_request).data,
             status=status.HTTP_201_CREATED,
         )
+
+
+class MeErasureRequestCancelView(APIView):
+    """`POST /auth/me/erasure-request/cancel/` — SV, rétractation (art. 12).
+
+    The person withdraws their OWN pending request. The right to ask
+    carries the right to change one's mind while nothing was executed;
+    « pas de rétractation » was a consigned gap since S4, closed here.
+    A request already processed/refused/cancelled answers the explicit
+    400 of the service (the race with a platform operator processing it
+    is serialised on the request row)."""
+
+    @extend_schema(request=None, responses=ErasureRequestSerializer)
+    def post(self, request):
+        erasure_request = cancel_erasure_request(user=request.user)
+        return Response(ErasureRequestSerializer(erasure_request).data)
 
 
 class MeExportView(APIView):

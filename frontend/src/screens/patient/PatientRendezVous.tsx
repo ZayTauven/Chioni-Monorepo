@@ -135,7 +135,11 @@ export function PatientRendezVous() {
         </p>
       </header>
 
-      {cancelled && <SuccessAlert message="Le rendez-vous a été annulé. Merci d'avoir prévenu." />}
+      {/* SV — formulation tranchée : annuler ICI prévient le centre (c'est le
+          même système). L'ancien couple « Prévenez le centre si vous pouvez »
+          puis « Merci d'avoir prévenu » laissait croire qu'il fallait encore
+          téléphoner. Une phrase par étape, une seule idée. */}
+      {cancelled && <SuccessAlert message="Le rendez-vous a été annulé. Le centre est prévenu." />}
 
       {/* À VENIR */}
       <section aria-label="Rendez-vous à venir" className="pat-stack" style={{ gap: 'var(--ax-space-3)' }}>
@@ -188,7 +192,7 @@ export function PatientRendezVous() {
       <ConfirmModal
         open={cancelTarget !== null}
         title="Annuler ce rendez-vous ?"
-        message="Prévenez le centre si vous pouvez — cela libère la place pour quelqu'un d'autre. Pour un nouveau rendez-vous, adressez-vous au centre."
+        message="Le centre sera prévenu et la place libérée pour quelqu'un d'autre. Pour un nouveau rendez-vous, adressez-vous au centre."
         confirmLabel="Oui, annuler ce rendez-vous"
         cancelLabel="Garder mon rendez-vous"
         danger

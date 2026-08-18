@@ -9,6 +9,7 @@ from django.contrib.auth import get_user_model
 from rest_framework import serializers
 
 from apps.centers.models import HealthCenter, KycDocument, StaffMembership, TariffItem
+from apps.centers.services import staff_identity_editable
 from apps.common.permissions import active_membership_qs
 from apps.common.uploads import media_url
 
@@ -121,14 +122,27 @@ class StaffUserSerializer(serializers.ModelSerializer):
     """
 
     avatar = serializers.SerializerMethodField()
+    # SV : le frontend grise proactivement l'édition d'identité (le PATCH
+    # staff ne la permet QUE sur un compte « jamais revendiqué »). Calculé
+    # par ``services.staff_identity_editable`` — LE prédicat que la garde
+    # d'écriture applique (source unique, lecture et écriture ne peuvent
+    # pas dériver). Rien de plus n'est exposé : ni ``phone_verified_at``,
+    # ni l'état du mot de passe — un booléen suffit au geste.
+    identity_editable = serializers.SerializerMethodField()
 
     class Meta:
         model = get_user_model()
-        fields = ["id", "first_name", "last_name", "phone", "avatar"]
+        fields = [
+            "id", "first_name", "last_name", "phone", "avatar",
+            "identity_editable",
+        ]
         read_only_fields = fields
 
     def get_avatar(self, obj):
         return media_url(self.context.get("request"), obj.avatar)
+
+    def get_identity_editable(self, obj) -> bool:
+        return staff_identity_editable(obj)
 
 
 class StaffMembershipSerializer(serializers.ModelSerializer):

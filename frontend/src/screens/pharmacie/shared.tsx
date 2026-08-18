@@ -131,7 +131,7 @@ export function PharmacyStatusBanner({
   if (status === 'validee') return null;
   const pending = status === 'en_attente';
   return (
-    <div className={`ax-alert ax-alert--${pending ? 'info' : 'warning'}`} role="status">
+    <div className={`ax-alert ax-alert--${pending ? 'info' : 'warning'}`} role="note">
       <div className="ax-alert__content">
         <p className="ax-alert__title">
           {pending ? PHARMACY_PENDING_TITLE : PHARMACY_SUSPENDED_TITLE}

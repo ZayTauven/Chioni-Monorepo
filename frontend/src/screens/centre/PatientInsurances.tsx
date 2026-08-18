@@ -86,6 +86,7 @@ function InsuranceModal({
   return (
     <Modal
       title={existing ? "Modifier l'assurance" : 'Nouvelle assurance'}
+      busy={saving}
       onClose={onClose}
       footer={
         <>

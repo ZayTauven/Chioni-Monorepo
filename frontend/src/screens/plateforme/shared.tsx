@@ -114,9 +114,9 @@ export function ErrorAlert({ error, onRetry }: { error: ApiError; onRetry?: () =
       : ['Une erreur est survenue. Réessayez dans un instant.'];
   return (
     <div className="ax-alert ax-alert--danger" role="alert">
-      <span className="ax-alert__icon">
-        <IconAlertTriangle className="" />
-      </span>
+      {/* La classe va sur le SVG lui-même : c'est `.ax-alert__icon` qui porte
+          les dimensions (même correctif que le socle centre). */}
+      <IconAlertTriangle className="ax-alert__icon" />
       <div className="ax-alert__content">
         {messages.map((m) => (
           <p key={m} className="ax-alert__message">

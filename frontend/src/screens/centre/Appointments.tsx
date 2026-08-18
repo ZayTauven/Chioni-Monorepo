@@ -232,6 +232,7 @@ function CreateAppointmentModal({
   return (
     <Modal
       title="Nouveau rendez-vous"
+      busy={saving}
       onClose={onClose}
       width={620}
       footer={
@@ -262,7 +263,9 @@ function CreateAppointmentModal({
 
         {/* Patient picker — same pattern as the encounter creation */}
         <div className="ax-field">
-          <label className="ax-label" htmlFor="appt-patient">
+          {/* SV — même correctif d'a11y que `ne-patient` (Consultations) : le
+              champ n'existe plus quand un patient est choisi. */}
+          <label className="ax-label" htmlFor={patient ? undefined : 'appt-patient'}>
             Patient <span className="ax-field__required" aria-hidden="true">*</span>
           </label>
           {patient ? (
@@ -324,7 +327,7 @@ function CreateAppointmentModal({
           <FieldError error={error} field="patient" />
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--ax-space-4)' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 'var(--ax-space-4)' }}>
           <div className="ax-field">
             <label className="ax-label" htmlFor="appt-when">
               Date et heure <span className="ax-field__required" aria-hidden="true">*</span>
@@ -425,6 +428,7 @@ function EditAppointmentModal({
   return (
     <Modal
       title={`Déplacer ou modifier — ${appointment.patient_name}`}
+      busy={saving}
       onClose={onClose}
       width={560}
       footer={
@@ -457,7 +461,7 @@ function EditAppointmentModal({
           Un déplacement ré-arme le rappel SMS de la veille.
         </p>
 
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--ax-space-4)' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 'var(--ax-space-4)' }}>
           <div className="ax-field">
             <label className="ax-label" htmlFor="appt-e-when">
               Date et heure <span className="ax-field__required" aria-hidden="true">*</span>
@@ -906,7 +910,7 @@ export function Appointments() {
             />
           ) : (
             <>
-              <div className="ax-table-wrap">
+              <div className="ax-table-wrap" tabIndex={0} role="region" aria-label="Tableau">
                 <table className="ax-table ax-table--hover">
                   <thead className="ax-table__head">
                     <tr>

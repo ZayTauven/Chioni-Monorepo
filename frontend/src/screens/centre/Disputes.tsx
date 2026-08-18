@@ -65,6 +65,7 @@ function ResolveModal({
   return (
     <Modal
       title={`Résoudre le litige n° ${dispute.id}`}
+      busy={saving}
       onClose={onClose}
       footer={
         <>
@@ -85,7 +86,7 @@ function ResolveModal({
     >
       {error && <ErrorAlert error={error} />}
 
-      <div className="ax-alert ax-alert--info" role="status">
+      <div className="ax-alert ax-alert--info" role="note">
         <div className="ax-alert__content">
           <p className="ax-alert__message">
             Une fois résolu, la demande n° {dispute.payment_request} reviendra à son statut d&apos;avant litige :{' '}
@@ -179,7 +180,7 @@ export function Disputes() {
             />
           ) : (
             <>
-              <div className="ax-table-wrap">
+              <div className="ax-table-wrap" tabIndex={0} role="region" aria-label="Tableau">
                 <table className="ax-table ax-table--hover">
                   <thead className="ax-table__head">
                     <tr>

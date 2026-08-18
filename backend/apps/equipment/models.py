@@ -133,9 +133,10 @@ class Equipment(TimeStampedModel):
     service — pendant que la base garantit ce qui lui est exprimable : le
     statut et la catégorie restent dans leur liste fermée, le nom n'est
     jamais vide (``CheckConstraint``). Un ``UPDATE`` brut ne peut donc pas
-    inventer un état ni un parc anonyme ; il pourrait, lui, ressusciter un
-    équipement réformé — vigilance consignée, même posture que S3/S6/S7
-    (pas de trigger PostgreSQL sur les tables non financières).
+    inventer un état ni un parc anonyme ; et depuis le lot SV (migration
+    ``equipment/0002_sv_db_triggers``), il ne peut plus non plus ressusciter
+    un équipement réformé — la vigilance consignée en S8 est soldée par un
+    trigger PostgreSQL miroir de la terminalité rejouée ici.
     """
 
     #: Alias publics — le reste du produit écrit ``Equipment.Status.…``.

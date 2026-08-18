@@ -372,6 +372,16 @@ class CashReceiptSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
 
+def _staff_display_name(user):
+    """Nom complet d'un membre du personnel — JAMAIS le username en repli
+    (identifiant technique, il ne sort pas d'un payload de caisse) : deux
+    noms vides rendent une chaîne vide, une FK nulle rend ``None`` (miroir
+    du champ id — l'encaissement Pont de Confiance n'a pas de caissier)."""
+    if user is None:
+        return None
+    return f"{user.first_name} {user.last_name}".strip()
+
+
 class CashPaymentReversalSerializer(serializers.ModelSerializer):
     """A reversal, visible and SIGNED in the cash journal: who, why, when,
     which amount/method it undoes, and its own ledger transaction."""
@@ -381,14 +391,30 @@ class CashPaymentReversalSerializer(serializers.ModelSerializer):
         max_digits=12, decimal_places=2, read_only=True,
     )
     method = serializers.CharField(source="cash_payment.method", read_only=True)
+    # SV : la liste ``reversals`` du journal du jour rend cet objet à plat,
+    # et une contre-passation peut défaire un encaissement d'un AUTRE jour —
+    # sans l'id de facture elle n'était pas navigable.
+    invoice = serializers.IntegerField(
+        source="cash_payment.invoice_id", read_only=True
+    )
+    # AUDIENCE TRANCHÉE (SV) : tous les lecteurs staff de ce serializer —
+    # déjà gatés BILLING par les vues. Un encaissement est un geste
+    # d'argent : la redevabilité de qui a tenu la caisse vaut pour toute la
+    # caisse. Ce n'est PAS le cas S8 du signaleur d'équipement (un
+    # signalement ne change rien, un encaissement si).
+    reversed_by_display = serializers.SerializerMethodField()
 
     class Meta:
         model = CashPaymentReversal
         fields = [
-            "id", "cash_payment", "method", "amount_kmf", "reason",
-            "reversed_by", "ledger_transaction", "created_at",
+            "id", "cash_payment", "invoice", "method", "amount_kmf", "reason",
+            "reversed_by", "reversed_by_display", "ledger_transaction",
+            "created_at",
         ]
         read_only_fields = fields
+
+    def get_reversed_by_display(self, obj) -> str | None:
+        return _staff_display_name(obj.reversed_by)
 
 
 class CashPaymentStaffSerializer(serializers.ModelSerializer):
@@ -401,15 +427,26 @@ class CashPaymentStaffSerializer(serializers.ModelSerializer):
 
     receipt = serializers.SerializerMethodField()
     reversal = serializers.SerializerMethodField()
+    # AUDIENCE TRANCHÉE (SV) : tous les lecteurs staff de ce serializer —
+    # déjà gatés BILLING par les vues. Un encaissement est un geste
+    # d'argent : la redevabilité de qui a tenu la caisse vaut pour toute la
+    # caisse. Ce n'est PAS le cas S8 du signaleur d'équipement (un
+    # signalement ne change rien, un encaissement si). ``None`` pour un
+    # encaissement Pont de Confiance (``received_by`` nul : webhook PSP).
+    received_by_display = serializers.SerializerMethodField()
 
     class Meta:
         model = CashPayment
         fields = [
             "id", "invoice", "method", "operator", "reference",
-            "amount_kmf", "received_by", "payment_intent",
-            "ledger_transaction", "receipt", "reversal", "created_at",
+            "amount_kmf", "received_by", "received_by_display",
+            "payment_intent", "ledger_transaction", "receipt", "reversal",
+            "created_at",
         ]
         read_only_fields = fields
+
+    def get_received_by_display(self, obj) -> str | None:
+        return _staff_display_name(obj.received_by)
 
     @staticmethod
     def get_receipt(obj):

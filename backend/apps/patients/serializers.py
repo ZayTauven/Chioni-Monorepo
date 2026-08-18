@@ -111,11 +111,21 @@ class CenterClinicalConsentSerializer(serializers.Serializer):
     guardian_link = serializers.IntegerField(
         error_messages={"required": "Le lien de tutelle est requis."}
     )
+    # SV.1.2 (arbitrage PO S2) — papier signé OBLIGATOIRE : `oral` a disparu
+    # des choix d'ENTRÉE (trace opposable). Le modèle garde le choix `oral`
+    # pour que l'historique reste lisible ; seul le recueil papier entre.
     collected_via = serializers.ChoiceField(
-        choices=Consent.CollectedVia.choices,
+        choices=[
+            (Consent.CollectedVia.PAPER.value, Consent.CollectedVia.PAPER.label)
+        ],
         error_messages={
-            "required": "Le mode de recueil est requis (papier ou oral).",
-            "invalid_choice": "Mode de recueil invalide : papier ou oral.",
+            "required": (
+                "Le mode de recueil est requis (formulaire papier signé)."
+            ),
+            "invalid_choice": (
+                "Mode de recueil invalide : seul le formulaire papier signé "
+                "est accepté au guichet."
+            ),
         },
     )
 

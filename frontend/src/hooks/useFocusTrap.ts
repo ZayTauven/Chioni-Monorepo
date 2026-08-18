@@ -21,8 +21,11 @@ export function useFocusTrap(
         (el) => el.offsetParent !== null || el === document.activeElement,
       );
 
+    // SV — `preventScroll` : le focus d'ouverture ne doit jamais faire
+    // défiler un dialogue plus haut que l'écran (il s'ouvrait déjà défilé
+    // vers le bas). Les modales remettent ensuite leur corps à zéro.
     const first = focusables()[0];
-    if (first) first.focus();
+    if (first) first.focus({ preventScroll: true });
 
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Tab') return;

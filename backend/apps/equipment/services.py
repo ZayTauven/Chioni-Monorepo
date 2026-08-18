@@ -112,6 +112,28 @@ def update_equipment(*, actor, equipment, **fields):
         raise ValidationError(
             f"Champ non modifiable : {', '.join(sorted(unknown))}."
         )
+    # SV : le refus doit dire la VÉRITÉ. Si un autre directeur a réformé la
+    # fiche entre son chargement et cet envoi, laisser filer l'écriture
+    # faisait échouer ``Equipment.save()`` sur « Un équipement réformé ne
+    # revient pas en service » — refus fail-closed correct, message
+    # trompeur : l'appelant ne touchait pas au statut. L'état est donc relu
+    # EN BASE (patron ``EquipmentReport.save()``), et sous
+    # ``select_for_update`` cette fois : on est dans une transaction
+    # d'écriture, et le verrou ferme la fenêtre avec les transitions
+    # concurrentes (elles-mêmes sérialisées sur la ligne). Corriger la
+    # fiche d'un réformé avec une instance À JOUR reste permis — seul le
+    # décalage instance/base est refusé.
+    current_status = (
+        Equipment.objects.select_for_update()
+        .filter(pk=equipment.pk)
+        .values_list("status", flat=True)
+        .first()
+    )
+    if current_status is not None and current_status != equipment.status:
+        raise ValidationError(
+            "Cette fiche a changé depuis son chargement (équipement réformé "
+            "entre-temps) : rechargez-la avant de la corriger."
+        )
     changed = []
     for field in EDITABLE_FIELDS:
         if field not in fields:

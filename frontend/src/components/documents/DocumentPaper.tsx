@@ -123,20 +123,25 @@ function partyMark(party: DocumentParty, gradientId: string) {
   );
 }
 
-function Party({ label, party }: { label: string; party: DocumentParty }) {
+function Party({ label, party, mark }: { label: string; party: DocumentParty; mark?: ReactNode }) {
   return (
     <div>
       <div className="ax-label" style={{ marginBottom: 'var(--ax-space-2)' }}>
         {label}
       </div>
-      <div style={{ fontWeight: 'var(--ax-weight-semibold)', color: 'var(--ax-text-strong)' }}>
-        {party.name}
-      </div>
-      {party.qualifier && (
-        <div style={{ fontSize: 'var(--ax-text-xs)', color: 'var(--ax-text-muted)' }}>
-          {party.qualifier}
+      <div className="ax-cluster" style={{ gap: 'var(--ax-space-2)', flexWrap: 'nowrap', alignItems: 'center' }}>
+        {mark}
+        <div>
+          <div style={{ fontWeight: 'var(--ax-weight-semibold)', color: 'var(--ax-text-strong)' }}>
+            {party.name}
+          </div>
+          {party.qualifier && (
+            <div style={{ fontSize: 'var(--ax-text-xs)', color: 'var(--ax-text-muted)' }}>
+              {party.qualifier}
+            </div>
+          )}
         </div>
-      )}
+      </div>
       {party.lines && party.lines.length > 0 && (
         <address
           style={{
@@ -337,8 +342,18 @@ export function DocumentPaper({
             marginBottom: 'var(--ax-space-7)',
           }}
         >
+          {/* L'émetteur porte déjà sa marque dans l'en-tête du papier : pas
+              de doublon ici. */}
           <Party label={issuerLabel} party={issuer} />
-          <Party label={recipientLabel} party={recipient} />
+          {/* SV — le DESTINATAIRE porte son logo quand il en a un (la vraie
+              image seulement, jamais des initiales dans ce bandeau : sans
+              logo, le nom suffit). Cas d'usage : la facture SaaS côté
+              plateforme, dont le destinataire est un centre. */}
+          <Party
+            label={recipientLabel}
+            party={recipient}
+            mark={recipient.logo ? partyMark(recipient, `${markId}-recipient`) : undefined}
+          />
         </div>
 
         {/* ── bandeau de méta ── */}
@@ -388,7 +403,7 @@ export function DocumentPaper({
             {emptyLines ?? 'Aucune ligne sur ce document.'}
           </p>
         ) : (
-          <div className="ax-table-wrap" style={{ margin: '0 calc(-1 * var(--ax-space-2))' }}>
+          <div className="ax-table-wrap" tabIndex={0} role="region" aria-label="Tableau" style={{ margin: '0 calc(-1 * var(--ax-space-2))' }}>
             <table className="ax-table">
               <thead className="ax-table__head">
                 <tr>

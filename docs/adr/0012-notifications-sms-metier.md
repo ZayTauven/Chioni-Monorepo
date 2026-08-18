@@ -34,3 +34,27 @@ Le SMS est le canal principal aux Comores (étude §5.4) ; seul l'OTP partait en
 - **Anti-harcèlement sur l'invitation** : `POST /patients/me/guardians/invite/` est throttlé par appelant (`invite_guardian_user`, 5/jour) ET par téléphone cible (`invite_guardian_phone`, 3/jour), env-tunables comme les scopes OTP. La porte C (création guichet) reste non throttlée : staff authentifié d'un centre KYC-vérifié, responsabilité tracée.
 - **Événement 4 durci** : l'envoi ne notifie que les partages dont le lien est ACTIF ; un partage ajouté sur une demande déjà envoyée notifie ce tuteur seul (`notify_payment_request_share_added`, même template).
 - **Événement 5 muet** : plus de nom de centre (« Chioni : votre soin a été payé par un proche. ») — le texte redevient une constante sans interpolation.
+
+## Addendum (2026-08-16, arbitrage PO — exigences du futur chantier agrégateur)
+
+Consigné maintenant pour que le chantier « agrégateur SMS comorien » (toujours différé) naisse
+avec le bon contrat ; rien n'est implémenté ici.
+
+1. **Twilio entre dans le périmètre du chantier, aux côtés des agrégateurs comoriens**, et sur
+   DEUX canaux : **SMS et WhatsApp**. L'abstraction `apps/common/sms.py` devra donc porter une
+   notion de **canal** (aujourd'hui elle n'en connaît qu'un), avec une politique de repli à
+   trancher au cadrage du chantier (WhatsApp d'abord, SMS en repli ? par destinataire ?).
+2. Conséquences déjà identifiables, à instruire au cadrage : les templates WhatsApp Business
+   sont **pré-approuvés par Meta** (le point d'extraction unique de `notifications.py` devient
+   un atout : la liste des textes à soumettre existe déjà) ; l'opt-in WhatsApp est plus strict
+   que le SMS ; les accusés de remise Twilio (delivery receipts) ouvrent enfin la voie au
+   retry borné + dead-letter déjà actés ; le coût par canal diffère — le choix du canal par
+   destinataire est aussi un choix économique.
+3. Invariants INCHANGÉS quel que soit le canal : le contrat de contenu de cet ADR (jamais de
+   donnée médicale, montant selon destinataire, le contenu suit la visibilité dans l'app),
+   `transaction.on_commit`, jamais de corps ni de téléphone au niveau INFO+, et l'information
+   art. 14 portée par ce même chantier. **Un canal plus riche n'autorise pas un contenu plus
+   riche** : une bulle WhatsApp se lit par-dessus l'épaule exactement comme un SMS.
+4. La **préférence de langue par personne** (chantier i18n shikomori, décidé le même jour)
+   sera résolue au moment de l'envoi par `notifications.py` — l'agrégateur reçoit un texte
+   final, il ne choisit jamais une langue.

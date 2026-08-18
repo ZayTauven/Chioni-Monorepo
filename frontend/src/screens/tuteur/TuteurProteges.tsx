@@ -279,6 +279,20 @@ export function TuteurProteges() {
   /* S2 : l'historique complet des liens — la source des sections « en
      attente de confirmation » et « anciens liens ». */
   const links = usePagedList(listGuardianLinks);
+  /*
+   * SV — un lien « en attente de confirmation » au-delà de la page 1 était
+   * INVISIBLE : la seule pagination des liens vivait dans l'historique replié,
+   * et la section d'attente ne se montait que si la page 1 en portait un.
+   * On charge donc la suite d'office (payload minuscule : ni téléphone ni
+   * scopes), borné à 100 liens — au-delà, le bouton « Voir plus » de
+   * l'historique reste la porte.
+   */
+  useEffect(() => {
+    if (!links.loading && !links.loadingMore && !links.error && links.hasMore && links.items.length < 100) {
+      void links.loadMore();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [links.loading, links.loadingMore, links.error, links.hasMore, links.items.length, links.loadMore]);
   const pendingConfirmation = useMemo(
     () => links.items.filter((l) => l.status === 'attente_confirmation_titulaire'),
     [links.items],

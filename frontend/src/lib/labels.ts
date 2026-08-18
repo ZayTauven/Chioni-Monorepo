@@ -743,7 +743,12 @@ export const CONSENT_SCOPE_LABELS: Record<ConsentScope, string> = {
   detail_clinique: 'Détail des soins',
 };
 
-/** How a desk-collected clinical consent was gathered (S2). */
+/**
+ * How a desk-collected clinical consent was gathered (S2).
+ * SV.1.2 — `oral` n'est plus ACCEPTÉ à l'écriture (papier signé obligatoire,
+ * arbitrage PO) : son libellé ne sert plus qu'à AFFICHER l'historique rendu
+ * par le GET. Aucun formulaire ne doit plus le proposer.
+ */
 export const CONSENT_COLLECTED_VIA_LABELS: Record<ConsentCollectedVia, string> = {
   papier: 'Formulaire papier signé',
   oral: 'Accord oral',
@@ -947,6 +952,19 @@ export const AUDIT_ACTION_LABELS: Record<AuditAction, string> = {
   'equipment.updated': 'Fiche d’équipement modifiée',
   'equipment.status_changed': 'État d’un équipement modifié',
   'equipment.reported': 'Panne signalée',
+  /* S7 (rattrapé en SV — test de parité backend) : le journal dit
+     l'ÉVÉNEMENT, jamais le régime. « Congé décidé » et non « approuvé » ou
+     « refusé » (le sens de la décision se lit dans le payload, en codes) ;
+     jamais le type d'un congé — un motif de congé est de la donnée de vie
+     privée, la ligne 1 du produit vaut pour le personnel depuis S7. */
+  'hrm_department.created': 'Service créé',
+  'hrm_department.updated': 'Service modifié',
+  'hrm_job_title.created': 'Fonction créée',
+  'hrm_job_title.updated': 'Fonction modifiée',
+  'holiday.created': 'Jour férié ajouté',
+  'holiday.deleted': 'Jour férié retiré',
+  'leave.requested': 'Congé demandé',
+  'leave.decided': 'Congé décidé',
   'invoice.created': 'Facture créée',
   'invoice.issued': 'Facture émise',
   'invoice.cancelled': 'Facture annulée',
@@ -998,6 +1016,21 @@ export const AUDIT_ACTION_GROUPS: Array<{ label: string; actions: AuditAction[] 
       'staff.membership_updated',
       'staff.membership_deactivated',
       'staff.membership_reactivated',
+    ],
+  },
+  {
+    /* S7 — l'organisation RH, distincte de « Personnel » (les rattachements
+       et leurs rôles) : services, fonctions, fériés, congés. */
+    label: 'Équipe',
+    actions: [
+      'hrm_department.created',
+      'hrm_department.updated',
+      'hrm_job_title.created',
+      'hrm_job_title.updated',
+      'holiday.created',
+      'holiday.deleted',
+      'leave.requested',
+      'leave.decided',
     ],
   },
   {
@@ -1164,6 +1197,15 @@ export const AUDIT_PAYLOAD_LABELS: Record<string, string> = {
   to_status: 'Nouvel état',
   report_id: 'Signalement',
   equipment_status: 'État de l’équipement au moment du constat',
+  /* S7 — organisation RH (rattrapé en SV, test de parité backend) : des
+     références et un compte de jours, jamais un type de congé ni le sens
+     d'une décision en clair — le journal dit l'événement, pas le régime. */
+  department_id: 'Service',
+  job_title_id: 'Fonction',
+  holiday_id: 'Jour férié',
+  leave_id: 'Congé',
+  employment_id: 'Emploi',
+  days: 'Jours',
   /* S10 — export comptable. `center_id`, `line_count`, `number`,
      `period_start` et `period_end` sont déjà déclarés (bloc abonnement) :
      une clé = un libellé, et `number` a été rendu neutre pour couvrir les
@@ -1227,6 +1269,12 @@ export const AUDIT_PAYLOAD_LABELS: Record<string, string> = {
   insurances_moved: 'Assurances déplacées',
   medical_file_moved: 'Fiche médicale reprise',
   user_transferred: 'Compte transféré',
+  /* Fusion, clés arrivées avec S6 puis S10 (rattrapées en SV — le fail-closed
+     avait tenu, mais la ligne s'affichait muette) : les séjours suivent le
+     dossier conservé, et les préférences de contact fusionnent au plus
+     restrictif — un « non merci » dit sur l'un des deux dossiers survit. */
+  stays_moved: 'Séjours déplacés',
+  preferences_tightened: 'Préférences de contact resserrées',
   /* abonnement SaaS (S5) — des références, des codes, des montants, jamais un
      motif : `has_reason` dit qu'il en existe un, l'écran d'abonnement le rend. */
   subscription_id: 'Abonnement',
@@ -1283,6 +1331,7 @@ export const ERASURE_STATUS_SELF: Record<ErasureStatus, string> = {
   en_attente: 'Votre demande est en cours d’examen',
   traitee: 'Votre demande a été traitée',
   refusee: 'Votre demande n’a pas pu être acceptée',
+  annulee: 'Vous avez retiré votre demande',
 };
 
 /** Statut d'une demande, côté back-office. */
@@ -1290,6 +1339,9 @@ export const ERASURE_STATUS_LABELS: Record<ErasureStatus, string> = {
   en_attente: 'En attente',
   traitee: 'Traitée',
   refusee: 'Refusée',
+  /* SV — retirée par la personne elle-même : dire QUI a arrêté la demande
+     évite à l'exploitant de chercher une décision qu'il n'a pas prise. */
+  annulee: 'Retirée par la personne',
 };
 
 /** Ce qu'il faut corriger AVANT de pouvoir anonymiser (codes du backend). */
@@ -1337,12 +1389,27 @@ export const ERASURE_NOT_INSTANT =
   'Votre demande sera examinée par l’équipe Chioni. Ce n’est pas immédiat, et vous pouvez continuer à utiliser Chioni normalement en attendant.';
 
 /**
- * Dit AVANT le clic, jamais après : la personne ne peut pas retirer sa
- * demande elle-même (vigilance actée à l'ADR 0017 lot 3 — aucune rétractation
- * n'est implémentée). Le taire ferait de « Envoyer ma demande » un piège.
+ * SV — la rétractation existe (art. 12) : dit AVANT le clic pour que
+ * « Envoyer ma demande » ne pèse pas plus lourd qu'il ne pèse, et redit sur
+ * la demande en attente pour que le bouton « Retirer » ne surprenne pas.
+ * (Remplace l'ancien ERASURE_NO_UNDO — la phrase inverse, devenue fausse.)
  */
-export const ERASURE_NO_UNDO =
-  'Une fois envoyée, vous ne pourrez pas retirer votre demande vous-même.';
+export const ERASURE_CAN_WITHDRAW =
+  'Tant que votre demande est en cours d’examen, vous pouvez la retirer à tout moment depuis cet écran.';
+
+/* ── retirer sa demande (rétractation, art. 12) ── */
+
+/** Intitulé du bouton ET titre de la modale : mêmes mots, exprès. */
+export const ERASURE_WITHDRAW_LABEL = 'Retirer ma demande';
+/**
+ * L'inverse d'un geste destructeur — mais la personne doit comprendre que sa
+ * demande de suppression S'ARRÊTE : on le dit sans détour, sans dramatiser.
+ */
+export const ERASURE_WITHDRAW_MESSAGE =
+  'Votre demande de suppression s’arrête ici : rien ne sera effacé, et votre compte continue de fonctionner comme avant.';
+export const ERASURE_WITHDRAW_NOTE =
+  'Si vous changez d’avis plus tard, vous pourrez déposer une nouvelle demande à tout moment.';
+export const ERASURE_WITHDRAW_CONFIRM = 'Retirer ma demande';
 
 /* ── copie de mes données (portabilité, art. 20) ── */
 
@@ -1365,9 +1432,9 @@ export function exportSaved(filename: string): string {
    désactivés » ne veut rien dire pour Mariama. Les deux registres portent
    EXACTEMENT les mêmes garanties, dans le même ordre — ce qui n'est pas
    immédiat, ce que couvre la demande, ce qui se passe si elle est acceptée,
-   ce qui est conservé, et le fait qu'on ne peut pas la retirer — pour qu'une
-   relecture des deux colonnes côte à côte suffise à vérifier qu'aucune n'a
-   dérivé.
+   ce qui est conservé, et le droit de la retirer tant qu'elle est à l'étude
+   (SV) — pour qu'une relecture des deux colonnes côte à côte suffise à
+   vérifier qu'aucune n'a dérivé.
 
    Règle pour les retards (`delay` / `pendingNote`) : ce qui peut CHANGER la
    décision se dit AVANT le dépôt (le dernier directeur d'un centre a intérêt
@@ -3795,8 +3862,10 @@ export const CONTACT_OUTCOME_LABELS: Record<ContactOutcome, string> = {
   sans_reponse: 'Pas de réponse',
   promesse_de_reglement: 'A dit qu’elle réglerait',
   a_rappeler: 'À rappeler plus tard',
+  rdv_fixe: 'Un nouveau rendez-vous a été fixé',
 };
 
+/** Les issues d'une relance d'impayé — `rdv_fixe` n'y a pas sa place. */
 export const CONTACT_OUTCOMES: ContactOutcome[] = [
   'joint',
   'sans_reponse',
@@ -3807,19 +3876,20 @@ export const CONTACT_OUTCOMES: ContactOutcome[] = [
 /**
  * Les issues PROPOSÉES, par motif d'appel.
  *
- * Le backend accepte les quatre pour les deux motifs ; l'écran, lui, ne
- * propose que ce qui peut être vrai. « A dit qu'elle réglerait » n'a aucun
+ * Le backend accepte les mêmes valeurs pour les deux motifs ; l'écran, lui,
+ * ne propose que ce qui peut être vrai. « A dit qu'elle réglerait » n'a aucun
  * sens quand on appelle quelqu'un pour lui proposer une nouvelle date : une
  * liste fermée dont un choix est hors sujet apprend à lire la liste de
  * travers, et c'est la seule chose que ce carnet ait à dire juste.
  *
- * Réserve consignée pour le backend : il manque à la liste fermée l'issue
- * naturelle d'un appel de reprise de contact — « un nouveau rendez-vous a
- * été fixé ». Faute de mieux, elle se note aujourd'hui « Personne jointe ».
+ * SV — la réserve consignée ici est soldée : `rdv_fixe` (« Un nouveau
+ * rendez-vous a été fixé ») est l'issue naturelle d'une reprise de contact,
+ * proposée EN PREMIER (c'est l'issue heureuse, celle qui sort la personne de
+ * la file). Elle reste hors de la relance d'impayé, où elle n'a pas de sens.
  */
 export const CONTACT_OUTCOMES_BY_KIND: Record<ContactKind, ContactOutcome[]> = {
   relance_impaye: CONTACT_OUTCOMES,
-  reprise_contact: ['joint', 'sans_reponse', 'a_rappeler'],
+  reprise_contact: ['rdv_fixe', 'joint', 'sans_reponse', 'a_rappeler'],
 };
 
 /** Rendu sous le champ quand on valide sans avoir choisi — jamais un bouton mort. */
@@ -3874,16 +3944,41 @@ export const GUARDIAN_REACHABLE_NO_HINT =
  * geste humain (`outcome` obligatoire), l'automate n'en pose aucune. Une
  * issue vide se lit donc « c'était le robot », de façon sûre.
  *
- * Réserve consignée pour le backend : quand une issue existe, la DATE
- * rendue reste celle du dernier contact toutes natures confondues, qui
- * peut être un SMS postérieur à l'appel. Le verbe est neutre pour cette
- * raison ; une annotation `last_human_contact_at` permettrait de dire
- * « Appelé le … » sans réserve.
+ * Sert la file « à recontacter », dont le payload n'a qu'une date. La file
+ * « à relancer » a mieux depuis SV : `unpaidLastContactLabel` ci-dessous.
  */
 export function lastContactLabel(at: string | null, outcome: ContactOutcome | ''): string {
   if (!at) return 'Personne n’a encore appelé';
   if (!outcome) return `Message automatique le ${formatDate(at)}`;
   return `Dernier contact le ${formatDate(at)} — ${CONTACT_OUTCOME_LABELS[outcome]}`;
+}
+
+/**
+ * SV — la réserve ci-dessus est soldée pour la file « à relancer » :
+ * `last_human_contact_at` date le dernier contact HUMAIN (celui qui porte
+ * l'issue), et le verbe précis revient sans risque de mensonge. Le canal
+ * n'étant pas dans le payload, le verbe reste « Contact le … » (jamais
+ * « Appelé » sur ce qui fut peut-être un passage au guichet) ; le SMS
+ * automatique reste « Message automatique le … », et quand l'automate a
+ * écrit APRÈS l'appel, les deux dates sont dites — cacher le SMS postérieur
+ * referait mentir la ligne dans l'autre sens.
+ */
+export function unpaidLastContactLabel(
+  at: string | null,
+  humanAt: string | null,
+  outcome: ContactOutcome | '',
+): string {
+  if (!humanAt) {
+    if (!at) return 'Personne n’a encore appelé';
+    return `Message automatique le ${formatDate(at)}`;
+  }
+  const human = outcome
+    ? `Contact le ${formatDate(humanAt)} — ${CONTACT_OUTCOME_LABELS[outcome]}`
+    : `Contact le ${formatDate(humanAt)}`;
+  if (at && at !== humanAt) {
+    return `${human} · message automatique le ${formatDate(at)}`;
+  }
+  return human;
 }
 
 /** « N'a pas pu venir » — jamais « absent », jamais « manqué ». */

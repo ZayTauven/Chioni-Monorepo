@@ -25,7 +25,7 @@ from decimal import Decimal
 
 import pytest
 from django.core.exceptions import ValidationError
-from django.db import IntegrityError, connections, transaction
+from django.db import DatabaseError, IntegrityError, connections, transaction
 from django.test.utils import CaptureQueriesContext
 from django.db import connection
 from django.utils import timezone
@@ -167,7 +167,10 @@ class TestTheGlobalASeries:
         first = issue(subscription)
         subscription.refresh_from_db()
         second = issue(subscription, today=first.period_end + timedelta(days=1))
-        with pytest.raises(IntegrityError):
+        # Depuis le lot SV, le trigger ``billing_subscriptioninvoice_frozen``
+        # refuse la réécriture du numéro AVANT même que la contrainte
+        # d'unicité soit consultée — même arbitre (PostgreSQL).
+        with pytest.raises(DatabaseError, match="figes"):
             with transaction.atomic():
                 SubscriptionInvoice.objects.filter(pk=second.pk).update(
                     sequence_number=first.sequence_number
@@ -212,7 +215,11 @@ class TestAnIssuedInvoiceIsFrozen:
     def test_the_database_refuses_a_fractional_amount(self):
         _center, _director, subscription = billed_center()
         invoice = issue(subscription)
-        with pytest.raises(IntegrityError):
+        # Depuis le lot SV, le trigger de gel refuse la réécriture du
+        # montant avant même le ``CheckConstraint`` d'intégralité — même
+        # arbitre (PostgreSQL). L'INSERT fractionnaire, lui, reste attrapé
+        # par la contrainte (les triggers SV ne portent que sur UPDATE).
+        with pytest.raises(DatabaseError, match="figes"):
             with transaction.atomic():
                 SubscriptionInvoice.objects.filter(pk=invoice.pk).update(
                     amount_kmf=Decimal("25000.50")

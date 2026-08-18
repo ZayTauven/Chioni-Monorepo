@@ -52,6 +52,8 @@ const STATUS_TONES: Record<ErasureStatus, BadgeTone> = {
   en_attente: 'warning',
   traitee: 'success',
   refusee: 'neutral',
+  /* SV — retirée par la personne : rien à faire, rien à colorer. */
+  annulee: 'neutral',
 };
 
 const STATUS_FILTERS: Array<{ value: '' | ErasureStatus; label: string }> = [
@@ -59,6 +61,7 @@ const STATUS_FILTERS: Array<{ value: '' | ErasureStatus; label: string }> = [
   { value: 'en_attente', label: ERASURE_STATUS_LABELS.en_attente },
   { value: 'traitee', label: ERASURE_STATUS_LABELS.traitee },
   { value: 'refusee', label: ERASURE_STATUS_LABELS.refusee },
+  { value: 'annulee', label: ERASURE_STATUS_LABELS.annulee },
 ];
 
 const HAT_KEYS = Object.keys(ERASURE_HAT_LABELS) as Array<keyof typeof ERASURE_HAT_LABELS>;
@@ -317,7 +320,7 @@ function RequestCard({
         )}
 
         {pending && blocked && (
-          <div className="ax-alert ax-alert--warning" role="status">
+          <div className="ax-alert ax-alert--warning" role="note">
             <div className="ax-alert__content">
               <p className="ax-alert__title">Cet effacement ne peut pas encore être exécuté</p>
               <ul style={{ margin: 'var(--ax-space-1) 0 0', paddingInlineStart: 'var(--ax-space-5)' }}>

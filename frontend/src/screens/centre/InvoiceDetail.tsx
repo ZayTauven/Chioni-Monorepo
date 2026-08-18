@@ -99,6 +99,7 @@ function CancelInvoiceModal({
   return (
     <Modal
       title={`Annuler la facture n° ${invoice.id} ?`}
+      busy={saving}
       onClose={onClose}
       footer={
         <>
@@ -184,6 +185,7 @@ function ReverseModal({
   return (
     <Modal
       title={`Contre-passer l'encaissement de ${formatKmf(payment.amount_kmf)} ?`}
+      busy={saving}
       onClose={onClose}
       footer={
         <>
@@ -466,7 +468,7 @@ function CaisseSection({
         />
       ) : (
         <>
-          <div className="ax-table-wrap">
+          <div className="ax-table-wrap" tabIndex={0} role="region" aria-label="Tableau">
             <table className="ax-table">
               <thead className="ax-table__head">
                 <tr>
@@ -733,7 +735,7 @@ export function InvoiceDetail({ invoiceId }: { invoiceId: number }) {
               </p>
             )}
             {invoice.status === 'annulee' && (
-              <div className="ax-alert ax-alert--warning" role="status">
+              <div className="ax-alert ax-alert--warning" role="note">
                 <div className="ax-alert__content">
                   <p className="ax-alert__message">
                     Facture annulée{invoice.cancelled_at ? ` le ${formatDate(invoice.cancelled_at)}` : ''}. Les
@@ -756,7 +758,7 @@ export function InvoiceDetail({ invoiceId }: { invoiceId: number }) {
               <p className="ax-card__subtitle">Chaque ligne est reliée à un acte réalisé</p>
             </div>
           </div>
-          <div className="ax-table-wrap">
+          <div className="ax-table-wrap" tabIndex={0} role="region" aria-label="Tableau">
             <table className="ax-table">
               <thead className="ax-table__head">
                 <tr>

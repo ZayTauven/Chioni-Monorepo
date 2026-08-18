@@ -171,6 +171,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     clearTokens();
     clearPendingPhone();
+    /*
+     * SV — durcissement : le centre/l'officine actifs et les marqueurs
+     * d'intent (`chioni:intent-<id>`) survivaient à la déconnexion. Aucune
+     * donnée sensible, mais une trace d'usage sur un appareil partagé — un
+     * cybercafé est un cas nominal aux Comores. Purge défensive (le storage
+     * peut lever en navigation privée).
+     */
+    try {
+      window.localStorage.removeItem('chioni:center');
+      window.localStorage.removeItem('chioni:pharmacy');
+      for (let i = window.sessionStorage.length - 1; i >= 0; i -= 1) {
+        const key = window.sessionStorage.key(i);
+        if (key && key.startsWith('chioni:intent-')) window.sessionStorage.removeItem(key);
+      }
+    } catch {
+      /* ignore — même posture que tokens.ts */
+    }
     setMe(null);
     setStatus('anonymous');
     window.location.assign('/auth/sign-in');

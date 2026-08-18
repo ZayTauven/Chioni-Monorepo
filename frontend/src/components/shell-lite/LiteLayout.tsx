@@ -18,6 +18,13 @@ export interface LiteTab {
   icon: string;
 }
 
+/** SV — un titre de page HORS onglets (ex. /patient/rendez-vous, qui
+ *  affichait « Accueil » : le préfixe /patient gagnait le match). */
+export interface LitePageTitle {
+  href: string;
+  label: string;
+}
+
 const HEX_LOGO = (
   <svg viewBox="0 0 32 32" width={20} height={20} fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><defs><linearGradient id="axmklite" x1={4} y1={4} x2={28} y2={28} gradientUnits="userSpaceOnUse"><stop stopColor="#2BC4B0" /><stop offset="0.55" stopColor="#1E9E96" /><stop offset="1" stopColor="#6D5CF0" /></linearGradient></defs><path d="M4 4 H16 A12 12 0 0 1 28 16 V28 A0 0 0 0 1 28 28 H16 A12 12 0 0 1 4 16 V4 Z" fill="url(#axmklite)" stroke="none" /><circle cx="20.5" cy="11.5" r="2.6" fill="#0A0C11" fillOpacity="0.92" stroke="none" /></svg>
 );
@@ -51,11 +58,25 @@ function useResolvedTheme(): { theme: 'light' | 'dark'; toggle: () => void } {
   return { theme, toggle };
 }
 
-export function LiteLayout({ tabs, children }: { tabs: LiteTab[]; children: ReactNode }) {
+export function LiteLayout({
+  tabs,
+  pageTitles = [],
+  children,
+}: {
+  tabs: LiteTab[];
+  /** Titres des pages qui ne sont pas des onglets — même règle de préfixe,
+   *  le plus long gagne (une page nommée bat l'onglet parent). */
+  pageTitles?: LitePageTitle[];
+  children: ReactNode;
+}) {
   const pathname = usePathname() || '/';
   const { me, signOut } = useAuth();
   const { theme, toggle } = useResolvedTheme();
   const current = activeTab(tabs, pathname);
+  const pageTitle = activeTab(
+    [...tabs, ...pageTitles.map((t) => ({ ...t, icon: '' }))],
+    pathname,
+  )?.label;
   const multiSpace = spacesOf(me).length > 1;
   const displayName =
     me && (me.first_name || me.last_name)
@@ -73,7 +94,7 @@ export function LiteLayout({ tabs, children }: { tabs: LiteTab[]; children: Reac
           <span className="ax-lite__brand-name">Chioni</span>
         </Link>
 
-        <h1 className="ax-lite__title">{current?.label ?? 'Chioni'}</h1>
+        <h1 className="ax-lite__title">{pageTitle ?? 'Chioni'}</h1>
 
         <Dropdown
           className="ax-profile"

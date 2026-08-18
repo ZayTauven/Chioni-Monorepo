@@ -137,6 +137,7 @@ export function CreateEncounterModal({
   return (
     <Modal
       title="Nouvelle consultation"
+      busy={saving}
       onClose={onClose}
       width={620}
       footer={
@@ -167,7 +168,10 @@ export function CreateEncounterModal({
 
         {/* Patient picker (verrouillé quand on vient d'un rendez-vous) */}
         <div className="ax-field">
-          <label className="ax-label" htmlFor="ne-patient">
+          {/* SV — quand le patient est verrouillé (ou déjà choisi), il n'y a
+              AUCUN champ `ne-patient` dans le DOM : un label qui pointe vers
+              rien est un label orphelin. `htmlFor` seulement si le champ existe. */}
+          <label className="ax-label" htmlFor={lockedPatient || patient ? undefined : 'ne-patient'}>
             Patient <span className="ax-field__required" aria-hidden="true">*</span>
           </label>
           {lockedPatient ? (
@@ -455,7 +459,7 @@ export function Consultations() {
             />
           ) : (
             <>
-              <div className="ax-table-wrap">
+              <div className="ax-table-wrap" tabIndex={0} role="region" aria-label="Tableau">
                 <table className="ax-table ax-table--hover">
                   <thead className="ax-table__head">
                     <tr>

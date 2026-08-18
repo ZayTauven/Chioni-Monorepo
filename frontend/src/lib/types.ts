@@ -116,7 +116,12 @@ export type MobileMoneyOperator = 'huri' | 'mvola' | 'autre';
 /** `?ordering=` of GET /centers/{c}/invoices/unpaid/ — any other value is a 400. */
 export type UnpaidOrdering = '-balance' | 'balance' | '-age' | 'age';
 
-/** How a desk-collected clinical consent was gathered (S2, ADR 0004 addendum). */
+/**
+ * How a desk-collected clinical consent was gathered (S2, ADR 0004 addendum).
+ * **SV.1.2 — l'écriture n'accepte plus que `papier`** (formulaire signé,
+ * arbitrage PO) : `oral` ne subsiste ici que parce que l'HISTORIQUE reste
+ * lisible en GET. Aucun formulaire ne doit plus le proposer.
+ */
 export type ConsentCollectedVia = 'papier' | 'oral';
 
 /* ── S4 (ADR 0017) — the platform space, KYC file, audit, RGPD ── */
@@ -146,7 +151,8 @@ export type IncidentAction =
   | 'payment_intent.cancelled'
   | 'payment_intent.failed';
 
-export type ErasureStatus = 'en_attente' | 'traitee' | 'refusee';
+/** `annulee` (SV) — retirée par la personne elle-même, tant qu'elle était `en_attente`. */
+export type ErasureStatus = 'en_attente' | 'traitee' | 'refusee' | 'annulee';
 
 /** What must be fixed BEFORE an erasure can run (empty list = executable). */
 export type ErasureBlocker =
@@ -190,6 +196,20 @@ export type AuditAction =
   | 'equipment.updated'
   | 'equipment.status_changed'
   | 'equipment.reported'
+  /* S7 (ADR 0020) — l'organisation de l'équipe, rattrapée en SV : ces huit
+     actions étaient dans la liste blanche backend depuis S7 sans jamais
+     avoir atteint ce type (la dérive S5 rejouée, détectée par le test de
+     parité). Le journal dit l'ÉVÉNEMENT, jamais le régime : ni le type d'un
+     congé, ni « approuvé/refusé » dans le libellé — le payload porte la
+     suite en ids et en codes fermés. */
+  | 'hrm_department.created'
+  | 'hrm_department.updated'
+  | 'hrm_job_title.created'
+  | 'hrm_job_title.updated'
+  | 'holiday.created'
+  | 'holiday.deleted'
+  | 'leave.requested'
+  | 'leave.decided'
   | 'invoice.created'
   | 'invoice.issued'
   | 'invoice.cancelled'
@@ -755,6 +775,13 @@ export interface PlatformCenter {
   /** Motive of the last decision — "" when there is none. */
   kyc_reason: string;
   kyc_updated_at: string | null;
+  /**
+   * SV — logo du centre (URL ABSOLUE ou `null`) sur la liste et le détail.
+   * Limite de contrat : les réponses de `POST /platform/centers/` et de
+   * `POST .../kyc/` rendent une URL RELATIVE (pas de contexte request) — ne
+   * jamais s'en servir pour un `<img src>` sans repasser par un GET.
+   */
+  logo: string | null;
   created_at: string;
   staff_active_count: number;
   director_active_count: number;
@@ -947,6 +974,12 @@ export interface StaffUser {
   phone: string;
   /** Absolute URL of the member's profile photo, or null. */
   avatar: string | null;
+  /**
+   * SV — `true` tant que le compte est un compte OMBRE jamais revendiqué
+   * (le prédicat exact du PATCH d'identité). `false` = griser l'édition du
+   * nom PROACTIVEMENT, avec la raison, au lieu de laisser le PATCH échouer.
+   */
+  identity_editable: boolean;
 }
 
 export interface StaffMember {
@@ -1144,10 +1177,14 @@ export interface CashReceipt {
 export interface CashReversal {
   id: number;
   cash_payment: number;
+  /** SV — l'id de la facture corrigée : le journal devient enfin navigable. */
+  invoice: number;
   method: CashMethod;
   amount_kmf: string;
   reason: string;
   reversed_by: number;
+  /** SV — nom complet du signataire ; `""` compte sans nom, `null` système. */
+  reversed_by_display: string | null;
   ledger_transaction: number;
   created_at: string;
 }
@@ -1160,6 +1197,12 @@ export interface CashPayment {
   reference: string;
   amount_kmf: string;
   received_by: number;
+  /**
+   * SV — nom complet de qui a encaissé ; `""` si le compte n'a pas de nom,
+   * `null` pour un encaissement système (webhook PSP). La redevabilité de la
+   * caisse vaut pour tous ses lecteurs BILLING.
+   */
+  received_by_display: string | null;
   /** Null except for `pont_confiance` cash-ins (webhook-driven). */
   payment_intent: number | null;
   ledger_transaction: number;
@@ -2111,12 +2154,17 @@ export type HumanContactChannel = Exclude<ContactChannel, 'sms'>;
 /** La FAMILLE du destinataire, jamais son identité. */
 export type ContactRecipient = 'patient' | 'tuteur';
 
-/** Issues fermées d'un contact humain — la parade au texte libre. */
+/**
+ * Issues fermées d'un contact humain — la parade au texte libre.
+ * `rdv_fixe` (SV) : l'issue heureuse d'une reprise de contact — proposée pour
+ * le motif `reprise_contact` SEULEMENT (voir `CONTACT_OUTCOMES_BY_KIND`).
+ */
 export type ContactOutcome =
   | 'joint'
   | 'sans_reponse'
   | 'promesse_de_reglement'
-  | 'a_rappeler';
+  | 'a_rappeler'
+  | 'rdv_fixe';
 
 /** Tri serveur de la file « à relancer ». Valeur inconnue → 400 par champ. */
 export type UnpaidFollowupOrdering = '-age' | 'age' | '-balance' | 'balance';
@@ -2145,7 +2193,14 @@ export interface UnpaidFollowup {
   reminders_sent: number;
   /** La cadence est épuisée : plus AUCUN message ne partira tout seul. */
   reminders_exhausted: boolean;
+  /** Dernier contact de TOUTE nature — SMS automatique compris. */
   last_contact_at: string | null;
+  /**
+   * SV — le QUAND du dernier contact HUMAIN (celui qui porte `last_outcome`).
+   * C'est lui qui autorise « Contact le … » sans réserve : `last_contact_at`
+   * peut être un SMS automatique postérieur à l'appel.
+   */
+  last_human_contact_at: string | null;
   last_outcome: ContactOutcome | '';
   guardian_reachable: boolean;
 }
@@ -2229,6 +2284,12 @@ export interface AccountingExport {
 
 export interface AccountingExportDetail extends AccountingExport {
   lines: AccountingExportLine[];
+  /**
+   * SV — « un humain signe la photo » : nom complet de qui a généré la
+   * pièce, sur le DÉTAIL seul (la liste garde l'id nu). `""` si le compte
+   * n'a pas de nom renseigné.
+   */
+  generated_by_display: string;
 }
 
 /**
